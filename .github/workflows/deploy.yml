@@ -125,3 +125,14 @@ jobs:
               docker compose logs fastapi --tail 50
               exit 1
             fi
+
+            # The worker's SQL pool is created lazily on first use, so a bad
+            # SQLSERVER_CONN_STRING wouldn't otherwise surface until a real WhatsApp
+            # message arrives — check it now instead (app/healthcheck_db.py).
+            if docker exec booking-worker python -m app.healthcheck_db; then
+              echo "SQL Server connectivity OK"
+            else
+              echo "SQL Server connectivity FAILED" >&2
+              docker compose logs worker --tail 50
+              exit 1
+            fi
