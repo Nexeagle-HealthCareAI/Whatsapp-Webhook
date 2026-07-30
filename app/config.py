@@ -30,5 +30,11 @@ class Settings(BaseSettings):
     # never the HMS database itself.
     sqlserver_conn_string: str
 
+    # EasyHMS NLP Symptom Router (separate repo/service) — same VM, `docker run --network
+    # host` on port 5003 (see its README), so host.docker.internal reaches it the same way
+    # SQLSERVER_CONN_STRING does. Its label taxonomy is already aligned to easyHMSAPI's own
+    # MedicalSpecialities.PatientFacingCategory values (see app/symptom_client.py).
+    symptom_api_base_url: str = "http://host.docker.internal:5003"
+
 
 settings = Settings()

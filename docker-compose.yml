@@ -38,9 +38,10 @@ services:
     command: ["python", "worker.py"]
     depends_on:
       - redis
-    # Lets SQLSERVER_CONN_STRING target host.docker.internal — the sqlserver container
-    # on this VM is reachable via the host's published port, not this compose project's
-    # own network (it's a separate docker-compose project entirely).
+    # Lets SQLSERVER_CONN_STRING / SYMPTOM_API_BASE_URL target host.docker.internal — the
+    # sqlserver container and the NLP symptom-router (docker run --network host, port 5003)
+    # are both reachable via the host's own network, not this compose project's own
+    # (it's a separate compose project/service entirely).
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
@@ -52,6 +53,7 @@ services:
       HMS_API_BASE_URL: "${HMS_API_BASE_URL:-https://1hms-dev-api.nexeagle.com}"
       HMS_API_KEY: "${HMS_API_KEY:-}"
       SQLSERVER_CONN_STRING: "${SQLSERVER_CONN_STRING}"
+      SYMPTOM_API_BASE_URL: "${SYMPTOM_API_BASE_URL:-http://host.docker.internal:5003}"
 
 volumes:
   redis-data:

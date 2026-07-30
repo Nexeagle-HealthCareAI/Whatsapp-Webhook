@@ -3,17 +3,14 @@ from datetime import date, timedelta
 
 import httpx
 
-from app import db, hms_client, whatsapp_client
+from app import db, hms_client, symptom_client, whatsapp_client
 from app.hms_client import HmsApiError
 
 logger = logging.getLogger("conversation")
 
 _SHIFT_FALLBACK = ["Morning", "Afternoon", "Evening"]
 
-GREETING_TEXT = (
-    "Hi! I can help you book a doctor's appointment. "
-    "Let's start — which specialty are you looking for?"
-)
+GREETING_TEXT = "Hi! I can help you book a doctor's appointment."
 
 
 def _match_choice(input_type: str, input_value: str, valid_ids: list[str]) -> str | None:
@@ -41,7 +38,11 @@ async def handle_message(
     context = state["context"] if state else {}
 
     try:
-        if current_step == "choosing_specialty":
+        if current_step == "choosing_search_mode":
+            await _handle_choosing_search_mode(client, phone, input_type, input_value, context)
+        elif current_step == "awaiting_symptom":
+            await _handle_awaiting_symptom(client, phone, input_type, input_value, context)
+        elif current_step == "choosing_specialty":
             await _handle_choosing_specialty(client, phone, input_type, input_value, context)
         elif current_step == "choosing_doctor":
             await _handle_choosing_doctor(client, phone, input_type, input_value, context)
@@ -68,30 +69,85 @@ async def handle_message(
 
 
 async def _start(client: httpx.AsyncClient, phone: str) -> None:
+    await whatsapp_client.send_buttons(
+        client, phone,
+        f"{GREETING_TEXT} How would you like to find a doctor?",
+        [("symptom", "Describe symptoms"), ("browse", "Browse specialties")],
+    )
+    await db.save_conversation_state(phone, "choosing_search_mode", {})
+
+
+async def _handle_choosing_search_mode(client, phone, input_type, input_value, context) -> None:
+    choice = _match_choice(input_type, input_value, ["symptom", "browse"])
+    if choice is None:
+        await whatsapp_client.send_text(client, phone, "Please tap one of the options above.")
+        return
+    if choice == "symptom":
+        await whatsapp_client.send_text(
+            client, phone,
+            "Sure — describe what's bothering you (e.g. 'chest pain and shortness of breath').",
+        )
+        await db.save_conversation_state(phone, "awaiting_symptom", {})
+        return
+    await _send_specialty_list(client, phone, context)
+
+
+async def _handle_awaiting_symptom(client, phone, input_type, input_value, context) -> None:
+    if input_type != "text" or not input_value.strip():
+        await whatsapp_client.send_text(client, phone, "Please describe your symptoms as text.")
+        return
+
+    labels = await symptom_client.route_symptom(input_value)
+    categories = [s["category"] for s in await hms_client.list_specialties()]
+    matched_category = next(
+        (m for m in (symptom_client.match_category(label, categories) for label in labels) if m),
+        None,
+    )
+
+    if not matched_category:
+        await whatsapp_client.send_text(
+            client, phone,
+            "I couldn't confidently match that to a specialty — here's the full list instead:",
+        )
+        await _send_specialty_list(client, phone, context)
+        return
+
+    await whatsapp_client.send_text(client, phone, f"That sounds like a job for a {matched_category}.")
+    await _send_doctor_list(client, phone, context, matched_category)
+
+
+async def _send_specialty_list(client: httpx.AsyncClient, phone: str, context: dict) -> None:
     specialties = await hms_client.list_specialties()
     if not specialties:
         await whatsapp_client.send_text(
             client, phone, "Sorry, no doctors are available for booking right now. Please try later."
         )
+        await db.clear_conversation_state(phone)
         return
     rows = [(s["category"], s.get("displayName") or s["category"]) for s in specialties]
     await whatsapp_client.send_list(
-        client, phone, GREETING_TEXT, "Choose specialty", rows, "Specialties"
+        client, phone, "Which specialty are you looking for?", "Choose specialty", rows, "Specialties"
     )
-    await db.save_conversation_state(phone, "choosing_specialty", {})
+    await db.save_conversation_state(phone, "choosing_specialty", context)
 
 
 async def _handle_choosing_specialty(client, phone, input_type, input_value, context) -> None:
     if input_type != "list_reply":
         await whatsapp_client.send_text(client, phone, "Please choose a specialty from the list above.")
         return
-    specialty_category = input_value
+    await _send_doctor_list(client, phone, context, input_value)
+
+
+async def _send_doctor_list(
+    client: httpx.AsyncClient, phone: str, context: dict, specialty_category: str
+) -> None:
     doctors = await hms_client.list_doctors(specialty_category)
     if not doctors:
         await whatsapp_client.send_text(
             client, phone,
             "Sorry, no doctors are currently available in that specialty. Please try 'hi' to start over.",
         )
+        await db.clear_conversation_state(phone)
         return
     rows = [(d["doctorId"], d.get("fullName") or "Doctor") for d in doctors]
     await whatsapp_client.send_list(
