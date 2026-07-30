@@ -11,6 +11,14 @@
 #   WHATSAPP_APP_SECRET       Meta App dashboard → App Settings → Basic
 #   REDIS_PASSWORD           generate once: openssl rand -hex 24
 #
+#   SQLSERVER_CONN_STRING    ODBC conn string for THIS bot's own DB (see sql/schema.sql) —
+#                            reaches the VM's existing sqlserver container via
+#                            host.docker.internal, e.g.:
+#                            DRIVER={ODBC Driver 18 for SQL Server};SERVER=host.docker.internal,1433;
+#                            DATABASE=WhatsAppBookingDev;UID=...;PWD=...;TrustServerCertificate=yes
+#   HMS_API_KEY              optional — X-Api-Key for easyHMSAPI's PublicController (anonymous
+#                            works fine too, see PublicApiKeyFilter; leave empty if none issued)
+#
 # VARIABLES (optional):
 #   VM_DEPLOY_PATH    where this repo is checked out on the VM (default /opt/whatsapp-webhook)
 #
@@ -38,12 +46,14 @@ jobs:
           WHATSAPP_VERIFY_TOKEN: ${{ secrets.WHATSAPP_VERIFY_TOKEN }}
           WHATSAPP_APP_SECRET: ${{ secrets.WHATSAPP_APP_SECRET }}
           REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+          SQLSERVER_CONN_STRING: ${{ secrets.SQLSERVER_CONN_STRING }}
+          HMS_API_KEY: ${{ secrets.HMS_API_KEY }}
         with:
           host: ${{ secrets.DEV_SSH_HOST }}
           username: ${{ secrets.DEV_SSH_USER }}
           password: ${{ secrets.DEV_SSH_PASSWORD }}
           port: 22
-          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD
+          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,SQLSERVER_CONN_STRING,HMS_API_KEY
           script: |
             set -e
             if [ ! -d "$DEPLOY_PATH/.git" ]; then
@@ -59,6 +69,7 @@ jobs:
             : "${WHATSAPP_VERIFY_TOKEN:?WHATSAPP_VERIFY_TOKEN is empty}"
             : "${WHATSAPP_APP_SECRET:?WHATSAPP_APP_SECRET is empty}"
             : "${REDIS_PASSWORD:?REDIS_PASSWORD is empty}"
+            : "${SQLSERVER_CONN_STRING:?SQLSERVER_CONN_STRING is empty}"
 
             ENVFILE="$DEPLOY_PATH/.env"
             {
@@ -67,6 +78,8 @@ jobs:
               printf 'WHATSAPP_VERIFY_TOKEN=%s\n' "$WHATSAPP_VERIFY_TOKEN"
               printf 'WHATSAPP_APP_SECRET=%s\n' "$WHATSAPP_APP_SECRET"
               printf 'REDIS_PASSWORD=%s\n' "$REDIS_PASSWORD"
+              printf 'SQLSERVER_CONN_STRING=%s\n' "$SQLSERVER_CONN_STRING"
+              printf 'HMS_API_KEY=%s\n' "$HMS_API_KEY"
             } > "$ENVFILE"
             chmod 600 "$ENVFILE"
 

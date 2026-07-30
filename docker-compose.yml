@@ -21,6 +21,9 @@ services:
       WHATSAPP_VERIFY_TOKEN: "${WHATSAPP_VERIFY_TOKEN}"
       WHATSAPP_APP_SECRET: "${WHATSAPP_APP_SECRET}"
       REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
+      HMS_API_BASE_URL: "${HMS_API_BASE_URL:-https://1hms-dev-api.nexeagle.com}"
+      HMS_API_KEY: "${HMS_API_KEY:-}"
+      SQLSERVER_CONN_STRING: "${SQLSERVER_CONN_STRING}"
     # Bound to localhost only — the VM's existing shared Caddy/reverse proxy (already
     # serving other nexeagle.com subdomains) reverse_proxy's to this from the host side.
     # This stack does NOT run its own Caddy: a second process can't also bind 80/443
@@ -35,12 +38,20 @@ services:
     command: ["python", "worker.py"]
     depends_on:
       - redis
+    # Lets SQLSERVER_CONN_STRING target host.docker.internal — the sqlserver container
+    # on this VM is reachable via the host's published port, not this compose project's
+    # own network (it's a separate docker-compose project entirely).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       WHATSAPP_TOKEN: "${WHATSAPP_TOKEN}"
       WHATSAPP_PHONE_NUMBER_ID: "${WHATSAPP_PHONE_NUMBER_ID}"
       WHATSAPP_VERIFY_TOKEN: "${WHATSAPP_VERIFY_TOKEN}"
       WHATSAPP_APP_SECRET: "${WHATSAPP_APP_SECRET}"
       REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
+      HMS_API_BASE_URL: "${HMS_API_BASE_URL:-https://1hms-dev-api.nexeagle.com}"
+      HMS_API_KEY: "${HMS_API_KEY:-}"
+      SQLSERVER_CONN_STRING: "${SQLSERVER_CONN_STRING}"
 
 volumes:
   redis-data:

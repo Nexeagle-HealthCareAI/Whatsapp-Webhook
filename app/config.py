@@ -18,5 +18,17 @@ class Settings(BaseSettings):
     # Dedupe entries expire after this long — well past Meta's own webhook retry window.
     message_dedupe_ttl_seconds: int = 86400
 
+    # easyHMSAPI's public surface (PublicController) — same VM, reached via its own public
+    # domain rather than the docker network, since it's a separate compose project/host network.
+    hms_api_base_url: str = "https://1hms-dev-api.nexeagle.com"
+    # Optional — PublicApiKeyFilter lets anonymous callers through; a key just makes this
+    # bot's traffic identifiable/revocable. Unset is fine.
+    hms_api_key: str | None = None
+
+    # This bot's OWN state (conversation_state/processed_messages/pending_appointments) —
+    # a separate database on the same SQL Server instance easyHMSAPI already runs on this VM,
+    # never the HMS database itself.
+    sqlserver_conn_string: str
+
 
 settings = Settings()

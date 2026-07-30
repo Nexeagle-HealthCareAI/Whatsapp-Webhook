@@ -4,37 +4,36 @@ import logging
 
 import httpx
 
+from app import conversation, db
 from app.config import settings
 from app.redis_client import get_redis
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("worker")
 
-GRAPH_API_URL = f"https://graph.facebook.com/v19.0/{settings.whatsapp_phone_number_id}/messages"
-
-# Step 1 prototype only — replaced by real conversation logic in Phase 2.
-STATIC_REPLY = "Thanks for your message! Booking system is under construction."
-
-
-async def send_whatsapp_text(client: httpx.AsyncClient, to: str, body: str) -> None:
-    response = await client.post(
-        GRAPH_API_URL,
-        headers={"Authorization": f"Bearer {settings.whatsapp_token}"},
-        json={
-            "messaging_product": "whatsapp",
-            "to": to,
-            "text": {"body": body},
-        },
-    )
-    logger.info("WhatsApp send to %s -> %s", to, response.status_code)
-    if response.status_code >= 400:
-        logger.error("WhatsApp send failed: %s", response.text)
-
 
 async def handle_job(client: httpx.AsyncClient, job: dict) -> None:
+    message_id = job.get("message_id")
     sender = job["sender"]
-    logger.info("Processing message %s from %s", job.get("message_id"), sender)
-    await send_whatsapp_text(client, sender, STATIC_REPLY)
+
+    # Durable backstop beyond Redis's TTL-based dedupe (app/webhook.py) — belt and
+    # suspenders against a duplicate booking if a job is ever replayed after that
+    # Redis key has expired.
+    if message_id and await db.is_message_processed(message_id):
+        logger.info("Message %s already processed, skipping", message_id)
+        return
+
+    logger.info("Processing message %s from %s", message_id, sender)
+    await conversation.handle_message(
+        client,
+        sender,
+        job.get("sender_name"),
+        job.get("input_type") or "text",
+        job.get("input_value") or "",
+    )
+
+    if message_id:
+        await db.mark_message_processed(message_id)
 
 
 async def main() -> None:

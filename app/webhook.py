@@ -35,25 +35,35 @@ def _verify_signature(raw_body: bytes, signature_header: str | None) -> bool:
     return hmac.compare_digest(expected, provided)
 
 
-def _extract_messages(payload: dict) -> list[dict]:
+def _extract_messages_and_contacts(payload: dict) -> tuple[list[dict], dict[str, str]]:
     messages = []
+    names_by_wa_id: dict[str, str] = {}
     for entry in payload.get("entry", []):
         for change in entry.get("changes", []):
-            messages.extend(change.get("value", {}).get("messages", []))
-    return messages
+            value = change.get("value", {})
+            messages.extend(value.get("messages", []))
+            for contact in value.get("contacts", []):
+                wa_id = contact.get("wa_id")
+                name = contact.get("profile", {}).get("name")
+                if wa_id and name:
+                    names_by_wa_id[wa_id] = name
+    return messages, names_by_wa_id
 
 
-def _message_text(message: dict) -> str | None:
+def _input_type_and_value(message: dict) -> tuple[str, str] | tuple[None, None]:
     msg_type = message.get("type")
     if msg_type == "text":
-        return message.get("text", {}).get("body")
+        body = message.get("text", {}).get("body")
+        return ("text", body) if body else (None, None)
     if msg_type == "interactive":
         interactive = message.get("interactive", {})
         if interactive.get("type") == "list_reply":
-            return interactive.get("list_reply", {}).get("id")
+            row_id = interactive.get("list_reply", {}).get("id")
+            return ("list_reply", row_id) if row_id else (None, None)
         if interactive.get("type") == "button_reply":
-            return interactive.get("button_reply", {}).get("id")
-    return None
+            btn_id = interactive.get("button_reply", {}).get("id")
+            return ("button_reply", btn_id) if btn_id else (None, None)
+    return None, None
 
 
 @router.post("/webhook")
@@ -68,7 +78,9 @@ async def receive_webhook(
     payload = json.loads(raw_body)
     redis = get_redis()
 
-    for message in _extract_messages(payload):
+    messages, names_by_wa_id = _extract_messages_and_contacts(payload)
+
+    for message in messages:
         message_id = message.get("id")
         sender = message.get("from")
         if not message_id or not sender:
@@ -86,10 +98,17 @@ async def receive_webhook(
             logger.info("Duplicate delivery of message %s, skipping enqueue", message_id)
             continue
 
+        input_type, input_value = _input_type_and_value(message)
+        if input_type is None:
+            logger.info("Ignoring unsupported message type from %s: %s", sender, message.get("type"))
+            continue
+
         job = {
             "message_id": message_id,
             "sender": sender,
-            "text": _message_text(message),
+            "sender_name": names_by_wa_id.get(sender),
+            "input_type": input_type,
+            "input_value": input_value,
             "received_at": time.time(),
         }
         await redis.lpush(settings.booking_jobs_key, json.dumps(job))
