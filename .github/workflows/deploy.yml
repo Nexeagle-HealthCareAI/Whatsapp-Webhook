@@ -1,15 +1,21 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# SECRETS (Settings → Secrets and variables → Actions), matching the easyHMSAPI
-# repo's Dev-stage convention (same VM, password auth, not a key):
-#   DEV_SSH_HOST      151.185.45.77
-#   DEV_SSH_USER      root
-#   DEV_SSH_PASSWORD  Dev VM root password
+# SECRETS (Settings → Secrets and variables → Actions):
+#   DEV_SSH_HOST            151.185.45.77
+#   DEV_SSH_USER            root
+#   DEV_SSH_PASSWORD        Dev VM root password
+#   (same password-auth convention as easyHMSAPI's Dev stage — same VM, no key)
+#
+#   WHATSAPP_TOKEN            permanent access token, Meta App dashboard
+#   WHATSAPP_PHONE_NUMBER_ID  Meta App dashboard
+#   WHATSAPP_VERIFY_TOKEN     any random string you choose, used in the GET handshake
+#   WHATSAPP_APP_SECRET       Meta App dashboard → App Settings → Basic
+#   REDIS_PASSWORD           generate once: openssl rand -hex 24
 #
 # VARIABLES (optional):
 #   VM_DEPLOY_PATH    where this repo is checked out on the VM (default /opt/whatsapp-webhook)
 #
-# App secrets (WHATSAPP_*, REDIS_PASSWORD) are NOT here — they live only in
-# .env on the VM, in VM_DEPLOY_PATH, untouched by this workflow.
+# .env on the VM is now written BY this workflow from the secrets above on every
+# deploy — nothing is created or edited on the VM by hand anymore.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: Deploy to VM
@@ -27,12 +33,17 @@ jobs:
         uses: appleboy/ssh-action@v1.2.0
         env:
           DEPLOY_PATH: ${{ vars.VM_DEPLOY_PATH || '/opt/whatsapp-webhook' }}
+          WHATSAPP_TOKEN: ${{ secrets.WHATSAPP_TOKEN }}
+          WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}
+          WHATSAPP_VERIFY_TOKEN: ${{ secrets.WHATSAPP_VERIFY_TOKEN }}
+          WHATSAPP_APP_SECRET: ${{ secrets.WHATSAPP_APP_SECRET }}
+          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
         with:
           host: ${{ secrets.DEV_SSH_HOST }}
           username: ${{ secrets.DEV_SSH_USER }}
           password: ${{ secrets.DEV_SSH_PASSWORD }}
           port: 22
-          envs: DEPLOY_PATH
+          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD
           script: |
             set -e
             if [ ! -d "$DEPLOY_PATH/.git" ]; then
@@ -42,11 +53,22 @@ jobs:
             cd "$DEPLOY_PATH"
             git fetch origin dev
             git reset --hard origin/dev
-            if [ ! -f .env ]; then
-              echo "ERROR: $DEPLOY_PATH/.env is missing — create it once manually with" \
-                   "WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_VERIFY_TOKEN," \
-                   "WHATSAPP_APP_SECRET, REDIS_PASSWORD before this can start." >&2
-              exit 1
-            fi
+
+            : "${WHATSAPP_TOKEN:?WHATSAPP_TOKEN is empty}"
+            : "${WHATSAPP_PHONE_NUMBER_ID:?WHATSAPP_PHONE_NUMBER_ID is empty}"
+            : "${WHATSAPP_VERIFY_TOKEN:?WHATSAPP_VERIFY_TOKEN is empty}"
+            : "${WHATSAPP_APP_SECRET:?WHATSAPP_APP_SECRET is empty}"
+            : "${REDIS_PASSWORD:?REDIS_PASSWORD is empty}"
+
+            ENVFILE="$DEPLOY_PATH/.env"
+            {
+              printf 'WHATSAPP_TOKEN=%s\n' "$WHATSAPP_TOKEN"
+              printf 'WHATSAPP_PHONE_NUMBER_ID=%s\n' "$WHATSAPP_PHONE_NUMBER_ID"
+              printf 'WHATSAPP_VERIFY_TOKEN=%s\n' "$WHATSAPP_VERIFY_TOKEN"
+              printf 'WHATSAPP_APP_SECRET=%s\n' "$WHATSAPP_APP_SECRET"
+              printf 'REDIS_PASSWORD=%s\n' "$REDIS_PASSWORD"
+            } > "$ENVFILE"
+            chmod 600 "$ENVFILE"
+
             docker compose up -d --build
             docker compose ps
