@@ -101,6 +101,16 @@ jobs:
             : "${REDIS_PASSWORD:?REDIS_PASSWORD is empty}"
             : "${SQLSERVER_CONN_STRING_DEV:?SQLSERVER_CONN_STRING_DEV is empty}"
 
+            # Doesn't print the secret itself, just confirms the shape pyodbc needs is there —
+            # ADO.NET-style strings (Server=...;User Id=...) silently lack this and fail later
+            # with a much less obvious "Data source name not found" error.
+            if ! printf '%s' "$SQLSERVER_CONN_STRING_DEV" | grep -qi 'DRIVER='; then
+              echo "ERROR: SQLSERVER_CONN_STRING_DEV has no DRIVER= key — it must be an ODBC" \
+                   "connection string (DRIVER={ODBC Driver 18 for SQL Server};SERVER=...;UID=...;PWD=...)," \
+                   "not an ADO.NET/SqlClient one (Server=...;User Id=...;Password=...)." >&2
+              exit 1
+            fi
+
             ENVFILE="$DEPLOY_PATH/.env"
             {
               printf 'WHATSAPP_TOKEN=%s\n' "$WHATSAPP_TOKEN"
