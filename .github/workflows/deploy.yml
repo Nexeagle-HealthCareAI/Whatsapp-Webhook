@@ -11,9 +11,10 @@
 #   WHATSAPP_APP_SECRET       Meta App dashboard → App Settings → Basic
 #   REDIS_PASSWORD           generate once: openssl rand -hex 24
 #
-#   SQLSERVER_CONN_STRING    ODBC conn string for THIS bot's own DB (see sql/schema.sql) —
-#                            reaches the VM's existing sqlserver container via
-#                            host.docker.internal, e.g.:
+#   MSSQL_SA_PASSWORD        sa password for the VM's existing sqlserver container —
+#                            used ONLY to apply sql/schema.sql (creates the separate
+#                            WhatsAppBookingDev database, never touches easyHMSAPI's own DB)
+#   SQLSERVER_CONN_STRING    ODBC conn string the APP itself connects with, e.g.:
 #                            DRIVER={ODBC Driver 18 for SQL Server};SERVER=host.docker.internal,1433;
 #                            DATABASE=WhatsAppBookingDev;UID=...;PWD=...;TrustServerCertificate=yes
 #   HMS_API_KEY              optional — X-Api-Key for easyHMSAPI's PublicController (anonymous
@@ -37,7 +38,39 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: SSH and redeploy
+      - name: Sync checkout + apply SQL schema
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_PATH: ${{ vars.VM_DEPLOY_PATH || '/opt/whatsapp-webhook' }}
+          MSSQL_SA_PASSWORD: ${{ secrets.MSSQL_SA_PASSWORD }}
+        with:
+          host: ${{ secrets.DEV_SSH_HOST }}
+          username: ${{ secrets.DEV_SSH_USER }}
+          password: ${{ secrets.DEV_SSH_PASSWORD }}
+          port: 22
+          envs: DEPLOY_PATH,MSSQL_SA_PASSWORD
+          script: |
+            set -e
+            : "${MSSQL_SA_PASSWORD:?MSSQL_SA_PASSWORD is empty}"
+
+            if [ ! -d "$DEPLOY_PATH/.git" ]; then
+              mkdir -p "$DEPLOY_PATH"
+              git clone -b dev https://github.com/Nexeagle-HealthCareAI/Whatsapp-Webhook.git "$DEPLOY_PATH"
+            fi
+            cd "$DEPLOY_PATH"
+            git fetch origin dev
+            git reset --hard origin/dev
+
+            if docker exec sqlserver test -x /opt/mssql-tools18/bin/sqlcmd 2>/dev/null; then
+              docker exec -i sqlserver /opt/mssql-tools18/bin/sqlcmd \
+                -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -i /dev/stdin < sql/schema.sql
+            else
+              docker exec -i sqlserver /opt/mssql-tools/bin/sqlcmd \
+                -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -i /dev/stdin < sql/schema.sql
+            fi
+            echo "SQL schema applied"
+
+      - name: Deploy app stack
         uses: appleboy/ssh-action@v1.2.0
         env:
           DEPLOY_PATH: ${{ vars.VM_DEPLOY_PATH || '/opt/whatsapp-webhook' }}
@@ -56,13 +89,7 @@ jobs:
           envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,SQLSERVER_CONN_STRING,HMS_API_KEY
           script: |
             set -e
-            if [ ! -d "$DEPLOY_PATH/.git" ]; then
-              mkdir -p "$DEPLOY_PATH"
-              git clone -b dev https://github.com/Nexeagle-HealthCareAI/Whatsapp-Webhook.git "$DEPLOY_PATH"
-            fi
             cd "$DEPLOY_PATH"
-            git fetch origin dev
-            git reset --hard origin/dev
 
             : "${WHATSAPP_TOKEN:?WHATSAPP_TOKEN is empty}"
             : "${WHATSAPP_PHONE_NUMBER_ID:?WHATSAPP_PHONE_NUMBER_ID is empty}"
