@@ -146,3 +146,11 @@ jobs:
               docker compose logs worker --tail 50
               exit 1
             fi
+
+            if docker exec booking-worker python -m app.healthcheck_symptom; then
+              echo "NLP symptom router reachable OK"
+            else
+              echo "NLP symptom router check FAILED" >&2
+              docker compose logs worker --tail 50
+              exit 1
+            fi
