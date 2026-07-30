@@ -11,14 +11,17 @@
 #   WHATSAPP_APP_SECRET       Meta App dashboard → App Settings → Basic
 #   REDIS_PASSWORD           generate once: openssl rand -hex 24
 #
-#   MSSQL_SA_PASSWORD        sa password for the VM's existing sqlserver container —
+#   MSSQL_SA_PASSWORD_DEV    sa password for the VM's existing sqlserver container —
 #                            used ONLY to apply sql/schema.sql (creates the separate
 #                            WhatsAppBookingDev database, never touches easyHMSAPI's own DB)
-#   SQLSERVER_CONN_STRING    ODBC conn string the APP itself connects with, e.g.:
+#   SQLSERVER_CONN_STRING_DEV  ODBC conn string the APP itself connects with (pyodbc, NOT
+#                            the ADO.NET/SqlClient format easyHMSAPI uses), e.g.:
 #                            DRIVER={ODBC Driver 18 for SQL Server};SERVER=host.docker.internal,1433;
-#                            DATABASE=WhatsAppBookingDev;UID=...;PWD=...;TrustServerCertificate=yes
-#   HMS_API_KEY              optional — X-Api-Key for easyHMSAPI's PublicController (anonymous
-#                            works fine too, see PublicApiKeyFilter; leave empty if none issued)
+#                            DATABASE=WhatsAppBookingDev;UID=sa;PWD=...;TrustServerCertificate=yes
+#   HMS_API_KEY              optional — X-Api-Key for easyHMSAPI's PublicController. Omit the
+#                            secret entirely for anonymous access (PublicApiKeyFilter allows
+#                            it) — do NOT set it to a placeholder like "NA"; any non-empty
+#                            value gets sent as a real key and a non-matching one gets 401'd
 #
 # VARIABLES (optional):
 #   VM_DEPLOY_PATH    where this repo is checked out on the VM (default /opt/whatsapp-webhook)
@@ -42,16 +45,16 @@ jobs:
         uses: appleboy/ssh-action@v1.2.0
         env:
           DEPLOY_PATH: ${{ vars.VM_DEPLOY_PATH || '/opt/whatsapp-webhook' }}
-          MSSQL_SA_PASSWORD: ${{ secrets.MSSQL_SA_PASSWORD }}
+          MSSQL_SA_PASSWORD_DEV: ${{ secrets.MSSQL_SA_PASSWORD_DEV }}
         with:
           host: ${{ secrets.DEV_SSH_HOST }}
           username: ${{ secrets.DEV_SSH_USER }}
           password: ${{ secrets.DEV_SSH_PASSWORD }}
           port: 22
-          envs: DEPLOY_PATH,MSSQL_SA_PASSWORD
+          envs: DEPLOY_PATH,MSSQL_SA_PASSWORD_DEV
           script: |
             set -e
-            : "${MSSQL_SA_PASSWORD:?MSSQL_SA_PASSWORD is empty}"
+            : "${MSSQL_SA_PASSWORD_DEV:?MSSQL_SA_PASSWORD_DEV is empty}"
 
             if [ ! -d "$DEPLOY_PATH/.git" ]; then
               mkdir -p "$DEPLOY_PATH"
@@ -63,10 +66,10 @@ jobs:
 
             if docker exec sqlserver test -x /opt/mssql-tools18/bin/sqlcmd 2>/dev/null; then
               docker exec -i sqlserver /opt/mssql-tools18/bin/sqlcmd \
-                -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -i /dev/stdin < sql/schema.sql
+                -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD_DEV" -i /dev/stdin < sql/schema.sql
             else
               docker exec -i sqlserver /opt/mssql-tools/bin/sqlcmd \
-                -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -i /dev/stdin < sql/schema.sql
+                -S localhost -U sa -P "$MSSQL_SA_PASSWORD_DEV" -i /dev/stdin < sql/schema.sql
             fi
             echo "SQL schema applied"
 
@@ -79,14 +82,14 @@ jobs:
           WHATSAPP_VERIFY_TOKEN: ${{ secrets.WHATSAPP_VERIFY_TOKEN }}
           WHATSAPP_APP_SECRET: ${{ secrets.WHATSAPP_APP_SECRET }}
           REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
-          SQLSERVER_CONN_STRING: ${{ secrets.SQLSERVER_CONN_STRING }}
+          SQLSERVER_CONN_STRING_DEV: ${{ secrets.SQLSERVER_CONN_STRING_DEV }}
           HMS_API_KEY: ${{ secrets.HMS_API_KEY }}
         with:
           host: ${{ secrets.DEV_SSH_HOST }}
           username: ${{ secrets.DEV_SSH_USER }}
           password: ${{ secrets.DEV_SSH_PASSWORD }}
           port: 22
-          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,SQLSERVER_CONN_STRING,HMS_API_KEY
+          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,SQLSERVER_CONN_STRING_DEV,HMS_API_KEY
           script: |
             set -e
             cd "$DEPLOY_PATH"
@@ -96,7 +99,7 @@ jobs:
             : "${WHATSAPP_VERIFY_TOKEN:?WHATSAPP_VERIFY_TOKEN is empty}"
             : "${WHATSAPP_APP_SECRET:?WHATSAPP_APP_SECRET is empty}"
             : "${REDIS_PASSWORD:?REDIS_PASSWORD is empty}"
-            : "${SQLSERVER_CONN_STRING:?SQLSERVER_CONN_STRING is empty}"
+            : "${SQLSERVER_CONN_STRING_DEV:?SQLSERVER_CONN_STRING_DEV is empty}"
 
             ENVFILE="$DEPLOY_PATH/.env"
             {
@@ -105,7 +108,7 @@ jobs:
               printf 'WHATSAPP_VERIFY_TOKEN=%s\n' "$WHATSAPP_VERIFY_TOKEN"
               printf 'WHATSAPP_APP_SECRET=%s\n' "$WHATSAPP_APP_SECRET"
               printf 'REDIS_PASSWORD=%s\n' "$REDIS_PASSWORD"
-              printf 'SQLSERVER_CONN_STRING=%s\n' "$SQLSERVER_CONN_STRING"
+              printf 'SQLSERVER_CONN_STRING=%s\n' "$SQLSERVER_CONN_STRING_DEV"
               printf 'HMS_API_KEY=%s\n' "$HMS_API_KEY"
             } > "$ENVFILE"
             chmod 600 "$ENVFILE"
