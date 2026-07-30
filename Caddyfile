@@ -1,3 +1,9 @@
+# Reference snippet only — NOT run by this repo's docker-compose.yml.
+#
+# The VM already has a shared reverse proxy serving other nexeagle.com subdomains on
+# 80/443. Add this block to THAT existing Caddy config (wherever it lives on the VM),
+# then reload it — do not run a second Caddy instance on this box, it can't also bind
+# 80/443 alongside the one already there.
 whatsapp-dev-api.nexeagle.com {
-	reverse_proxy fastapi:8001
+	reverse_proxy 127.0.0.1:8001
 }

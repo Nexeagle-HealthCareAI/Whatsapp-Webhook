@@ -21,8 +21,12 @@ services:
       WHATSAPP_VERIFY_TOKEN: "${WHATSAPP_VERIFY_TOKEN}"
       WHATSAPP_APP_SECRET: "${WHATSAPP_APP_SECRET}"
       REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
-    expose:
-      - "8001"
+    # Bound to localhost only — the VM's existing shared Caddy/reverse proxy (already
+    # serving other nexeagle.com subdomains) reverse_proxy's to this from the host side.
+    # This stack does NOT run its own Caddy: a second process can't also bind 80/443
+    # on a VM that already has one holding them for other services.
+    ports:
+      - "127.0.0.1:8001:8001"
 
   worker:
     build: .
@@ -38,21 +42,5 @@ services:
       WHATSAPP_APP_SECRET: "${WHATSAPP_APP_SECRET}"
       REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
 
-  caddy:
-    image: caddy:2
-    container_name: booking-caddy
-    restart: unless-stopped
-    depends_on:
-      - fastapi
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
-      - caddy-data:/data
-      - caddy-config:/config
-
 volumes:
   redis-data:
-  caddy-data:
-  caddy-config:
