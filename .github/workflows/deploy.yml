@@ -72,3 +72,13 @@ jobs:
 
             docker compose up -d --build
             docker compose ps
+
+            sleep 3
+            if curl -sf http://127.0.0.1:8001/health; then
+              echo ""
+              echo "FastAPI health OK"
+            else
+              echo "FastAPI health check FAILED" >&2
+              docker compose logs fastapi --tail 50
+              exit 1
+            fi
