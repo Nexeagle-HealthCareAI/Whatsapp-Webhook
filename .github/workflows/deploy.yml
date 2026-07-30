@@ -1,3 +1,17 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# SECRETS (Settings → Secrets and variables → Actions), matching the easyHMSAPI
+# repo's Dev-stage convention (same VM, password auth, not a key):
+#   DEV_SSH_HOST      151.185.45.77
+#   DEV_SSH_USER      root
+#   DEV_SSH_PASSWORD  Dev VM root password
+#
+# VARIABLES (optional):
+#   VM_DEPLOY_PATH    where this repo is checked out on the VM (default /opt/whatsapp-webhook)
+#
+# App secrets (WHATSAPP_*, REDIS_PASSWORD) are NOT here — they live only in
+# .env on the VM, in VM_DEPLOY_PATH, untouched by this workflow.
+# ─────────────────────────────────────────────────────────────────────────────
+
 name: Deploy to VM
 
 on:
@@ -10,13 +24,17 @@ jobs:
     steps:
       - name: SSH and redeploy
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_PATH: ${{ vars.VM_DEPLOY_PATH || '/opt/whatsapp-webhook' }}
         with:
-          host: ${{ secrets.VM_HOST }}
-          username: ${{ secrets.VM_USER }}
-          key: ${{ secrets.VM_SSH_PRIVATE_KEY }}
+          host: ${{ secrets.DEV_SSH_HOST }}
+          username: ${{ secrets.DEV_SSH_USER }}
+          password: ${{ secrets.DEV_SSH_PASSWORD }}
+          port: 22
+          envs: DEPLOY_PATH
           script: |
             set -e
-            cd ${{ vars.VM_DEPLOY_PATH }}
+            cd "$DEPLOY_PATH"
             git fetch origin dev
             git reset --hard origin/dev
             docker compose up -d --build
