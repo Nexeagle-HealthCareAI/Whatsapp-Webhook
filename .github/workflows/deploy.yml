@@ -35,8 +35,18 @@ jobs:
           envs: DEPLOY_PATH
           script: |
             set -e
+            if [ ! -d "$DEPLOY_PATH/.git" ]; then
+              mkdir -p "$DEPLOY_PATH"
+              git clone -b dev https://github.com/Nexeagle-HealthCareAI/Whatsapp-Webhook.git "$DEPLOY_PATH"
+            fi
             cd "$DEPLOY_PATH"
             git fetch origin dev
             git reset --hard origin/dev
+            if [ ! -f .env ]; then
+              echo "ERROR: $DEPLOY_PATH/.env is missing — create it once manually with" \
+                   "WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_VERIFY_TOKEN," \
+                   "WHATSAPP_APP_SECRET, REDIS_PASSWORD before this can start." >&2
+              exit 1
+            fi
             docker compose up -d --build
             docker compose ps
