@@ -1,0 +1,23 @@
+name: Deploy to VM
+
+on:
+  push:
+    branches: [dev]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH and redeploy
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            cd ${{ vars.VM_DEPLOY_PATH }}
+            git fetch origin dev
+            git reset --hard origin/dev
+            docker compose up -d --build
+            docker compose ps
