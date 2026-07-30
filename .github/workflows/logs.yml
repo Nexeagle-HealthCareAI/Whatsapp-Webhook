@@ -1,0 +1,36 @@
+# Manual, read-only — dumps recent container logs so we can check a real WhatsApp test
+# message actually moved through the pipeline, without needing your own SSH session.
+# Run from the Actions tab (workflow_dispatch), optionally set `lines`.
+
+name: Fetch logs
+
+on:
+  workflow_dispatch:
+    inputs:
+      lines:
+        description: "How many log lines per container"
+        required: false
+        default: "100"
+
+jobs:
+  fetch-logs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Tail fastapi + worker logs
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_PATH: ${{ vars.VM_DEPLOY_PATH || '/opt/whatsapp-webhook' }}
+          LINES: ${{ github.event.inputs.lines }}
+        with:
+          host: ${{ secrets.DEV_SSH_HOST }}
+          username: ${{ secrets.DEV_SSH_USER }}
+          password: ${{ secrets.DEV_SSH_PASSWORD }}
+          port: 22
+          envs: DEPLOY_PATH,LINES
+          script: |
+            cd "$DEPLOY_PATH"
+            echo "=== fastapi (webhook receipt + enqueue) ==="
+            docker compose logs --tail "${LINES:-100}" fastapi
+            echo ""
+            echo "=== worker (conversation processing + WhatsApp send) ==="
+            docker compose logs --tail "${LINES:-100}" worker
