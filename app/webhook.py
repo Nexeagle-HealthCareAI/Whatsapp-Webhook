@@ -4,10 +4,14 @@ import json
 import logging
 import time
 
+import httpx
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
+from pydantic import BaseModel
 
+from app import db, i18n
 from app.config import settings
 from app.redis_client import get_redis
+from app.whatsapp_client import send_text
 
 logger = logging.getLogger("webhook")
 
@@ -63,6 +67,16 @@ def _input_type_and_value(message: dict) -> tuple[str, str] | tuple[None, None]:
         if interactive.get("type") == "button_reply":
             btn_id = interactive.get("button_reply", {}).get("id")
             return ("button_reply", btn_id) if btn_id else (None, None)
+    if msg_type == "location":
+        # Patient tapped "Send your current location" in response to send_location_request()
+        # (app/whatsapp_client.py). Encoded as "lat,lng" — conversation.py parses this back
+        # into floats; kept as a plain string since every job on the Redis queue is
+        # string-valued (see the job dict below), same convention as every other input type.
+        location = message.get("location", {})
+        lat, lng = location.get("latitude"), location.get("longitude")
+        if lat is None or lng is None:
+            return None, None
+        return "location", f"{lat},{lng}"
     return None, None
 
 
@@ -116,4 +130,69 @@ async def receive_webhook(
 
     # Always 200 — Meta retries on anything else, and retries are exactly what dedupe exists
     # to absorb, not what should trigger more of them.
+    return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------------------
+# 1HMS -> Gateway event push: "live queue" (requirement 8). This is the piece that couldn't
+# exist before this change — there was no route for 1HMS to call at all. What this does NOT
+# solve yet: 1HMS actually calling it. Per the existing project docs this event was listed
+# as "not yet built" on the 1HMS side as of the last status snapshot; this endpoint is the
+# gateway half of that contract, ready the moment 1HMS starts sending. Until then this is
+# simply never invoked, which is safe (no behaviour change) rather than broken.
+# ---------------------------------------------------------------------------------------
+
+
+class TokenCalledEvent(BaseModel):
+    eventId: str
+    appointmentId: str
+    currentToken: int
+    estimatedWaitMinutes: int | None = None
+
+
+def _check_internal_token(x_internal_token: str | None) -> None:
+    if not x_internal_token or x_internal_token != settings.internal_events_token:
+        raise HTTPException(status_code=401, detail="Invalid internal events token")
+
+
+@router.post("/events/token-called")
+async def token_called(
+    event: TokenCalledEvent,
+    x_internal_token: str | None = Header(default=None),
+):
+    _check_internal_token(x_internal_token)
+    redis = get_redis()
+
+    # Same dedupe pattern as the WhatsApp webhook (Section 2.4 of the build spec) — 1HMS is
+    # asked to retry on a failed ack (Section 3.4, non-functional reqs), so this side needs
+    # the same "second delivery of the same eventId is a no-op" guarantee.
+    is_new = await redis.set(
+        f"booking:dedupe:event:{event.eventId}", "1", nx=True, ex=settings.message_dedupe_ttl_seconds
+    )
+    if not is_new:
+        logger.info("Duplicate token-called event %s, skipping", event.eventId)
+        return {"status": "ok"}
+
+    row = await db.get_appointment_by_hms_id(event.appointmentId)
+    if row is None:
+        # Appointment isn't one this bot booked (e.g. booked at the front desk, or a stale
+        # ID) — nothing to notify on WhatsApp for. Not an error; ack normally so 1HMS
+        # doesn't retry forever.
+        logger.info("token-called for unknown appointment %s, ignoring", event.appointmentId)
+        return {"status": "ok"}
+
+    await db.save_queue_status(event.appointmentId, event.currentToken, event.estimatedWaitMinutes)
+
+    wait_note = (
+        f", ~{event.estimatedWaitMinutes} min wait" if event.estimatedWaitMinutes is not None else ""
+    )
+    text = {
+        "en": f"Queue update: currently serving token #{event.currentToken}{wait_note}.",
+        "hi": f"क्यू अपडेट: अभी टोकन #{event.currentToken} चल रहा है{wait_note}।",
+        "hg": f"Queue update: abhi token #{event.currentToken} chal raha hai{wait_note}.",
+    }.get(row["preferred_language"] or i18n.DEFAULT_LANG)
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        await send_text(client, row["phone_number"], text)
+
     return {"status": "ok"}

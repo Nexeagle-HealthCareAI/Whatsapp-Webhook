@@ -92,14 +92,21 @@ async def has_pending_appointment(phone: str, preferred_date: date_type) -> bool
         return await cur.fetchone() is not None
 
 
-async def create_pending_appointment(phone: str, preferred_date: date_type) -> UUID:
+async def create_pending_appointment(
+    phone: str,
+    preferred_date: date_type,
+    preferred_language: str | None = None,
+    booking_for: str = "self",
+    patient_display_name: str | None = None,
+) -> UUID:
     pool = await get_pool()
     row_id = uuid4()
     async with pool.acquire() as conn, conn.cursor() as cur:
         await cur.execute(
-            "INSERT INTO dbo.pending_appointments (id, phone_number, preferred_date, status) "
-            "VALUES (?, ?, ?, 'pending')",
-            (str(row_id), phone, preferred_date),
+            "INSERT INTO dbo.pending_appointments "
+            "(id, phone_number, preferred_date, status, preferred_language, booking_for, patient_display_name) "
+            "VALUES (?, ?, ?, 'pending', ?, ?, ?)",
+            (str(row_id), phone, preferred_date, preferred_language, booking_for, patient_display_name),
         )
     return row_id
 
@@ -118,5 +125,80 @@ async def mark_appointment_failed(row_id: UUID) -> None:
     async with pool.acquire() as conn, conn.cursor() as cur:
         await cur.execute(
             "UPDATE dbo.pending_appointments SET status = 'failed' WHERE id = ?",
+            (str(row_id),),
+        )
+
+
+async def get_appointment_by_hms_id(hms_appointment_id: str) -> dict[str, Any] | None:
+    """Used by POST /events/token-called (app/webhook.py) to find which WhatsApp
+    conversation a queue update belongs to, and which language to send it in."""
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.cursor() as cur:
+        await cur.execute(
+            "SELECT phone_number, preferred_language, patient_display_name "
+            "FROM dbo.pending_appointments WHERE hms_appointment_id = ?",
+            (hms_appointment_id,),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return None
+        phone_number, preferred_language, patient_display_name = row
+        return {
+            "phone_number": phone_number,
+            "preferred_language": preferred_language,
+            "patient_display_name": patient_display_name,
+        }
+
+
+async def save_queue_status(
+    hms_appointment_id: str, current_token: int, estimated_wait_minutes: int | None
+) -> None:
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.cursor() as cur:
+        await cur.execute(
+            """
+            MERGE dbo.appointment_queue_status AS target
+            USING (SELECT ? AS hms_appointment_id) AS src
+            ON target.hms_appointment_id = src.hms_appointment_id
+            WHEN MATCHED THEN
+                UPDATE SET current_token = ?, estimated_wait_minutes = ?, updated_at = SYSUTCDATETIME()
+            WHEN NOT MATCHED THEN
+                INSERT (hms_appointment_id, current_token, estimated_wait_minutes)
+                VALUES (?, ?, ?);
+            """,
+            (
+                hms_appointment_id,
+                current_token,
+                estimated_wait_minutes,
+                hms_appointment_id,
+                current_token,
+                estimated_wait_minutes,
+            ),
+        )
+
+
+async def list_due_followups(visit_date: date_type) -> list[dict[str, Any]]:
+    """Booked appointments whose visit date has passed and haven't had a follow-up sent yet
+    — read by scheduler.py. Deliberately scoped to a single exact date rather than "<=
+    yesterday" so a late-starting scheduler run doesn't blast out a backlog of old
+    follow-ups all at once; see scheduler.py for how this is called."""
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.cursor() as cur:
+        await cur.execute(
+            "SELECT id, phone_number, hms_appointment_id, preferred_language, patient_display_name "
+            "FROM dbo.pending_appointments "
+            "WHERE preferred_date = ? AND status = 'booked' AND followup_sent_at IS NULL",
+            (visit_date,),
+        )
+        columns = ["id", "phone_number", "hms_appointment_id", "preferred_language", "patient_display_name"]
+        rows = await cur.fetchall()
+        return [dict(zip(columns, row)) for row in rows]
+
+
+async def mark_followup_sent(row_id) -> None:
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.cursor() as cur:
+        await cur.execute(
+            "UPDATE dbo.pending_appointments SET followup_sent_at = SYSUTCDATETIME() WHERE id = ?",
             (str(row_id),),
         )

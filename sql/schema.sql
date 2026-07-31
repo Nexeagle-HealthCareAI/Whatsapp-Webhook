@@ -48,3 +48,55 @@ BEGIN
         ON dbo.pending_appointments(phone_number, preferred_date, status);
 END
 GO
+
+-- Added for: language selection, family/proxy booking, and follow-up notifications.
+-- Guarded with COL_LENGTH checks (not IF OBJECT_ID, which is for whole objects) so this
+-- script stays safe to re-run against a database that already has pending_appointments
+-- from before these columns existed.
+IF COL_LENGTH('dbo.pending_appointments', 'preferred_language') IS NULL
+BEGIN
+    -- 'en' / 'hi' / 'hg' — see app/i18n.py. Stored per-booking (not just in the ephemeral
+    -- Redis/conversation_state context) because the follow-up scheduler reads it long after
+    -- the conversation itself has ended and conversation_state has been cleared.
+    ALTER TABLE dbo.pending_appointments ADD preferred_language NVARCHAR(10) NULL;
+END
+GO
+
+IF COL_LENGTH('dbo.pending_appointments', 'booking_for') IS NULL
+BEGIN
+    ALTER TABLE dbo.pending_appointments ADD booking_for NVARCHAR(20) NOT NULL DEFAULT 'self';
+END
+GO
+
+IF COL_LENGTH('dbo.pending_appointments', 'patient_display_name') IS NULL
+BEGIN
+    -- The name used ON the appointment (may be a family member's name, not the WhatsApp
+    -- account holder's) — kept separately from phone_number, which stays the contact
+    -- number confirmations/queue updates are sent to regardless of who the patient is.
+    ALTER TABLE dbo.pending_appointments ADD patient_display_name NVARCHAR(200) NULL;
+END
+GO
+
+IF COL_LENGTH('dbo.pending_appointments', 'followup_sent_at') IS NULL
+BEGIN
+    ALTER TABLE dbo.pending_appointments ADD followup_sent_at DATETIME2 NULL;
+END
+GO
+
+-- Latest known queue/token position per HMS appointment, updated by POST /events/token-called
+-- (app/webhook.py) whenever 1HMS pushes one. Read back by db.get_appointment_by_hms_id() to
+-- decide who to notify and in what language.
+IF OBJECT_ID('dbo.appointment_queue_status') IS NULL
+BEGIN
+    -- Same type as pending_appointments.hms_appointment_id (UNIQUEIDENTIFIER) — both
+    -- ultimately hold whatever easyHMSAPI's POST /public/appointments returned as
+    -- appointmentId, so they need to match for the join in db.get_appointment_by_hms_id().
+    CREATE TABLE dbo.appointment_queue_status (
+        hms_appointment_id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
+        current_token INT NOT NULL,
+        estimated_wait_minutes INT NULL,
+        updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+    );
+END
+GO
+

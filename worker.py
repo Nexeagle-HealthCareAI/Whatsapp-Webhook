@@ -4,7 +4,7 @@ import logging
 
 import httpx
 
-from app import conversation, db
+from app import city_index, conversation, db
 from app.config import settings
 from app.redis_client import get_redis
 
@@ -36,8 +36,23 @@ async def handle_job(client: httpx.AsyncClient, job: dict) -> None:
         await db.mark_message_processed(message_id)
 
 
+async def warm_city_index() -> None:
+    """Build the city index up front so no patient waits on it mid-conversation.
+
+    Only the first run after a deploy (or after the cache expires) does real work — it pages
+    the whole public doctor directory, which takes seconds, not milliseconds. Non-fatal: if
+    1HMS is unreachable at boot the worker still starts, and the index is rebuilt lazily on
+    first use. See app/city_index.py."""
+    try:
+        index = await city_index.get_index()
+        logger.info("City index ready: %d cities", len(index))
+    except Exception:
+        logger.exception("Could not warm the city index at startup, will retry on first use")
+
+
 async def main() -> None:
     redis = get_redis()
+    await warm_city_index()
     async with httpx.AsyncClient(timeout=10) as client:
         logger.info("Worker started, waiting on %s", settings.booking_jobs_key)
         while True:

@@ -33,18 +33,32 @@ async def send_text(client: httpx.AsyncClient, to: str, body: str) -> None:
     )
 
 
+_MAX_ROW_DESC = 72
+
+
+def _row_dict(row: tuple) -> dict:
+    """rows accepts either (id, title) or (id, title, description) — description is the
+    small grey subtitle line WhatsApp renders under each row title, used for doctor cards
+    (rating/fee/distance) so the sort order in Section 5 of the feature request is actually
+    visible to the patient, not just an invisible ordering."""
+    row_id, title, *rest = row
+    entry = {"id": row_id, "title": title[:_MAX_ROW_TITLE]}
+    if rest and rest[0]:
+        entry["description"] = str(rest[0])[:_MAX_ROW_DESC]
+    return entry
+
+
 async def send_list(
     client: httpx.AsyncClient,
     to: str,
     body_text: str,
     button_label: str,
-    rows: list[tuple[str, str]],
+    rows: list[tuple],
     section_title: str = "Options",
 ) -> None:
-    """rows: list of (id, title) — id is what comes back as list_reply.id on selection."""
-    section_rows = [
-        {"id": row_id, "title": title[:_MAX_ROW_TITLE]} for row_id, title in rows[:_MAX_LIST_ROWS]
-    ]
+    """rows: list of (id, title) or (id, title, description) — id is what comes back as
+    list_reply.id on selection."""
+    section_rows = [_row_dict(row) for row in rows[:_MAX_LIST_ROWS]]
     await _send(
         client,
         {
@@ -81,6 +95,50 @@ async def send_buttons(
                 "type": "button",
                 "body": {"text": body_text},
                 "action": {"buttons": reply_buttons},
+            },
+        },
+    )
+
+
+async def send_location_request(client: httpx.AsyncClient, to: str, body_text: str) -> None:
+    """Meta's native location_request_message — the button this renders opens the phone's
+    own location picker, which defaults to "Send your current location" (one-tap GPS fill).
+    That one-tap default is the closest real equivalent to "auto-detect" WhatsApp allows —
+    there's no way for a bot to read a phone's GPS without this explicit, patient-initiated
+    share; a true silent auto-detect isn't something Meta's platform (or basic consent
+    practice) permits. Patients who'd rather not share GPS can just reply with a typed
+    city/area name instead — handled as free text alongside this in conversation.py."""
+    await _send(
+        client,
+        {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "interactive",
+            "interactive": {
+                "type": "location_request_message",
+                "body": {"text": body_text},
+                "action": {"name": "send_location"},
+            },
+        },
+    )
+
+
+async def send_location(
+    client: httpx.AsyncClient, to: str, latitude: float, longitude: float, name: str, address: str
+) -> None:
+    """Sends a droppable map pin — used at booking confirmation so the patient has the
+    clinic's location without needing to ask reception for directions."""
+    await _send(
+        client,
+        {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "location",
+            "location": {
+                "latitude": latitude,
+                "longitude": longitude,
+                "name": name[:1000],
+                "address": address[:1000],
             },
         },
     )

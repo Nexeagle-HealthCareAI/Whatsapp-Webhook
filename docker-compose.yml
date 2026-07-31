@@ -24,6 +24,9 @@ services:
       HMS_API_BASE_URL: "${HMS_API_BASE_URL:-https://1hms-dev-api.nexeagle.com}"
       HMS_API_KEY: "${HMS_API_KEY:-}"
       SQLSERVER_CONN_STRING: "${SQLSERVER_CONN_STRING}"
+      # Authenticates 1HMS/1Rad's POST /events/token-called calls into this gateway (app/webhook.py)
+      # — a different secret from WHATSAPP_APP_SECRET, which authenticates Meta instead.
+      INTERNAL_EVENTS_TOKEN: "${INTERNAL_EVENTS_TOKEN}"
     # Bound to localhost only — the VM's existing shared Caddy/reverse proxy (already
     # serving other nexeagle.com subdomains) reverse_proxy's to this from the host side.
     # This stack does NOT run its own Caddy: a second process can't also bind 80/443
@@ -54,6 +57,25 @@ services:
       HMS_API_KEY: "${HMS_API_KEY:-}"
       SQLSERVER_CONN_STRING: "${SQLSERVER_CONN_STRING}"
       SYMPTOM_API_BASE_URL: "${SYMPTOM_API_BASE_URL:-http://host.docker.internal:82}"
+      INTERNAL_EVENTS_TOKEN: "${INTERNAL_EVENTS_TOKEN}"
+
+  scheduler:
+    build: .
+    container_name: booking-scheduler
+    restart: unless-stopped
+    command: ["python", "scheduler.py"]
+    # No Redis dependency (this loop is time-driven, not queue-driven — see scheduler.py's
+    # own docstring) but does need the same DB + WhatsApp send credentials as the worker.
+    environment:
+      WHATSAPP_TOKEN: "${WHATSAPP_TOKEN}"
+      WHATSAPP_PHONE_NUMBER_ID: "${WHATSAPP_PHONE_NUMBER_ID}"
+      WHATSAPP_VERIFY_TOKEN: "${WHATSAPP_VERIFY_TOKEN}"
+      WHATSAPP_APP_SECRET: "${WHATSAPP_APP_SECRET}"
+      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
+      HMS_API_BASE_URL: "${HMS_API_BASE_URL:-https://1hms-dev-api.nexeagle.com}"
+      HMS_API_KEY: "${HMS_API_KEY:-}"
+      SQLSERVER_CONN_STRING: "${SQLSERVER_CONN_STRING}"
+      INTERNAL_EVENTS_TOKEN: "${INTERNAL_EVENTS_TOKEN}"
 
 volumes:
   redis-data:
