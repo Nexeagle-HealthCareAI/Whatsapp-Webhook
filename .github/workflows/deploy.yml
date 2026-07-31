@@ -84,12 +84,13 @@ jobs:
           REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
           SQLSERVER_CONN_STRING_DEV: ${{ secrets.SQLSERVER_CONN_STRING_DEV }}
           HMS_API_KEY: ${{ secrets.HMS_API_KEY }}
+          INTERNAL_EVENTS_TOKEN: ${{ secrets.INTERNAL_EVENTS_TOKEN }}
         with:
           host: ${{ secrets.DEV_SSH_HOST }}
           username: ${{ secrets.DEV_SSH_USER }}
           password: ${{ secrets.DEV_SSH_PASSWORD }}
           port: 22
-          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,SQLSERVER_CONN_STRING_DEV,HMS_API_KEY
+          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,SQLSERVER_CONN_STRING_DEV,HMS_API_KEY, INTERNAL_EVENTS_TOKEN
           script: |
             set -e
             cd "$DEPLOY_PATH"
@@ -100,6 +101,8 @@ jobs:
             : "${WHATSAPP_APP_SECRET:?WHATSAPP_APP_SECRET is empty}"
             : "${REDIS_PASSWORD:?REDIS_PASSWORD is empty}"
             : "${SQLSERVER_CONN_STRING_DEV:?SQLSERVER_CONN_STRING_DEV is empty}"
+            : "${INTERNAL_EVENTS_TOKEN:?INTERNAL_EVENTS_TOKEN is empty}"
+          
 
             # Doesn't print the secret itself, just confirms the shape pyodbc needs is there —
             # ADO.NET-style strings (Server=...;User Id=...) silently lack this and fail later
@@ -120,6 +123,7 @@ jobs:
               printf 'REDIS_PASSWORD=%s\n' "$REDIS_PASSWORD"
               printf 'SQLSERVER_CONN_STRING=%s\n' "$SQLSERVER_CONN_STRING_DEV"
               printf 'HMS_API_KEY=%s\n' "$HMS_API_KEY"
+              printf 'INTERNAL_EVENTS_TOKEN=%s\n' "$INTERNAL_EVENTS_TOKEN"
             } > "$ENVFILE"
             chmod 600 "$ENVFILE"
 
