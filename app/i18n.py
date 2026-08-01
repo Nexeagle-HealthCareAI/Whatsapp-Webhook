@@ -1,23 +1,18 @@
 """
 app/i18n.py
-Three-language string table for the conversation flow: English (en), Hindi (hi, Devanagari),
-Hinglish (hg, romanised — matching the tone already used in this project's other bot copy,
-e.g. "Aapki report ready hote hi yahin bhej di jayegi.").
+Four-language string table for the conversation flow: English (en), Hindi (hi, Devanagari),
+Hinglish (hg, romanised — matching the tone already used in this project's other bot copy),
+and Bengali (bn).
 
 Design note: this is a plain dict, not a full i18n framework (gettext, babel, etc.) —
 deliberately KISS, matching this project's stated preference elsewhere ("KISS first, add
 complexity only when there's a concrete need"). ~40 keys is small enough that a dict is the
-simplest thing that works; revisit only if the string count grows much larger or a translator
-workflow (as opposed to hand-editing this file) becomes necessary.
-
-`lang` is always one of "en" / "hi" / "hg". Any code path that doesn't yet know the patient's
-choice (i.e. before LANG_PROMPT is answered) must not call t() — LANG_PROMPT itself is the one
-message that has no language variant, since it's what solicits the language in the first place.
+simplest thing that works.
 """
 
 DEFAULT_LANG = "en"
 
-LANGUAGE_LABELS = {"en": "English", "hi": "हिंदी", "hg": "Hinglish"}
+LANGUAGE_LABELS = {"en": "English", "hi": "हिंदी", "hg": "Hinglish", "bn": "বাংলা"}
 
 # ---------------------------------------------------------------------------------------
 # Specialty grouping — why this exists:
@@ -47,21 +42,33 @@ SPECIALTY_GROUPS = [
             "Geriatrician",
             "Emergency Medicine Specialist",
         ],
-        "title": {"en": "🩺 Everyday health", "hi": "🩺 रोज़मर्रा की सेहत", "hg": "🩺 Rozmarra ki sehat"},
+        "title": {
+            "en": "🩺 Everyday health",
+            "hi": "🩺 रोज़मर्रा की सेहत",
+            "hg": "🩺 Rozmarra ki sehat",
+            "bn": "🩺 দৈনন্দিন স্বাস্থ্য",
+        },
         "desc": {
             "en": "Fever, cough, BP, sugar, check-up",
             "hi": "बुखार, खांसी, बीपी, शुगर, जांच",
             "hg": "Bukhar, khaansi, BP, sugar, check-up",
+            "bn": "জ্বর, কাশি, বিপি, সুগার, চেক-আপ",
         },
     },
     {
         "id": "grp_women_children",
         "categories": ["Gynaecologist", "Paediatrician"],
-        "title": {"en": "👶 Women & children", "hi": "👶 महिला और बच्चे", "hg": "👶 Mahila aur bachche"},
+        "title": {
+            "en": "👶 Women & children",
+            "hi": "👶 महिला और बच्चे",
+            "hg": "👶 Mahila aur bachche",
+            "bn": "👶 নারী ও শিশু",
+        },
         "desc": {
             "en": "Pregnancy, periods, child health",
             "hi": "गर्भावस्था, पीरियड्स, बच्चों की सेहत",
             "hg": "Pregnancy, periods, bachchon ki sehat",
+            "bn": "গর্ভাবস্থা, পিরিয়ড, শিশু স্বাস্থ্য",
         },
     },
     {
@@ -72,21 +79,33 @@ SPECIALTY_GROUPS = [
             "Physiotherapist / Rehab",
             "Sports Medicine Specialist",
         ],
-        "title": {"en": "🦴 Bones & joints", "hi": "🦴 हड्डी और जोड़", "hg": "🦴 Haddi aur jod"},
+        "title": {
+            "en": "🦴 Bones & joints",
+            "hi": "🦴 हड्डी और जोड़",
+            "hg": "🦴 Haddi aur jod",
+            "bn": "🦴 হাড় এবং জয়েন্ট",
+        },
         "desc": {
             "en": "Back pain, knee pain, fracture, sprain",
             "hi": "कमर दर्द, घुटने का दर्द, फ्रैक्चर, मोच",
             "hg": "Kamar dard, ghutne ka dard, fracture",
+            "bn": "পিঠের ব্যথা, হাঁটুর ব্যথা, ফ্র্যাকচার",
         },
     },
     {
         "id": "grp_eyes_ent_skin",
         "categories": ["Ophthalmologist (Eye)", "ENT Specialist", "Dermatologist (Skin)"],
-        "title": {"en": "👁️ Eye, ENT & skin", "hi": "👁️ आंख, कान, त्वचा", "hg": "👁️ Aankh, ENT, skin"},
+        "title": {
+            "en": "👁️ Eye, ENT & skin",
+            "hi": "👁️ आंख, कान, त्वचा",
+            "hg": "👁️ Aankh, ENT, skin",
+            "bn": "👁️ চোখ, কান ও ত্বক",
+        },
         "desc": {
             "en": "Eyesight, ear pain, throat, rashes",
             "hi": "नज़र, कान दर्द, गला, चर्म रोग",
             "hg": "Nazar, kaan dard, gala, skin problem",
+            "bn": "দৃষ্টিশক্তি, কানের ব্যথা, গলা, ফুসকুড়ি",
         },
     },
     {
@@ -97,51 +116,81 @@ SPECIALTY_GROUPS = [
             "Nephrologist (Kidney)",
             "Urologist",
         ],
-        "title": {"en": "💧 Stomach & kidney", "hi": "💧 पेट और किडनी", "hg": "💧 Pet aur kidney"},
+        "title": {
+            "en": "💧 Stomach & kidney",
+            "hi": "💧 पेट और किडनी",
+            "hg": "💧 Pet aur kidney",
+            "bn": "💧 পাকস্থলী ও কিডনি",
+        },
         "desc": {
             "en": "Acidity, stomach pain, urine, stones",
             "hi": "एसिडिटी, पेट दर्द, पेशाब, पथरी",
             "hg": "Acidity, pet dard, peshab, pathri",
+            "bn": "অ্যাসিডিটি, পেটে ব্যথা, প্রস্রাব, পাথর",
         },
     },
     {
         "id": "grp_heart_chest",
         "categories": ["Cardiologist (Heart)", "Pulmonologist (Chest/Lungs)", "Cardiothoracic Surgeon"],
-        "title": {"en": "❤️ Heart & chest", "hi": "❤️ दिल और छाती", "hg": "❤️ Dil aur chhaati"},
+        "title": {
+            "en": "❤️ Heart & chest",
+            "hi": "❤️ दिल और छाती",
+            "hg": "❤️ Dil aur chhaati",
+            "bn": "❤️ হার্ট এবং বুক",
+        },
         "desc": {
             "en": "Chest pain, breathing trouble, asthma",
-            "hi": "सीने में दर्द, सांस की तकलीफ, अस्थमा",
+            "hi": "सीने में दर्द, सांस की तकलीफ, अस्थমা",
             "hg": "Seene mein dard, saans ki takleef, asthma",
+            "bn": "বুকে ব্যথা, শ্বাসকষ্ট, হাঁপানি",
         },
     },
     {
         "id": "grp_brain_mind",
         "categories": ["Neurologist", "Neurosurgeon", "Psychiatrist"],
-        "title": {"en": "🧠 Brain & mind", "hi": "🧠 दिमाग और मन", "hg": "🧠 Dimaag aur mann"},
+        "title": {
+            "en": "🧠 Brain & mind",
+            "hi": "🧠 दिमाग और मन",
+            "hg": "🧠 Dimaag aur mann",
+            "bn": "🧠 মস্তিষ্ক ও মন",
+        },
         "desc": {
             "en": "Headache, fits, memory, stress, sleep",
             "hi": "सिरदर्द, दौरे, याददाश्त, तनाव, नींद",
             "hg": "Sirdard, daure, yaaddasht, stress, neend",
+            "bn": "মাথাব্যথা, খিঁচুনি, স্মৃতিশক্তি, মানসিক চাপ",
         },
     },
     {
         "id": "grp_surgery",
         "categories": ["General Surgeon", "Plastic Surgeon", "Vascular Surgeon", "Oncologist (Cancer)"],
-        "title": {"en": "🏥 Surgery & cancer", "hi": "🏥 सर्जरी और कैंसर", "hg": "🏥 Surgery aur cancer"},
+        "title": {
+            "en": "🏥 Surgery & cancer",
+            "hi": "🏥 सर्जरी और कैंसर",
+            "hg": "🏥 Surgery aur cancer",
+            "bn": "🏥 সার্জারি ও ক্যান্সার",
+        },
         "desc": {
             "en": "Operations, cancer treatment, veins",
             "hi": "ऑपरेशन, कैंसर का इलाज, नसें",
             "hg": "Operation, cancer ka ilaaj, nasein",
+            "bn": "অপারেশন, ক্যান্সারের চিকিৎসা, শিরা",
         },
     },
     {
         "id": "grp_tests",
         "categories": ["Radiologist", "Pathologist", "Anaesthesiologist"],
-        "title": {"en": "🔬 Tests & scans", "hi": "🔬 जांच और स्कैन", "hg": "🔬 Jaanch aur scan"},
+        "title": {
+            "en": "🔬 Tests & scans",
+            "hi": "🔬 जांच और स्कैन",
+            "hg": "🔬 Jaanch aur scan",
+            "bn": "🔬 পরীক্ষা এবং স্ক্যান",
+        },
         "desc": {
             "en": "X-ray, sonography, lab reports",
             "hi": "एक्स-रे, सोनोग्राफी, लैब रिपोर्ट",
             "hg": "X-ray, sonography, lab report",
+            "bn": "এক্স-রে, সোনোগ্রাফি, ল্যাব রিপোর্ট",
         },
     },
 ]
@@ -151,11 +200,17 @@ SPECIALTY_GROUPS = [
 # mode this whole grouping exists to fix). Only offered when it actually has something in it.
 OTHER_GROUP = {
     "id": "grp_other",
-    "title": {"en": "➕ Other specialities", "hi": "➕ अन्य विशेषज्ञ", "hg": "➕ Aur specialities"},
+    "title": {
+        "en": "➕ Other specialities",
+        "hi": "➕ अन्य विशेषज्ञ",
+        "hg": "➕ Aur specialities",
+        "bn": "➕ অন্যান্য বিশেষজ্ঞতা",
+    },
     "desc": {
         "en": "Anything not listed above",
         "hi": "जो ऊपर नहीं दिखा",
         "hg": "Jo upar nahi dikha",
+        "bn": "উপরে তালিকাভুক্ত নয় এমন কিছু",
     },
 }
 
@@ -167,11 +222,12 @@ def group_label(group: dict, lang: str | None) -> tuple[str, str]:
     desc = group["desc"].get(lang) or group["desc"][DEFAULT_LANG]
     return title, desc
 
-# The very first message of any conversation — necessarily shown in all three at once,
+
+# The very first message of any conversation — necessarily shown in all languages at once,
 # since we don't know the patient's preference yet.
 LANG_PROMPT = (
     "👋 Welcome! I can help you book a doctor's appointment.\n"
-    "भाषा चुनें / Please choose a language / Language choose kar lijiye:"
+    "भाषा चुनें / Please choose a language / Language choose kar lijiye / ভাষা চয়ন করুন:"
 )
 
 _STRINGS: dict[str, dict[str, str]] = {
@@ -179,89 +235,125 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "Great, I'll continue in English. Who is this appointment for?",
         "hi": "ठीक है, अब मैं हिंदी में बात करूँगा। यह अपॉइंटमेंट किसके लिए है?",
         "hg": "Theek hai, ab Hinglish mein baat karte hain. Yeh appointment kiske liye hai?",
+        "bn": "ঠিক আছে, আমি বাংলায় কথা বলব। এই অ্যাপয়েন্টমেন্টটি কার জন্য?",
     },
     "person_prompt": {
         "en": "Who are you booking for?",
         "hi": "आप किसके लिए बुकिंग कर रहे हैं?",
         "hg": "Kiske liye book kar rahe hain?",
+        "bn": "আপনি কার জন্য বুক করছেন?",
     },
     # Button titles are capped at 20 chars by WhatsApp (_MAX_BUTTON_TITLE) — these are kept
     # short deliberately so they never render half-cut ("Family member ke liy").
-    "person_self": {"en": "For myself", "hi": "खुद के लिए", "hg": "Khud ke liye"},
-    "person_family": {"en": "For family", "hi": "परिवार के लिए", "hg": "Family ke liye"},
+    "person_self": {
+        "en": "For myself",
+        "hi": "खुद के लिए",
+        "hg": "Khud ke liye",
+        "bn": "নিজের জন্য",
+    },
+    "person_family": {
+        "en": "For family",
+        "hi": "परिवार के लिए",
+        "hg": "Family ke liye",
+        "bn": "পরিবারের জন্য",
+    },
     "person_choose_hint": {
         "en": "Please tap one of the options above.",
         "hi": "कृपया ऊपर दिए गए विकल्पों में से एक चुनें।",
         "hg": "Please upar diye options mein se ek choose kar lijiye.",
+        "bn": "অনুগ্রহ করে উপরের বিকল্পগুলির মধ্যে একটিতে ট্যাপ করুন।",
     },
-    "you": {"en": "You", "hi": "आप", "hg": "Aap"},
-    "clinic_unknown": {"en": "Clinic", "hi": "क्लिनिक", "hg": "Clinic"},
+    "you": {"en": "You", "hi": "आप", "hg": "Aap", "bn": "আপনি"},
+    "clinic_unknown": {"en": "Clinic", "hi": "क्लिनिक", "hg": "Clinic", "bn": "ক্লিনিক"},
     "self_details_prompt": {
         "en": "Please send your name and age — e.g. 'Aquib, 32'.",
         "hi": "कृपया अपना नाम और उम्र भेजें — जैसे 'अकीब, 32'।",
         "hg": "Apna naam aur age bhejein — jaise 'Aquib, 32'.",
+        "bn": "অনুগ্রহ করে আপনার নাম এবং বয়স পাঠান — যেমন 'Aquib, 32'।",
     },
     "self_details_invalid": {
         "en": "Please send it as: Name, Age (e.g. 'Aquib, 32').",
         "hi": "कृपया इस तरह भेजें: नाम, उम्र (जैसे 'अकीब, 32')।",
         "hg": "Is format mein bhejein: Naam, Age (jaise 'Aquib, 32').",
+        "bn": "অনুগ্রহ করে এইভাবে পাঠান: নাম, বয়স (যেমন 'Aquib, 32')।",
     },
     "age_invalid": {
         "en": "That age doesn't look right — please send a number of years, e.g. 32.",
         "hi": "यह उम्र सही नहीं लग रही — कृपया वर्षों में संख्या भेजें, जैसे 32।",
         "hg": "Ye age sahi nahi lag rahi — saalon mein number bhejein, jaise 32.",
+        "bn": "এই বয়সটি সঠিক মনে হচ্ছে না — অনুগ্রহ করে বছরের সংখ্যা পাঠান, যেমন 32।",
     },
     "family_details_prompt": {
         "en": "Please send the patient's name, age, and relation to you — e.g. 'Riya, 8, Daughter'.",
         "hi": "कृपया मरीज़ का नाम, उम्र और आपसे रिश्ता भेजें — जैसे 'रिया, 8, बेटी'।",
         "hg": "Patient ka naam, age, aur aapse relation bhejein — jaise 'Riya, 8, Daughter'.",
+        "bn": "রোগীর নাম, বয়স এবং আপনার সাথে সম্পর্ক পাঠান — যেমন 'Riya, 8, Daughter'।",
     },
     "family_details_invalid": {
         "en": "Please send it as: Name, Age, Relation (e.g. 'Riya, 8, Daughter').",
         "hi": "कृपया इस तरह भेजें: नाम, उम्र, रिश्ता (जैसे 'रिया, 8, बेटी')।",
         "hg": "Is format mein bhejein: Naam, Age, Relation (jaise 'Riya, 8, Daughter').",
+        "bn": "অনুগ্রহ করে এইভাবে পাঠান: নাম, বয়স, সম্পর্ক (যেমন 'Riya, 8, Daughter')।",
     },
     "location_prompt": {
         "en": "To show doctors near you, please share your location — tap below, it fills in from your phone's GPS automatically.",
-        "hi": "आपके पास के डॉक्टर दिखाने के लिए, कृपया अपनी लोकेशन शेयर करें — नीचे टैप करें, यह आपके फोन के GPS से अपने आप भर जाएगी।",
+        "hi": "आपके पास के डॉक्टर दिखाने के लिए, कृपया अपनी लोकेशन शेयर करें — नीचे टैপ करें, यह आपके फोन के GPS से अपने आप भर जाएगी।",
         "hg": "Aapke paas ke doctors dikhane ke liye, apni location share kar dijiye — neeche tap karein, phone ke GPS se automatic fill ho jayegi.",
+        "bn": "আপনার কাছাকাছি ডাক্তারদের দেখাতে, অনুগ্রহ করে আপনার অবস্থান শেয়ার করুন — নিচে ট্যাপ করুন, এটি আপনার ফোনের জিপিএস থেকে স্বয়ংক্রিয়ভাবে পূরণ হবে।",
     },
     "location_manual_hint": {
         "en": "Or just type your city/area name instead.",
         "hi": "या फिर अपने शहर/इलाके का नाम टाइप कर दें।",
         "hg": "Ya phir apne city/area ka naam type kar dijiye.",
+        "bn": "অথবা এর পরিবর্তে শুধু আপনার শহর/এলাকার নাম টাইপ করুন।",
     },
     "search_mode_prompt": {
         "en": "How would you like to find a doctor?",
         "hi": "आप डॉक्टर कैसे खोजना चाहेंगे?",
         "hg": "Doctor kaise dhundna chahenge?",
+        "bn": "আপনি কিভাবে ডাক্তার খুঁজতে চান?",
     },
-    "search_mode_symptom": {"en": "Describe symptoms", "hi": "लक्षण बताएं", "hg": "Symptoms bataayein"},
-    "search_mode_browse": {"en": "Browse specialties", "hi": "विशेषज्ञता देखें", "hg": "Specialty dekhein"},
+    "search_mode_symptom": {
+        "en": "Describe symptoms",
+        "hi": "लक्षण बताएं",
+        "hg": "Symptoms bataayein",
+        "bn": "লক্ষণ বলুন",
+    },
+    "search_mode_browse": {
+        "en": "Browse specialties",
+        "hi": "विशेषज्ञता देखें",
+        "hg": "Specialty dekhein",
+        "bn": "বিশেষজ্ঞতা খুঁজুন",
+    },
     "symptom_ask": {
         "en": "Sure — describe what's bothering you (e.g. 'chest pain and shortness of breath').",
         "hi": "ठीक है — बताएं क्या तकलीफ़ है (जैसे 'सीने में दर्द और सांस फूलना')।",
         "hg": "Theek hai — bataiye kya problem hai (jaise 'chest pain aur saans phoolna').",
+        "bn": "অবশ্যই — আপনার সমস্যাটি বর্ণনা করুন (যেমন 'বুকে ব্যথা এবং শ্বাসকষ্ট')।",
     },
     "symptom_text_required": {
         "en": "Please describe your symptoms as text.",
         "hi": "कृपया अपने लक्षण टेक्स्ट में लिखें।",
         "hg": "Apne symptoms text mein likh dijiye.",
+        "bn": "অনুগ্রহ করে আপনার লক্ষণগুলি পাঠ্য হিসাবে বর্ণনা করুন।",
     },
     "symptom_no_match": {
         "en": "I couldn't confidently match that to a specialty — here's the full list instead:",
         "hi": "मैं इसे किसी विशेषज्ञता से पक्के तौर पर नहीं जोड़ पाया — इसके बजाय पूरी सूची यहां है:",
         "hg": "Main isko kisi specialty se confidently match nahi kar paaya — poori list yeh rahi:",
+        "bn": "আমি নিশ্চিতভাবে এটিকে কোনো বিশেষজ্ঞতার সাথে মেলাতে পারিনি — পরিবর্তে সম্পূর্ণ তালিকাটি এখানে দেওয়া হলো:",
     },
     "symptom_matched": {
         "en": "That sounds like a job for a {category}.",
         "hi": "यह {category} के काम जैसा लगता है।",
         "hg": "Yeh {category} ka kaam lagta hai.",
+        "bn": "এটি একজন {category} এর কাজ বলে মনে হচ্ছে।",
     },
     "no_specialties": {
         "en": "Sorry, no doctors are available for booking right now. Please try later.",
-        "hi": "क्षमा करें, अभी बुकिंग के लिए कोई डॉक्टर उपलब्ध नहीं है। कृपया बाद में कोशिश करें।",
+        "hi": "क्षма करें, अभी बुकिंग के लिए कोई डॉक्टर उपलब्ध नहीं है। कृपया बाद में कोशिश करें।",
         "hg": "Sorry, abhi booking ke liye koi doctor available nahi hai. Baad mein try karein.",
+        "bn": "দুঃখিত, এই মুহূর্তে বুকিংয়ের জন্য কোনো ডাক্তার উপলব্ধ নেই। অনুগ্রহ করে পরে চেষ্টা করুন।",
     },
     # Deliberately not "Which specialty are you looking for?" — most patients don't think
     # in specialty names, and being asked to is what makes a chat feel like a form. Ask for
@@ -270,84 +362,143 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "No long forms here 🙂 Just tell me roughly what it's about — I'll find the right doctor.",
         "hi": "यहां कोई लंबा फॉर्म नहीं है 🙂 बस मोटे तौर पर बता दीजिए किस बारे में है — सही डॉक्टर मैं ढूंढ दूंगा।",
         "hg": "Yahan koi lamba form nahi hai 🙂 Bas mote taur par bata dijiye kis baare mein hai — sahi doctor main dhoond dunga.",
+        "bn": "এখানে কোনো দীর্ঘ ফর্ম নেই 🙂 শুধু আমাকে সংক্ষেপে বলুন এটা কী সম্পর্কে — আমি সঠিক ডাক্তার খুঁজে দেব।",
     },
-    "specialty_group_button": {"en": "Pick an area", "hi": "क्षेत्र चुनें", "hg": "Area choose karein"},
-    "specialty_group_section": {"en": "Areas", "hi": "क्षेत्र", "hg": "Areas"},
+    "specialty_group_button": {
+        "en": "Pick an area",
+        "hi": "क्षेत्र चुनें",
+        "hg": "Area choose karein",
+        "bn": "একটি এলাকা চয়ন করুন",
+    },
+    "specialty_group_section": {"en": "Areas", "hi": "क्षेत्र", "hg": "Areas", "bn": "এলাকা"},
     "specialty_group_choose_hint": {
         "en": "Please pick one of the areas above — or just describe how you're feeling and I'll work it out.",
         "hi": "कृपया ऊपर दिए क्षेत्रों में से एक चुनें — या बस बता दें कि क्या तकलीफ़ है, मैं समझ लूंगा।",
         "hg": "Upar diye areas mein se ek choose karein — ya bas bata dijiye kya takleef hai, main samajh lunga.",
+        "bn": "অনুগ্রহ করে উপরের এলাকাগুলির মধ্যে একটি বেছে নিন — অথবা আপনি কেমন অনুভব করছেন তা বর্ণনা করুন এবং আমি এটি সমাধান করব।",
     },
     "specialty_list_prompt": {
         "en": "Good — which of these fits best?",
         "hi": "ठीक है — इनमें से कौन सा सबसे सही रहेगा?",
         "hg": "Theek hai — inmein se kaun sa sabse sahi rahega?",
+        "bn": "ভালো — এর মধ্যে কোনটি সবচেয়ে উপযুক্ত?",
     },
-    "specialty_list_button": {"en": "Choose specialty", "hi": "विशेषज्ञता चुनें", "hg": "Specialty chunein"},
+    "specialty_list_button": {
+        "en": "Choose specialty",
+        "hi": "विशेषज्ञता चुनें",
+        "hg": "Specialty chunein",
+        "bn": "বিশেষজ্ঞতা বেছে নিন",
+    },
     "specialty_choose_hint": {
         "en": "Please choose a specialty from the list above.",
-        "hi": "कृपया ऊपर सूची में से एक विशेषज्ञता चुनें।",
+        "hi": "कृपया ऊपर सूची में से एक विशेषज्ञতা चुनें।",
         "hg": "Upar list mein se specialty choose kar lijiye.",
+        "bn": "অনুগ্রহ করে উপরের তালিকা থেকে একটি বিশেষজ্ঞতা বেছে নিন।",
     },
     "sort_prompt": {
         "en": "How should I sort the doctor list?",
         "hi": "डॉक्टरों की सूची किस आधार पर दिखाऊं?",
         "hg": "Doctor list kis basis par dikhayein?",
+        "bn": "আমি কিভাবে ডাক্তারদের তালিকা সাজাব?",
     },
-    "sort_button": {"en": "Choose sort order", "hi": "क्रम चुनें", "hg": "Sort karein"},
-    "sort_rating": {"en": "Top rated", "hi": "सर्वश्रेष्ठ रेटिंग", "hg": "Top rated"},
-    "sort_nearest": {"en": "Nearest first", "hi": "सबसे नज़दीक", "hg": "Sabse nazdeek"},
-    "sort_experience": {"en": "Most experienced", "hi": "सबसे अनुभवी", "hg": "Sabse experienced"},
-    "sort_fee": {"en": "Lowest fee", "hi": "सबसे कम फीस", "hg": "Sabse kam fees"},
+    "sort_button": {
+        "en": "Choose sort order",
+        "hi": "क्रम चुनें",
+        "hg": "Sort karein",
+        "bn": "সাজানোর ক্রম",
+    },
+    "sort_rating": {
+        "en": "Top rated",
+        "hi": "सर्वश्रेष्ठ रेटिंग",
+        "hg": "Top rated",
+        "bn": "সর্বোচ্চ রেটিং",
+    },
+    "sort_nearest": {
+        "en": "Nearest first",
+        "hi": "सबसे नज़दीक",
+        "hg": "Sabse nazdeek",
+        "bn": "সবচেয়ে কাছাকাছি আগে",
+    },
+    "sort_experience": {
+        "en": "Most experienced",
+        "hi": "सबसे अनुभवी",
+        "hg": "Sabse experienced",
+        "bn": "সবচেয়ে অভিজ্ঞ",
+    },
+    "sort_fee": {
+        "en": "Lowest fee",
+        "hi": "सबसे कम फीस",
+        "hg": "Sabse kam fees",
+        "bn": "সর্বনিম্ন ফি",
+    },
     "sort_choose_hint": {
         "en": "Please choose one of the sort options above.",
         "hi": "कृपया ऊपर दिए क्रम विकल्पों में से एक चुनें।",
         "hg": "Upar diye sort options mein se ek choose kar lijiye.",
+        "bn": "অনুগ্রহ করে উপরের সাজানোর বিকল্পগুলির মধ্যে একটি বেছে নিন।",
     },
     "no_doctors": {
         "en": "Sorry, no doctors are currently available in that specialty. Please type 'hi' to start over.",
         "hi": "क्षमा करें, अभी इस विशेषज्ञता में कोई डॉक्टर उपलब्ध नहीं है। फिर से शुरू करने के लिए 'hi' टाइप करें।",
         "hg": "Sorry, is specialty mein abhi koi doctor available nahi hai. Phir se shuru karne ke liye 'hi' type karein.",
+        "bn": "দুঃখিত, এই মুহূর্তে সেই বিশেষজ্ঞতার কোনো ডাক্তার উপলব্ধ নেই। আবার শুরু করতে 'hi' টাইপ করুন।",
     },
     "doctors_widened": {
         "en": "No doctors of this type in {city} right now — showing nearby options instead.",
         "hi": "{city} में अभी इस तरह के डॉक्टर नहीं हैं — आस-पास के विकल्प दिखा रहे हैं।",
         "hg": "{city} mein abhi is type ke doctor nahi hain — aas-paas ke options dikha rahe hain.",
+        "bn": "এই মুহূর্তে {city}-তে এই ধরণের কোনো ডাক্তার নেই — পরিবর্তে কাছাকাছি বিকল্পগুলি দেখানো হচ্ছে।",
     },
     "doctors_widened_radius": {
         "en": "Nobody very close by, so here's everyone within about {radius} km.",
         "hi": "बिल्कुल पास कोई नहीं मिला, तो लगभग {radius} किमी के अंदर के सभी डॉक्टर दिखा रहे हैं।",
         "hg": "Bilkul paas koi nahi mila, to lagbhag {radius} km ke andar ke sabhi doctor dikha rahe hain.",
+        "bn": "খুব কাছাকাছি কেউ নেই, তাই প্রায় {radius} কিমি এর মধ্যে যারা আছেন তাদের দেখানো হচ্ছে।",
     },
     "no_doctors_in_radius": {
         "en": "I couldn't find this type of doctor within {radius} km of you. Shall I look further away?",
         "hi": "आपसे {radius} किमी के अंदर इस तरह के डॉक्टर नहीं मिले। क्या और दूर तक देखूं?",
         "hg": "Aapse {radius} km ke andar is type ke doctor nahi mile. Aur door tak dekhun?",
+        "bn": "আমি আপনার {radius} কিমি এর মধ্যে এই ধরণের ডাক্তার খুঁজে পাইনি। আমি কি আরও দূরে খুঁজব?",
     },
     # Button title — must stay inside WhatsApp's 20-char cap (test_specialty_groups.py checks this).
-    "search_wider_yes": {"en": "Yes, look further", "hi": "हां, और दूर देखें", "hg": "Haan, door dekhein"},
+    "search_wider_yes": {
+        "en": "Yes, look further",
+        "hi": "हां, और दूर देखें",
+        "hg": "Haan, door dekhein",
+        "bn": "হ্যাঁ, দূরে দেখুন",
+    },
     "doctor_list_prompt": {
         "en": "Here are the doctors available:",
         "hi": "उपलब्ध डॉक्टरों की सूची यह है:",
         "hg": "Available doctors ki list yeh hai:",
+        "bn": "এখানে উপলব্ধ ডাক্তারদের তালিকা রয়েছে:",
     },
-    "doctor_list_button": {"en": "Choose doctor", "hi": "डॉक्टर चुनें", "hg": "Doctor choose karein"},
+    "doctor_list_button": {
+        "en": "Choose doctor",
+        "hi": "डॉक्टर चुनें",
+        "hg": "Doctor choose karein",
+        "bn": "ডাক্তার বেছে নিন",
+    },
     "doctor_choose_hint": {
         "en": "Please choose a doctor from the list above.",
         "hi": "कृपया ऊपर सूची में से एक doctor चुनें।",
         "hg": "Upar list mein se doctor choose kar lijiye.",
+        "bn": "অনুগ্রহ করে উপরের তালিকা থেকে একজন ডাক্তার বেছে নিন।",
     },
     "date_prompt": {
         "en": "When would you like to visit?",
         "hi": "आप कब आना चाहेंगे?",
         "hg": "Kab aana chahenge?",
+        "bn": "আপনি কখন দেখা করতে চান?",
     },
-    "date_today": {"en": "Today", "hi": "आज", "hg": "Aaj"},
-    "date_tomorrow": {"en": "Tomorrow", "hi": "कल", "hg": "Kal"},
+    "date_today": {"en": "Today", "hi": "आज", "hg": "Aaj", "bn": "আজ"},
+    "date_tomorrow": {"en": "Tomorrow", "hi": "कल", "hg": "Kal", "bn": "আগামীকাল"},
     "date_choose_hint": {
         "en": "Please choose Today or Tomorrow above.",
         "hi": "कृपया ऊपर आज या कल चुनें।",
         "hg": "Upar Aaj ya Kal choose kar lijiye.",
+        "bn": "অনুগ্রহ করে উপরে আজ বা আগামীকাল বেছে নিন।",
     },
     # These two keep the patient's session — they're offered alongside buttons for the other
     # day and for picking a different doctor, so nothing they've already answered is lost.
@@ -355,17 +506,25 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "That doctor isn't available then. Try another day, or pick a different doctor?",
         "hi": "उस दिन यह डॉक्टर उपलब्ध नहीं है। दूसरा दिन देखें, या दूसरा डॉक्टर चुनें?",
         "hg": "Us din yeh doctor available nahi hai. Doosra din dekhein, ya doosra doctor chunein?",
+        "bn": "সেই ডাক্তার তখন উপলব্ধ নেই। অন্য দিন চেষ্টা করবেন, নাকি অন্য ডাক্তার বেছে নেবেন?",
     },
     "today_shifts_over": {
         "en": "Today's timings are already over. Try tomorrow, or pick a different doctor?",
         "hi": "आज का समय निकल चुका है। कल देखें, या दूसरा डॉक्टर चुनें?",
         "hg": "Aaj ka time nikal chuka hai. Kal dekhein, ya doosra doctor chunein?",
+        "bn": "আজকের সময় ইতিমধ্যেই শেষ। আগামীকাল চেষ্টা করবেন, নাকি অন্য ডাক্তার বেছে নেবেন?",
     },
-    "change_doctor_btn": {"en": "Different doctor", "hi": "दूसरा डॉक्टर", "hg": "Doosra doctor"},
+    "change_doctor_btn": {
+        "en": "Different doctor",
+        "hi": "दूसरा डॉक्टर",
+        "hg": "Doosra doctor",
+        "bn": "অন্য ডাক্তার",
+    },
     "shift_prompt": {
         "en": "Which time of day works best?",
         "hi": "दिन के किस समय आना ठीक रहेगा?",
         "hg": "Din ke kis time aana theek rahega?",
+        "bn": "দিনের কোন সময়টি সবচেয়ে ভালো হয়?",
     },
     # Lists what's actually still open, so a patient who types instead of tapping is told
     # which words will work rather than just being refused.
@@ -373,6 +532,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "Please pick one of these: {options}",
         "hi": "इनमें से एक चुनें: {options}",
         "hg": "Inmein se ek chunein: {options}",
+        "bn": "অনুগ্রহ করে এর মধ্যে একটি বেছে নিন: {options}",
     },
     # Itemised rather than one run-on sentence, and the clinic line is the reason why: the
     # search reaches up to 75km, so the doctor may be in a different town from the patient.
@@ -381,53 +541,63 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "Please check and confirm:\n\n👤 {patient}\n🩺 {doctor}\n🏥 {where}\n📅 {when}\n💰 ₹{fee}",
         "hi": "देख लीजिए और कन्फ़र्म करें:\n\n👤 {patient}\n🩺 {doctor}\n🏥 {where}\n📅 {when}\n💰 ₹{fee}",
         "hg": "Dekh lijiye aur confirm karein:\n\n👤 {patient}\n🩺 {doctor}\n🏥 {where}\n📅 {when}\n💰 ₹{fee}",
+        "bn": "অনুগ্রহ করে পরীক্ষা করে নিশ্চিত করুন:\n\n👤 {patient}\n🩺 {doctor}\n🏥 {where}\n📅 {when}\n💰 ₹{fee}",
     },
-    "confirm_btn": {"en": "Confirm", "hi": "कन्फ़र्म करें", "hg": "Confirm"},
-    "cancel_btn": {"en": "Cancel", "hi": "रद्द करें", "hg": "Cancel"},
+    "confirm_btn": {"en": "Confirm", "hi": "कन्फ़र्म करें", "hg": "Confirm", "bn": "নিশ্চিত করুন"},
+    "cancel_btn": {"en": "Cancel", "hi": "रद्द करें", "hg": "Cancel", "bn": "বাতিল করুন"},
     "confirm_choose_hint": {
         "en": "Please tap Confirm or Cancel above.",
-        "hi": "कृपया ऊपर Confirm या Cancel पर टैप करें।",
+        "hi": "कृपया ऊपर Confirm या Cancel पर tap करें।",
         "hg": "Upar Confirm ya Cancel par tap karein.",
+        "bn": "অনুগ্রহ করে উপরে নিশ্চিত করুন বা বাতিল করুন-এ ট্যাপ করুন।",
     },
     "cancelled": {
         "en": "No problem — booking cancelled.",
         "hi": "कोई बात नहीं — बुकिंग रद्द कर दी गई है।",
         "hg": "Koi baat nahi — booking cancel kar di gayi hai.",
+        "bn": "কোনো সমস্যা নেই — বুকিং বাতিল করা হয়েছে।",
     },
     "already_pending": {
         "en": "You already have a pending request for that day — our team will reach out shortly.",
         "hi": "उस दिन के लिए आपका एक अनुरोध पहले से लंबित है — हमारी टीम जल्द ही संपर्क करेगी।",
         "hg": "Us din ke liye aapka ek request pehle se pending hai — hamari team jald hi contact karegi.",
+        "bn": "সেই দিনের জন্য আপনার ইতিমধ্যে একটি অনুরোধ মুলতুবি রয়েছে — আমাদের দল শীঘ্রই যোগাযোগ করবে।",
     },
     "booked_success": {
         "en": "Appointment request for {patient_name} has been submitted! Our front desk will confirm the exact time shortly.",
         "hi": "{patient_name} के लिए अपॉइंटमेंट अनुरोध भेज दिया गया है! हमारी रिसेप्शन जल्द ही सही समय कन्फ़र्म करेगी।",
         "hg": "{patient_name} ke liye appointment request submit ho gayi hai! Front desk jald hi exact time confirm karegi.",
+        "bn": "{patient_name}-এর জন্য অ্যাপয়েন্টমেন্টের অনুরোধ জমা দেওয়া হয়েছে! আমাদের ফ্রন্ট ডেস্ক শীঘ্রই সঠিক সময় নিশ্চিত করবে।",
     },
     "booked_queue_note": {
         "en": "We'll send you live queue/token updates on WhatsApp on the day of the visit.",
-        "hi": "विज़िट के दिन हम आपको WhatsApp पर लाइव क्यू/टोकन अपडेट भेजेंगे।",
+        "hi": "विज़ิต के दिन हम आपको WhatsApp पर लाइव क्यू/टोकन अपडेट भेजेंगे।",
         "hg": "Visit ke din hum aapko WhatsApp par live queue/token updates bhejenge.",
+        "bn": "আমরা পরিদর্শনের দিন আপনাকে হোয়াটসঅ্যাপে লাইভ কিউ/টোকন আপডেট পাঠাব।",
     },
     "booked_map_caption": {
         "en": "{hospital_name} — tap to see the location.",
         "hi": "{hospital_name} — लोकेशन देखने के लिए टैप करें।",
         "hg": "{hospital_name} — location dekhne ke liye tap karein.",
+        "bn": "{hospital_name} — অবস্থান দেখতে ট্যাপ করুন।",
     },
     "error_hms": {
         "en": "Sorry, something went wrong on our end. Please try again in a moment.",
         "hi": "क्षमा करें, हमारी तरफ़ से कुछ गड़बड़ हो गई। कृपया थोड़ी देर में फिर कोशिश करें।",
         "hg": "Sorry, hamari taraf se kuch gadbad ho gayi. Thodi der mein phir try karein.",
+        "bn": "দুঃখিত, আমাদের তরফ থেকে কিছু ভুল হয়েছে। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।",
     },
     "error_hms_unreachable": {
         "en": "Our booking system is temporarily unavailable. Please try again shortly.",
         "hi": "हमारा बुकिंग सिस्टम अभी अस्थायी रूप से उपलब्ध नहीं है। कृपया थोड़ी देर बाद कोशिश करें।",
         "hg": "Hamara booking system abhi temporarily available nahi hai. Thodi der baad try karein.",
+        "bn": "আমাদের বুকিং সিস্টেম সাময়িকভাবে অনুপলব্ধ। অনুগ্রহ করে শীঘ্রই আবার চেষ্টা করুন।",
     },
     "followup_reminder": {
         "en": "Hi {patient_name}, just checking in after your visit to {doctor_name} — how are you feeling? Reply if you need a follow-up booked.",
         "hi": "नमस्ते {patient_name}, {doctor_name} से मिलने के बाद बस हाल-चाल पूछ रहे हैं — अब कैसा महसूस कर रहे हैं? फॉलो-अप बुक करना हो तो जवाब दें।",
         "hg": "Hi {patient_name}, {doctor_name} se milne ke baad bas haal-chaal pooch rahe hain — kaisa feel kar rahe hain? Follow-up book karna ho to reply karein.",
+        "bn": "হাই {patient_name}, {doctor_name}-এর কাছে আপনার পরিদর্শনের পর খোঁজ নিচ্ছি — আপনি কেমন অনুভব করছেন? ফলো-আপ বুক করতে হলে উত্তর দিন।",
     },
 }
 

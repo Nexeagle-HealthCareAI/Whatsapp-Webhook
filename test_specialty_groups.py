@@ -45,7 +45,7 @@ from app.whatsapp_client import (  # noqa: E402
     _MAX_ROW_TITLE,
 )
 
-LANGS = ("en", "hi", "hg")
+LANGS = ("en", "hi", "hg", "bn")
 
 # Frozen copy of a real GET /public/specialties response (1hms-dev-api.nexeagle.com).
 # If 1HMS's category strings ever change, these tests fail loudly — which is the point:
@@ -505,6 +505,47 @@ def test_every_string_has_all_three_languages():
     for key, variants in i18n._STRINGS.items():
         for lang in LANGS:
             check(variants.get(lang), f"string {key!r} is missing a {lang} translation")
+
+
+def test_language_detection():
+    detect = conversation._detect_language
+
+    # 1. Generic greetings (open option / None)
+    check(detect("hi") is None, "single word hi should be open option")
+    check(detect("hello") is None, "single word hello should be open option")
+    check(detect("hey") is None, "single word hey should be open option")
+    check(detect("  hey  ") is None, "whitespace-padded hey should be open option")
+    check(detect("Hlo") is None, "Capitalized hlo should be open option")
+
+    # 2. English (en) with spelling variations / typos
+    check(detect("hey i have to book an appointment") == "en", "standard english appointment booking should be en")
+    check(detect("need to bok an apointmint") == "en", "english with typos bok/apointmint should be en")
+    check(detect("dr appontment") == "en", "english with typos dr/appontment should be en")
+    check(detect("download prescribtion") == "en", "prescription download english should be en")
+    check(detect("get medicine list") == "en", "medicine list english should be en")
+
+    # 3. Hinglish (hg) with spelling variations / typos
+    check(detect("hi mujhe appointment book krna hai") == "hg", "standard hinglish appointment booking should be hg")
+    check(detect("muje appontment buk krna h") == "hg", "hinglish with typos muje/buk/h should be hg")
+    check(detect("apointment book krna he") == "hg", "hinglish with typos apointment/he should be hg")
+    check(detect("mje dr dikhao") == "hg", "hinglish with typo mje and dikhao should be hg")
+    check(detect("parcha download krna h") == "hg", "prescription download in hinglish should be hg")
+    check(detect("preskripsion downlod krna hai") == "hg", "prescription download with typos in hinglish should be hg")
+
+    # 4. Hindi Devanagari (hi) with spelling variations / typos
+    check(detect("मुझे अपॉइंटमेंट बुक करना है") == "hi", "hindi devanagari should be hi")
+    check(detect("अपोइंटमेंट बुक करना है") == "hi", "hindi devanagari with typo अपोइंटमेंट should be hi")
+    check(detect("डॉक्टर बुक करे") == "hi", "hindi devanagari doctor should be hi")
+    check(detect("दवा पर्ची डाउनलोड") == "hi", "hindi devanagari prescription download should be hi")
+
+    # 5. Bengali (bn) with spelling variations / typos
+    check(detect("আমি একটা অ্যাপয়েন্টমেন্ট বুক করতে চাই") == "bn", "bengali should be bn")
+    check(detect("ডাক্তার বুকিং করতে চাই") == "bn", "bengali doctor booking should be bn")
+    check(detect("প্রেসক্রিপশন ডাউনলোড") == "bn", "bengali prescription download should be bn")
+    check(detect("প্রেসক্রিপসন ডাউনলোড করতে চাই") == "bn", "bengali prescription typo should be bn")
+
+    # 6. Gibberish / Unknown
+    check(detect("xyz abc") is None, "gibberish should trigger open option")
 
 
 if __name__ == "__main__":

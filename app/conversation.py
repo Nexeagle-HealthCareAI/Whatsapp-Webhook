@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -60,6 +61,60 @@ def _looks_like_age(value: str) -> bool:
     return bool(digits) and 0 < int(digits) <= 120
 
 
+def _detect_language(text: str) -> str | None:
+    if not text:
+        return None
+
+    # Normalize: lowercase, strip, and strip common punctuation
+    normalized = text.strip().lower()
+    normalized = re.sub(r'[^\w\s\u0900-\u097F\u0980-\u09FF]', '', normalized)
+
+    # Generic greetings: return None to present open language selection prompt
+    greetings = {"hi", "hello", "hey", "hola", "namaste", "pranam", "helo", "hlo"}
+    if normalized in greetings:
+        return None
+
+    # Devanagari Hindi check
+    if re.search(r'[\u0900-\u097F]', text):
+        return "hi"
+
+    # Bengali check
+    if re.search(r'[\u0980-\u09FF]', text):
+        return "bn"
+
+    # Hinglish keywords/typos
+    hinglish_keywords = {
+        "mujhe", "muje", "mjhe", "mjh", "mje",
+        "chahiye", "chahie", "cahiye", "chaye", "chaiye", "chahye",
+        "karna", "krna", "karana", "krne", "karne", "krni", "karni", "karo", "kro",
+        "hai", "he", "h", "bhejo", "dikhao", "dikho", "dikhayein", "dikhaye",
+        "parcha", "parchi", "pacha", "dawa", "dawae", "dawai", "dawo", "hona"
+    }
+
+    # English keywords/typos
+    english_keywords = {
+        "book", "bok", "boke", "buk",
+        "appointment", "apointment", "apointmint", "apointmet", "apointmnt", "apointement", "appontment", "appoiment", "appoinment",
+        "doctor", "doctur", "doc", "dr", "docter", "dctr",
+        "find", "show", "search", "prescription", "prescribtion", "prescrip", "download", "downlod", "dawnload",
+        "rx", "medicine", "list", "get"
+    }
+
+    words = re.findall(r'\b\w+\b', normalized)
+    if not words:
+        return None
+
+    has_hinglish = any(w in hinglish_keywords for w in words)
+    has_english = any(w in english_keywords for w in words)
+
+    if has_hinglish:
+        return "hg"
+    elif has_english:
+        return "en"
+
+    return None
+
+
 async def handle_message(
     client: httpx.AsyncClient,
     phone: str,
@@ -106,7 +161,19 @@ async def handle_message(
         else:
             # No state (new/returning user) or an unrecognized step — restart cleanly
             # rather than leave the conversation stuck.
-            await _start(client, phone)
+            detected_lang = None
+            if input_type == "text" and input_value.strip():
+                detected_lang = _detect_language(input_value)
+
+            if detected_lang:
+                context = {**context, "lang": detected_lang}
+                await whatsapp_client.send_buttons(
+                    client, phone, t("greeting", detected_lang),
+                    [("self", t("person_self", detected_lang)), ("family", t("person_family", detected_lang))],
+                )
+                await db.save_conversation_state(phone, "choosing_person", context)
+            else:
+                await _start(client, phone)
     except HmsApiError as exc:
         logger.warning("HMS API rejected request for %s: %s", phone, exc)
         await whatsapp_client.send_text(client, phone, t("error_hms", lang))
