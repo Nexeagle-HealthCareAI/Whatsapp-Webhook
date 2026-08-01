@@ -884,18 +884,19 @@ async def _handle_choosing_shift(client, phone, input_type, input_value, context
 async def _send_patient_details_flow(client: httpx.AsyncClient, phone: str, context: dict) -> None:
     lang = context.get("lang")
     flow_id = settings.whatsapp_flow_id
-    if not flow_id:
-        await whatsapp_client.send_text(client, phone, t("patient_details_prompt_text", lang))
-    else:
-        await whatsapp_client.send_flow(
+    success = False
+    if flow_id:
+        success = await whatsapp_client.send_flow(
             client,
             to=phone,
             body_text=t("patient_details_prompt_flow", lang),
             flow_id=flow_id,
             flow_cta=t("patient_details_flow_cta", lang),
-            screen_id="PATIENT_FORM",
+            screen_id=settings.whatsapp_flow_screen_id,
             flow_token=f"token-{phone}",
         )
+    if not success:
+        await whatsapp_client.send_text(client, phone, t("patient_details_prompt_text", lang))
     await db.save_conversation_state(phone, "awaiting_patient_details", context)
 
 

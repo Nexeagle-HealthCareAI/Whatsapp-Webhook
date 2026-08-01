@@ -15,7 +15,7 @@ _MAX_ROW_TITLE = 24
 _MAX_BUTTON_TITLE = 20
 
 
-async def _send(client: httpx.AsyncClient, payload: dict) -> None:
+async def _send(client: httpx.AsyncClient, payload: dict) -> httpx.Response:
     response = await client.post(
         GRAPH_API_URL,
         headers={"Authorization": f"Bearer {settings.whatsapp_token}"},
@@ -24,6 +24,7 @@ async def _send(client: httpx.AsyncClient, payload: dict) -> None:
     logger.info("WhatsApp send to %s -> %s", payload.get("to"), response.status_code)
     if response.status_code >= 400:
         logger.error("WhatsApp send failed: %s", response.text)
+    return response
 
 
 async def send_text(client: httpx.AsyncClient, to: str, body: str) -> None:
@@ -153,9 +154,9 @@ async def send_flow(
     screen_id: str,
     flow_token: str,
     initial_data: dict | None = None,
-) -> None:
-    """Sends a standalone WhatsApp Flow interactive message."""
-    await _send(
+) -> bool:
+    """Sends a standalone WhatsApp Flow interactive message. Returns True if successful."""
+    response = await _send(
         client,
         {
             "messaging_product": "whatsapp",
@@ -182,3 +183,4 @@ async def send_flow(
             },
         },
     )
+    return response.status_code < 400
