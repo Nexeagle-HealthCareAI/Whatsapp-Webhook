@@ -168,6 +168,19 @@ async def send_flow(
     initial_data: dict | None = None,
 ) -> bool:
     """Sends a standalone WhatsApp Flow interactive message. Returns True if successful."""
+    parameters = {
+        "flow_message_version": "3",
+        "flow_token": flow_token,
+        "flow_id": flow_id,
+        "flow_cta": flow_cta,
+        "flow_action": "navigate",
+        "flow_action_payload": {
+            "screen": screen_id,
+        },
+    }
+    if initial_data:
+        parameters["flow_action_payload"]["data"] = initial_data
+
     response = await _send(
         client,
         {
@@ -180,17 +193,7 @@ async def send_flow(
                 "body": {"text": body_text},
                 "action": {
                     "name": "flow",
-                    "parameters": {
-                        "flow_message_version": "3",
-                        "flow_token": flow_token,
-                        "flow_id": flow_id,
-                        "flow_cta": flow_cta,
-                        "flow_action": "navigate",
-                        "flow_action_payload": {
-                            "screen": screen_id,
-                            "data": initial_data or {},
-                        },
-                    },
+                    "parameters": parameters,
                 },
             },
         },
