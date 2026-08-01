@@ -163,10 +163,15 @@ async def handle_message(
 
             if detected_lang:
                 context = {**context, "lang": detected_lang}
+                if _is_doctor_search_query(input_value):
+                    context["search_doctor_query"] = input_value
                 await whatsapp_client.send_text(client, phone, t("greeting", detected_lang))
                 await _send_location_request(client, phone, context)
             else:
-                await _start(client, phone)
+                init_context = {}
+                if input_type == "text" and _is_doctor_search_query(input_value):
+                    init_context["search_doctor_query"] = input_value
+                await _start(client, phone, init_context)
     except HmsApiError as exc:
         logger.warning("HMS API rejected request for %s: %s", phone, exc)
         await whatsapp_client.send_text(client, phone, t("error_hms", lang))
@@ -183,12 +188,12 @@ async def handle_message(
 # ---------------------------------------------------------------------------------------
 
 
-async def _start(client: httpx.AsyncClient, phone: str) -> None:
+async def _start(client: httpx.AsyncClient, phone: str, init_context: dict | None = None) -> None:
     await whatsapp_client.send_buttons(
         client, phone, LANG_PROMPT,
         [(code, label) for code, label in LANGUAGE_LABELS.items()],
     )
-    await db.save_conversation_state(phone, "choosing_language", {})
+    await db.save_conversation_state(phone, "choosing_language", init_context or {})
 
 
 async def _handle_choosing_language(client, phone, input_type, input_value, context) -> None:
@@ -269,6 +274,17 @@ async def _handle_choosing_location(client, phone, input_type, input_value, cont
         await whatsapp_client.send_text(client, phone, t("location_prompt", lang))
         return
     context = await _resolve_city(context)
+
+    if context.get("search_doctor_query"):
+        if await _search_doctors_flow(client, phone, context):
+            return
+        else:
+            query = context.get("search_doctor_query")
+            await whatsapp_client.send_text(
+                client, phone, t("search_doctor_not_found", lang, query=query)
+            )
+            context.pop("search_doctor_query", None)
+
     await _send_search_mode_prompt(client, phone, context)
 
 
@@ -289,9 +305,19 @@ async def _send_search_mode_prompt(client: httpx.AsyncClient, phone: str, contex
 
 async def _handle_choosing_search_mode(client, phone, input_type, input_value, context) -> None:
     lang = context.get("lang")
+    if input_type == "text" and _is_doctor_search_query(input_value):
+        context = {**context, "search_doctor_query": input_value}
+        if await _search_doctors_flow(client, phone, context):
+            return
+        else:
+            await whatsapp_client.send_text(
+                client, phone, t("search_doctor_not_found", lang, query=input_value)
+            )
+            context.pop("search_doctor_query", None)
+
     choice = _match_choice(input_type, input_value, ["symptom", "browse"])
     if choice is None:
-        await whatsapp_client.send_text(client, phone, t("person_choose_hint", lang))
+        await whatsapp_client.send_text(client, phone, t("search_mode_choose_hint", lang))
         return
     if choice == "symptom":
         await whatsapp_client.send_text(client, phone, t("symptom_ask", lang))
@@ -302,6 +328,16 @@ async def _handle_choosing_search_mode(client, phone, input_type, input_value, c
 
 async def _handle_awaiting_symptom(client, phone, input_type, input_value, context) -> None:
     lang = context.get("lang")
+    if input_type == "text" and _is_doctor_search_query(input_value):
+        context = {**context, "search_doctor_query": input_value}
+        if await _search_doctors_flow(client, phone, context):
+            return
+        else:
+            await whatsapp_client.send_text(
+                client, phone, t("search_doctor_not_found", lang, query=input_value)
+            )
+            context.pop("search_doctor_query", None)
+
     if input_type != "text" or not input_value.strip():
         await whatsapp_client.send_text(client, phone, t("symptom_text_required", lang))
         return
@@ -557,6 +593,12 @@ def _sort_doctors(doctors: list[dict], context: dict) -> list[dict]:
 
 def _doctor_row_description(doctor: dict, context: dict) -> str:
     parts = []
+    spec = doctor.get("specialtyName") or doctor.get("specialtyCategory")
+    if spec:
+        parts.append(str(spec))
+    hosp = doctor.get("hospitalName") or doctor.get("city")
+    if hosp:
+        parts.append(str(hosp))
     if doctor.get("rating") is not None:
         parts.append(f"⭐{doctor['rating']}")
     fee = _doctor_fee(doctor)
@@ -567,7 +609,10 @@ def _doctor_row_description(doctor: dict, context: dict) -> str:
     distance = _doctor_distance_km(doctor, context.get("patient_lat"), context.get("patient_lng"))
     if distance != float("inf"):
         parts.append(f"{distance:.0f}km")
-    return " · ".join(parts)
+    desc = " · ".join(parts)
+    if len(desc) > 72:
+        desc = desc[:69] + "..."
+    return desc
 
 
 async def _fetch_doctors_near(
@@ -1078,3 +1123,65 @@ async def _handle_confirming(client, phone, sender_name, input_type, input_value
     await whatsapp_client.send_text(client, phone, t("booked_queue_note", lang))
 
     await db.clear_conversation_state(phone)
+
+
+def _is_doctor_search_query(text: str) -> bool:
+    normalized = text.strip().lower()
+    if "dr." in normalized or "dr " in normalized or "doctor" in normalized:
+        return True
+    return False
+
+
+def _match_doctor_by_query(query: str, doctors: list[dict]) -> list[dict]:
+    normalized = query.lower()
+    for prefix in [
+        "book appointment at", "book appointment with", "appointment at", "appointment with",
+        "book appointment", "appointment", "want to book", "book", "dr.", "dr", "doctor"
+    ]:
+        if normalized.startswith(prefix):
+            normalized = normalized[len(prefix):].strip()
+        normalized = normalized.replace(prefix, "")
+
+    normalized = re.sub(r'\s+', ' ', normalized).strip()
+    if not normalized:
+        return []
+
+    matches = []
+    for doc in doctors:
+        name = (doc.get("fullName") or "").lower()
+        if normalized in name or name in normalized:
+            matches.append(doc)
+            continue
+
+        name_parts = name.split()
+        query_parts = normalized.split()
+        matched_parts = 0
+        for qp in query_parts:
+            if len(qp) >= 3 and any(qp in np for np in name_parts):
+                matched_parts += 1
+        if matched_parts > 0:
+            matches.append(doc)
+
+    return matches
+
+
+async def _search_doctors_flow(client: httpx.AsyncClient, phone: str, context: dict) -> bool:
+    """Performs a direct doctor search by name. If matches are found, it lists them.
+    Returns True if we handled the flow by finding and showing matches, False otherwise."""
+    query = context.get("search_doctor_query")
+    if not query:
+        return False
+
+    lang = context.get("lang")
+    try:
+        all_docs = await city_index.get_all_doctors()
+    except Exception as exc:
+        logger.error("Failed to fetch all doctors for search: %s", exc)
+        return False
+
+    matches = _match_doctor_by_query(query, all_docs)
+    if not matches:
+        return False
+
+    await _render_doctor_list(client, phone, context, matches)
+    return True

@@ -111,6 +111,28 @@ async def get_index(force_refresh: bool = False) -> dict[str, list[list[float]]]
     return index
 
 
+_DOCTORS_CACHE_KEY = "hms:all_doctors"
+
+
+async def get_all_doctors(force_refresh: bool = False) -> list[dict[str, Any]]:
+    redis = get_redis()
+    if not force_refresh:
+        cached = await redis.get(_DOCTORS_CACHE_KEY)
+        if cached:
+            try:
+                return json.loads(cached)
+            except Exception:
+                pass
+
+    doctors = await _fetch_all_doctors()
+    if doctors:
+        try:
+            await redis.set(_DOCTORS_CACHE_KEY, json.dumps(doctors), ex=settings.city_index_ttl_seconds)
+        except Exception:
+            pass
+    return doctors
+
+
 def nearest_city(index: dict[str, list[list[float]]], lat: float, lng: float) -> tuple[str | None, float]:
     """(city_name, distance_km) for the closest city, by its nearest coordinate cluster."""
     best_city, best_km = None, float("inf")

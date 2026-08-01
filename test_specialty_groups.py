@@ -582,6 +582,41 @@ def test_slot_label_formatting():
     check(conversation._format_slot_label("Evening", False, "bn") == "সন্ধ্যা (আগামীকাল)", "evening tomorrow bengali")
 
 
+def test_doctor_search_matching_and_formatting():
+    check(conversation._is_doctor_search_query("Dr Manoj"), "should match Dr Manoj")
+    check(conversation._is_doctor_search_query("book appointment with dr. manoj krishnan"), "should match dr. prefix")
+    check(conversation._is_doctor_search_query("doctor xyz"), "should match doctor word")
+    check(not conversation._is_doctor_search_query("i want to book an appointment"), "should not match general booking")
+
+    docs = [
+        {"doctorId": "1", "fullName": "Dr. Manoj Krishnan", "specialtyCategory": "Cardiologist", "hospitalName": "Kishanganj Clinic"},
+        {"doctorId": "2", "fullName": "Dr. Rajesh Shah", "specialtyCategory": "Dentist", "hospitalName": "Purnea Hospital"}
+    ]
+    check(len(conversation._match_doctor_by_query("Dr. Manoj", docs)) == 1, "should match Manoj")
+    check(conversation._match_doctor_by_query("Dr. Manoj", docs)[0]["doctorId"] == "1", "should match Manoj id")
+    check(len(conversation._match_doctor_by_query("book appointment with Rajesh", docs)) == 1, "should match Rajesh")
+
+    doc = {
+        "fullName": "Dr. Manoj Krishnan",
+        "specialtyName": "Cardiologist",
+        "hospitalName": "Kishanganj Clinic",
+        "rating": 4.5,
+        "fee": 500.0,
+        "experienceYears": 12,
+        "latitude": 26.1,
+        "longitude": 87.9
+    }
+    context = {"patient_lat": 26.1, "patient_lng": 87.9}
+    desc = conversation._doctor_row_description(doc, context)
+    check("Cardiologist" in desc, "specialty should be in description")
+    check("Kishanganj Clinic" in desc, "clinic should be in description")
+    check("⭐4.5" in desc, "rating should be in description")
+    check("₹500" in desc, "fee should be in description")
+    check("12yrs" in desc, "experience should be in description")
+    check("0km" in desc, "distance should be in description")
+    check(len(desc) <= 72, f"description length {len(desc)} should be <= 72")
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:

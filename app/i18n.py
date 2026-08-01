@@ -354,6 +354,18 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Upar diye areas mein se ek choose karein — ya bas bata dijiye kya takleef hai, main samajh lunga.",
         "bn": "অনুগ্রহ করে উপরের এলাকাগুলির মধ্যে একটি বেছে নিন — অথবা আপনি কেমন অনুভব করছেন তা বর্ণনা করুন এবং আমি এটি সমাধান করব।",
     },
+    "search_mode_choose_hint": {
+        "en": "Please choose Symptom search or Browse specialties above.",
+        "hi": "कृपया ऊपर बीमारी खोजें या विशेषता चुनें।",
+        "hg": "Please upar diye gaye options mein se Symptom search ya Browse specialties choose karein.",
+        "bn": "অনুগ্রহ করে উপরে রোগের উপসর্গ অনুযায়ী খুঁজুন বা বিশেষত্ব অনুযায়ী খুঁজুন বেছে নিন।",
+    },
+    "search_doctor_not_found": {
+        "en": "We couldn't find a doctor matching '{query}'. Let's find one by symptom or specialty instead:",
+        "hi": "हमें '{query}' नाम से कोई डॉक्टर नहीं मिला। आइए इसके बजाय बीमारी या विशेषता के अनुसार ढूंढते हैं:",
+        "hg": "Hamein '{query}' naam se koi doctor nahi mila. Aaiye iske badle symptom ya specialty se search karte hain:",
+        "bn": "আমরা '{query}' নামের কোনো ডাক্তার খুঁজে পাইনি। আসুন রোগ বা বিশেষত্ব অনুযায়ী খুঁজি:",
+    },
     "specialty_list_prompt": {
         "en": "Good — which of these fits best?",
         "hi": "ठीक है — इनमें से कौन सा सबसे सही रहेगा?",
