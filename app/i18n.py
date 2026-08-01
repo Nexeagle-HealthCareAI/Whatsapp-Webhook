@@ -557,10 +557,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "bn": "অনুগ্রহ করে উপরে নিশ্চিত করুন বা বাতিল করুন-এ ট্যাপ করুন।",
     },
     "cancelled": {
-        "en": "No problem — booking cancelled.",
-        "hi": "कोई बात नहीं — बुकिंग रद्द कर दी गई है।",
-        "hg": "Koi baat nahi — booking cancel kar di gayi hai.",
-        "bn": "কোনো সমস্যা নেই — বুকিং বাতিল করা হয়েছে।",
+        "en": "Thank you. If you need any help, just ask me again.",
+        "hi": "धन्यवाद। यदि आपको कोई सहायता चाहिए, तो मुझसे फिर से पूछें।",
+        "hg": "Thank you. Agar aapko koi help chahiye, to mujhe firse pooch sakte hain.",
+        "bn": "ধন্যবাদ। আপনার কোনো সাহায্যের প্রয়োজন হলে, আমাকে আবার জিজ্ঞাসা করুন।",
     },
     "already_pending": {
         "en": "You already have a pending request for that day — our team will reach out shortly.",

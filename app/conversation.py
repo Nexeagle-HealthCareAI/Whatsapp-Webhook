@@ -134,7 +134,6 @@ async def handle_message(
         if cmd in ("cancel", "quit"):
             await whatsapp_client.send_text(client, phone, t("cancelled", lang or "en"))
             await db.clear_conversation_state(phone)
-            await _start(client, phone)
             return
         if cmd == "back":
             history = context.get("_history", [])
