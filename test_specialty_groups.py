@@ -586,15 +586,19 @@ def test_doctor_search_matching_and_formatting():
     check(conversation._is_doctor_search_query("Dr Manoj"), "should match Dr Manoj")
     check(conversation._is_doctor_search_query("book appointment with dr. manoj krishnan"), "should match dr. prefix")
     check(conversation._is_doctor_search_query("doctor xyz"), "should match doctor word")
+    check(conversation._is_doctor_search_query("hi, i have to book appointment with Dr, Radha"), "should match Dr, Radha comma case")
     check(not conversation._is_doctor_search_query("i want to book an appointment"), "should not match general booking")
 
     docs = [
         {"doctorId": "1", "fullName": "Dr. Manoj Krishnan", "specialtyCategory": "Cardiologist", "hospitalName": "Kishanganj Clinic"},
-        {"doctorId": "2", "fullName": "Dr. Rajesh Shah", "specialtyCategory": "Dentist", "hospitalName": "Purnea Hospital"}
+        {"doctorId": "2", "fullName": "Dr. Rajesh Shah", "specialtyCategory": "Dentist", "hospitalName": "Purnea Hospital"},
+        {"doctorId": "3", "fullName": "Dr. Radha", "specialtyCategory": "Gynaecologist", "hospitalName": "Radha Hospital"}
     ]
     check(len(conversation._match_doctor_by_query("Dr. Manoj", docs)) == 1, "should match Manoj")
     check(conversation._match_doctor_by_query("Dr. Manoj", docs)[0]["doctorId"] == "1", "should match Manoj id")
     check(len(conversation._match_doctor_by_query("book appointment with Rajesh", docs)) == 1, "should match Rajesh")
+    check(len(conversation._match_doctor_by_query("hi, i have to book appointment with Dr, Radha", docs)) == 1, "should match Dr, Radha")
+    check(conversation._match_doctor_by_query("hi, i have to book appointment with Dr, Radha", docs)[0]["doctorId"] == "3", "should match Radha id")
 
     doc = {
         "fullName": "Dr. Manoj Krishnan",

@@ -1127,20 +1127,23 @@ async def _handle_confirming(client, phone, sender_name, input_type, input_value
 
 def _is_doctor_search_query(text: str) -> bool:
     normalized = text.strip().lower()
-    if "dr." in normalized or "dr " in normalized or "doctor" in normalized:
+    if re.search(r'\b(dr|doctor)\b', normalized):
         return True
     return False
 
 
 def _match_doctor_by_query(query: str, doctors: list[dict]) -> list[dict]:
     normalized = query.lower()
+    normalized = re.sub(r'[^a-z0-9\s]', ' ', normalized)
+
+    for greeting in ["hi", "hello", "hey", "hlo"]:
+        normalized = re.sub(r'\b' + greeting + r'\b', ' ', normalized)
+
     for prefix in [
         "book appointment at", "book appointment with", "appointment at", "appointment with",
-        "book appointment", "appointment", "want to book", "book", "dr.", "dr", "doctor"
+        "book appointment", "appointment", "want to book", "book", "dr", "doctor"
     ]:
-        if normalized.startswith(prefix):
-            normalized = normalized[len(prefix):].strip()
-        normalized = normalized.replace(prefix, "")
+        normalized = normalized.replace(prefix, " ")
 
     normalized = re.sub(r'\s+', ' ', normalized).strip()
     if not normalized:
@@ -1149,11 +1152,14 @@ def _match_doctor_by_query(query: str, doctors: list[dict]) -> list[dict]:
     matches = []
     for doc in doctors:
         name = (doc.get("fullName") or "").lower()
-        if normalized in name or name in normalized:
+        name_clean = re.sub(r'[^a-z0-9\s]', ' ', name)
+        name_clean = re.sub(r'\s+', ' ', name_clean).strip()
+
+        if normalized in name_clean or name_clean in normalized:
             matches.append(doc)
             continue
 
-        name_parts = name.split()
+        name_parts = name_clean.split()
         query_parts = normalized.split()
         matched_parts = 0
         for qp in query_parts:
