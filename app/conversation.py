@@ -620,7 +620,13 @@ def _sort_doctors(doctors: list[dict], context: dict) -> list[dict]:
 
 def _doctor_row_description(doctor: dict, context: dict) -> str:
     parts = []
-    spec = doctor.get("specialtyName") or doctor.get("specialtyCategory")
+    spec = (
+        doctor.get("primaryMedicalSpecialityPatientFacingName")
+        or doctor.get("primaryMedicalSpecialityCategory")
+        or doctor.get("departmentName")
+        or doctor.get("specialtyName")
+        or doctor.get("specialtyCategory")
+    )
     if spec:
         parts.append(str(spec))
     hosp = doctor.get("hospitalName") or doctor.get("city")
@@ -1219,6 +1225,27 @@ async def _search_doctors_flow(client: httpx.AsyncClient, phone: str, context: d
     matches = _match_doctor_by_query(query, all_docs)
     if not matches:
         return False
+
+    # Filter matches by location first (GPS radius or city name)
+    local_matches = []
+    lat, lng = context.get("patient_lat"), context.get("patient_lng")
+    city = context.get("city")
+
+    if lat is not None and lng is not None:
+        max_radius = settings.doctor_search_radii_km[-1]
+        local_matches = [
+            d for d in matches
+            if _doctor_distance_km(d, lat, lng) <= max_radius
+        ]
+    elif city:
+        city_clean = city.strip().lower()
+        local_matches = [
+            d for d in matches
+            if (d.get("city") or "").strip().lower() == city_clean
+        ]
+
+    if local_matches:
+        matches = local_matches
 
     await _render_doctor_list(client, phone, context, matches, current_step)
     return True

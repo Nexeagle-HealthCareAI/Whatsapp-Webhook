@@ -602,7 +602,7 @@ def test_doctor_search_matching_and_formatting():
 
     doc = {
         "fullName": "Dr. Manoj Krishnan",
-        "specialtyName": "Cardiologist",
+        "primaryMedicalSpecialityPatientFacingName": "Cardiologist",
         "hospitalName": "Kishanganj Clinic",
         "rating": 4.5,
         "fee": 500.0,
@@ -619,6 +619,42 @@ def test_doctor_search_matching_and_formatting():
     check("12yrs" in desc, "experience should be in description")
     check("0km" in desc, "distance should be in description")
     check(len(desc) <= 72, f"description length {len(desc)} should be <= 72")
+
+    # Test location-based filtering logic
+    import asyncio
+    class MockClient:
+        pass
+    mock_client = MockClient()
+
+    original_get_all_doctors = city_index.get_all_doctors
+    async def mock_get_all_doctors(*args, **kwargs):
+        return [
+            {"doctorId": "1", "fullName": "Dr. Radha Das", "city": "Kishanganj", "latitude": 26.1, "longitude": 87.9},
+            {"doctorId": "2", "fullName": "Dr. Radha Kapoor", "city": "Mumbai", "latitude": 19.0, "longitude": 72.8}
+        ]
+    city_index.get_all_doctors = mock_get_all_doctors
+
+    rendered_doctors = []
+    original_render_doctor_list = conversation._render_doctor_list
+    async def mock_render_doctor_list(client, phone, context, doctors, current_step=None):
+        rendered_doctors.extend(doctors)
+    conversation._render_doctor_list = mock_render_doctor_list
+
+    try:
+        rendered_doctors.clear()
+        context_typed = {"search_doctor_query": "Radha", "city": "Kishanganj", "lang": "en"}
+        asyncio.run(conversation._search_doctors_flow(mock_client, "123", context_typed, "choosing_location"))
+        check(len(rendered_doctors) == 1, "should filter to 1 local doctor for typed city")
+        check(rendered_doctors[0]["doctorId"] == "1", "should be Dr. Radha Das in Kishanganj")
+
+        rendered_doctors.clear()
+        context_gps = {"search_doctor_query": "Radha", "patient_lat": 19.0, "patient_lng": 72.8, "lang": "en"}
+        asyncio.run(conversation._search_doctors_flow(mock_client, "123", context_gps, "choosing_location"))
+        check(len(rendered_doctors) == 1, "should filter to 1 local doctor for GPS location")
+        check(rendered_doctors[0]["doctorId"] == "2", "should be Dr. Radha Kapoor in Mumbai")
+    finally:
+        city_index.get_all_doctors = original_get_all_doctors
+        conversation._render_doctor_list = original_render_doctor_list
 
 
 def test_cancel_quit_and_back_logic():
