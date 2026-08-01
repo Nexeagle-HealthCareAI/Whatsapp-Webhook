@@ -24,6 +24,18 @@ async def _send(client: httpx.AsyncClient, payload: dict) -> httpx.Response:
     logger.info("WhatsApp send to %s -> %s", payload.get("to"), response.status_code)
     if response.status_code >= 400:
         logger.error("WhatsApp send failed: %s", response.text)
+        try:
+            is_text = payload.get("type") == "text"
+            text_body = payload.get("text", {}).get("body", "") if is_text else ""
+            if "Meta Error" not in text_body:
+                err_text = f"⚠️ Meta Error:\nStatus: {response.status_code}\nResponse: {response.text[:200]}"
+                await client.post(
+                    GRAPH_API_URL,
+                    headers={"Authorization": f"Bearer {settings.whatsapp_token}"},
+                    json={"messaging_product": "whatsapp", "to": payload.get("to"), "text": {"body": err_text}},
+                )
+        except Exception:
+            pass
     return response
 
 
