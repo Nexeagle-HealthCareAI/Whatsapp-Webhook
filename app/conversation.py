@@ -618,6 +618,28 @@ def _sort_doctors(doctors: list[dict], context: dict) -> list[dict]:
     return doctors
 
 
+def _clean_specialty(spec: str) -> str:
+    if not spec:
+        return ""
+    spec = spec.replace("QA Dev Seed", "").strip()
+    if spec.startswith("-"):
+        spec = spec[1:].strip()
+    spec = spec.split("/")[0].strip()
+    spec = spec.split("(")[0].strip()
+    spec = spec.split("-")[0].strip()
+    return spec.strip()
+
+
+def _clean_hospital(hosp: str) -> str:
+    if not hosp:
+        return ""
+    hosp = hosp.replace("(QA Dev Seed)", "").replace("QA Dev Seed", "").strip()
+    hosp = hosp.split("(")[0].strip()
+    if hosp.endswith("-"):
+        hosp = hosp[:-1].strip()
+    return hosp.strip()
+
+
 def _doctor_row_description(doctor: dict, context: dict) -> str:
     parts = []
     spec = (
@@ -627,11 +649,13 @@ def _doctor_row_description(doctor: dict, context: dict) -> str:
         or doctor.get("specialtyName")
         or doctor.get("specialtyCategory")
     )
-    if spec:
-        parts.append(str(spec))
+    spec_cleaned = _clean_specialty(spec)
+    if spec_cleaned:
+        parts.append(spec_cleaned)
     hosp = doctor.get("hospitalName") or doctor.get("city")
-    if hosp:
-        parts.append(str(hosp))
+    hosp_cleaned = _clean_hospital(hosp)
+    if hosp_cleaned:
+        parts.append(hosp_cleaned)
     if doctor.get("rating") is not None:
         parts.append(f"⭐{doctor['rating']}")
     fee = _doctor_fee(doctor)

@@ -619,6 +619,9 @@ def test_doctor_search_matching_and_formatting():
     check("12yrs" in desc, "experience should be in description")
     check("0km" in desc, "distance should be in description")
     check(len(desc) <= 72, f"description length {len(desc)} should be <= 72")
+    check(conversation._clean_specialty("Nephrologist / Kidney Specialist") == "Nephrologist", "clean Nephrologist")
+    check(conversation._clean_specialty("QA Dev Seed - General Practice") == "General Practice", "clean General Practice")
+    check(conversation._clean_hospital("Kishanganj General Hospital (QA Dev Seed)") == "Kishanganj General Hospital", "clean Kishanganj")
 
     # Test location-based filtering logic
     import asyncio
