@@ -100,3 +100,21 @@ BEGIN
 END
 GO
 
+IF COL_LENGTH('dbo.pending_appointments', 'patient_age') IS NULL
+BEGIN
+    ALTER TABLE dbo.pending_appointments ADD patient_age INT NULL;
+END
+GO
+
+IF COL_LENGTH('dbo.pending_appointments', 'patient_gender') IS NULL
+BEGIN
+    ALTER TABLE dbo.pending_appointments ADD patient_gender NVARCHAR(10) NULL;
+END
+GO
+
+IF COL_LENGTH('dbo.pending_appointments', 'patient_guardian') IS NULL
+BEGIN
+    ALTER TABLE dbo.pending_appointments ADD patient_guardian NVARCHAR(200) NULL;
+END
+GO
+

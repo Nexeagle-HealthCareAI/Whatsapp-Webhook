@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 from datetime import date, datetime, time, timedelta
@@ -130,12 +131,6 @@ async def handle_message(
     try:
         if current_step == "choosing_language":
             await _handle_choosing_language(client, phone, input_type, input_value, context)
-        elif current_step == "choosing_person":
-            await _handle_choosing_person(client, phone, input_type, input_value, context)
-        elif current_step == "awaiting_self_details":
-            await _handle_awaiting_self_details(client, phone, input_type, input_value, context)
-        elif current_step == "awaiting_family_details":
-            await _handle_awaiting_family_details(client, phone, input_type, input_value, context)
         elif current_step == "choosing_location":
             await _handle_choosing_location(client, phone, input_type, input_value, context)
         elif current_step == "choosing_search_mode":
@@ -156,6 +151,8 @@ async def handle_message(
             await _handle_choosing_date(client, phone, input_type, input_value, context)
         elif current_step == "choosing_shift":
             await _handle_choosing_shift(client, phone, input_type, input_value, context)
+        elif current_step == "awaiting_patient_details":
+            await _handle_awaiting_patient_details(client, phone, input_type, input_value, context)
         elif current_step == "confirming":
             await _handle_confirming(client, phone, sender_name, input_type, input_value, context)
         else:
@@ -167,11 +164,8 @@ async def handle_message(
 
             if detected_lang:
                 context = {**context, "lang": detected_lang}
-                await whatsapp_client.send_buttons(
-                    client, phone, t("greeting", detected_lang),
-                    [("self", t("person_self", detected_lang)), ("family", t("person_family", detected_lang))],
-                )
-                await db.save_conversation_state(phone, "choosing_person", context)
+                await whatsapp_client.send_text(client, phone, t("greeting", detected_lang))
+                await _send_location_request(client, phone, context)
             else:
                 await _start(client, phone)
     except HmsApiError as exc:
@@ -206,71 +200,7 @@ async def _handle_choosing_language(client, phone, input_type, input_value, cont
         await whatsapp_client.send_text(client, phone, "Please tap one of the language options above.")
         return
     context = {**context, "lang": lang}
-    await whatsapp_client.send_buttons(
-        client, phone, t("greeting", lang),
-        [("self", t("person_self", lang)), ("family", t("person_family", lang))],
-    )
-    await db.save_conversation_state(phone, "choosing_person", context)
-
-
-# ---------------------------------------------------------------------------------------
-# 2. Who the booking is for (requirement 3 — family/proxy booking). Asked right after
-# language, before location, matching the order requested: language -> location -> who-for
-# in the spec doc, but who-for is cheap (two buttons) and its answer changes almost nothing
-# downstream except the patient's display name — asking it before the location round-trip
-# means a mis-tap here doesn't waste an already-shared GPS location. Reordering is a one-line
-# change in _handle_choosing_language/_handle_choosing_person/_handle_awaiting_family_details
-# if the location-first order is preferred instead; flagging the choice rather than hiding it.
-# ---------------------------------------------------------------------------------------
-
-
-async def _handle_choosing_person(client, phone, input_type, input_value, context) -> None:
-    lang = context.get("lang")
-    choice = _match_choice(input_type, input_value, ["self", "family"])
-    if choice is None:
-        await whatsapp_client.send_text(client, phone, t("person_choose_hint", lang))
-        return
-    if choice == "self":
-        await whatsapp_client.send_text(client, phone, t("self_details_prompt", lang))
-        await db.save_conversation_state(
-            phone, "awaiting_self_details", {**context, "booking_for": "self"}
-        )
-        return
-    await whatsapp_client.send_text(client, phone, t("family_details_prompt", lang))
-    await db.save_conversation_state(phone, "awaiting_family_details", {**context, "booking_for": "family"})
-
-
-async def _handle_awaiting_self_details(client, phone, input_type, input_value, context) -> None:
-    """Name and age for the patient themselves.
-
-    Asked rather than lifted from the WhatsApp profile: that name is whatever the account
-    holder set as their display name — a nickname, an emoji, "Papa" — and it was going
-    straight onto a medical record. Age is captured on both paths now, so the clinic has it
-    either way."""
-    lang = context.get("lang")
-    parsed = _parse_details(input_value, 2) if input_type == "text" else None
-    if parsed is None:
-        await whatsapp_client.send_text(client, phone, t("self_details_invalid", lang))
-        return
-    name, age = parsed
-    if not _looks_like_age(age):
-        await whatsapp_client.send_text(client, phone, t("age_invalid", lang))
-        return
-    context = {**context, "patient_display_name": name, "patient_age": age}
-    await _send_location_request(client, phone, context)
-
-
-async def _handle_awaiting_family_details(client, phone, input_type, input_value, context) -> None:
-    lang = context.get("lang")
-    parsed = _parse_details(input_value, 3) if input_type == "text" else None
-    if parsed is None:
-        await whatsapp_client.send_text(client, phone, t("family_details_invalid", lang))
-        return
-    name, age, relation = parsed
-    if not _looks_like_age(age):
-        await whatsapp_client.send_text(client, phone, t("age_invalid", lang))
-        return
-    context = {**context, "patient_display_name": name, "patient_age": age, "family_relation": relation}
+    await whatsapp_client.send_text(client, phone, t("greeting", lang))
     await _send_location_request(client, phone, context)
 
 
@@ -922,19 +852,23 @@ def _clinic_line(context: dict, lang: str | None) -> str:
 def _patient_line(context: dict, lang: str | None) -> str:
     name = context.get("patient_display_name") or t("you", lang)
     age = context.get("patient_age")
-    relation = context.get("family_relation")
-    line = f"{name}, {age}" if age else name
-    if relation:
-        line += f" ({relation})"
+    gender = context.get("patient_gender")
+    guardian = context.get("patient_guardian")
+
+    parts = [name]
+    if age:
+        parts.append(str(age))
+    if gender:
+        parts.append(gender)
+    line = ", ".join(parts)
+    if guardian:
+        line += f" (Guardian: {guardian})"
     return line
 
 
 async def _handle_choosing_shift(client, phone, input_type, input_value, context) -> None:
     lang = context.get("lang")
     offered = context.get("offered_shifts") or list(_SHIFT_FALLBACK)
-    # Only shifts that were actually offered are accepted. Typing is still allowed — the
-    # buttons scroll out of reach on a busy chat — but it has to match something real, so a
-    # typed "morning" at 7pm is refused rather than booked into a shift that has finished.
     choice = _match_choice(input_type, input_value, [name.lower() for name in offered])
     if choice is None:
         await whatsapp_client.send_text(
@@ -942,6 +876,64 @@ async def _handle_choosing_shift(client, phone, input_type, input_value, context
         )
         return
     shift_label = next(name for name in offered if name.lower() == choice)
+
+    context = {**context, "shift_label": shift_label}
+    await _send_patient_details_flow(client, phone, context)
+
+
+async def _send_patient_details_flow(client: httpx.AsyncClient, phone: str, context: dict) -> None:
+    lang = context.get("lang")
+    flow_id = settings.whatsapp_flow_id
+    if not flow_id:
+        await whatsapp_client.send_text(client, phone, t("patient_details_prompt_text", lang))
+    else:
+        await whatsapp_client.send_flow(
+            client,
+            to=phone,
+            body_text=t("patient_details_prompt_flow", lang),
+            flow_id=flow_id,
+            flow_cta=t("patient_details_flow_cta", lang),
+            screen_id="PATIENT_FORM",
+            flow_token=f"token-{phone}",
+        )
+    await db.save_conversation_state(phone, "awaiting_patient_details", context)
+
+
+async def _handle_awaiting_patient_details(client, phone, input_type, input_value, context) -> None:
+    lang = context.get("lang")
+    name, age, gender, guardian = None, None, None, None
+
+    if input_type == "nfm_reply":
+        try:
+            data = json.loads(input_value)
+            name = (data.get("name") or "").strip()
+            age = str(data.get("age") or "").strip()
+            gender = (data.get("gender") or "").strip()
+            guardian = (data.get("guardian") or "").strip()
+        except Exception:
+            pass
+    elif input_type == "text":
+        parsed = _parse_details(input_value, 4)
+        if parsed:
+            name, age, gender, guardian = parsed
+
+    if not name or not age or not gender or not guardian:
+        await whatsapp_client.send_text(client, phone, t("patient_details_invalid", lang))
+        await _send_patient_details_flow(client, phone, context)
+        return
+
+    if not _looks_like_age(age):
+        await whatsapp_client.send_text(client, phone, t("age_invalid", lang))
+        await _send_patient_details_flow(client, phone, context)
+        return
+
+    context = {
+        **context,
+        "patient_display_name": name,
+        "patient_age": age,
+        "patient_gender": gender,
+        "patient_guardian": guardian,
+    }
 
     fee = context.get("doctor_fee")
     await whatsapp_client.send_buttons(
@@ -951,17 +943,21 @@ async def _handle_choosing_shift(client, phone, input_type, input_value, context
             patient=_patient_line(context, lang),
             doctor=context.get("doctor_name", "-"),
             where=_clinic_line(context, lang),
-            when=f"{context.get('date_label', '')}, {shift_label}",
+            when=f"{context.get('date_label', '')}, {context.get('shift_label', '')}",
             fee=f"{fee:.0f}" if fee is not None else "-",
         ),
-        [("confirm", t("confirm_btn", lang)), ("cancel", t("cancel_btn", lang))],
+        [
+            ("confirm", t("confirm_btn", lang)),
+            ("update_details", t("update_details_btn", lang)),
+            ("cancel", t("cancel_btn", lang)),
+        ],
     )
-    await db.save_conversation_state(phone, "confirming", {**context, "shift_label": shift_label})
+    await db.save_conversation_state(phone, "confirming", context)
 
 
 async def _handle_confirming(client, phone, sender_name, input_type, input_value, context) -> None:
     lang = context.get("lang")
-    choice = _match_choice(input_type, input_value, ["confirm", "cancel"])
+    choice = _match_choice(input_type, input_value, ["confirm", "cancel", "update_details"])
     if choice is None:
         await whatsapp_client.send_text(client, phone, t("confirm_choose_hint", lang))
         return
@@ -969,22 +965,18 @@ async def _handle_confirming(client, phone, sender_name, input_type, input_value
         await whatsapp_client.send_text(client, phone, t("cancelled", lang))
         await db.clear_conversation_state(phone)
         return
+    if choice == "update_details":
+        await _send_patient_details_flow(client, phone, context)
+        return
 
     preferred_date = date.fromisoformat(context["preferred_date"])
     doctor_id = context["doctor_id"]
     shift_label = context.get("shift_label", "any time")
     booking_for = context.get("booking_for", "self")
-    # Both paths now capture the name explicitly, so nothing here falls back to the WhatsApp
-    # profile name. sender_name is kept only as a last resort for sessions that began before
-    # this step existed and are still mid-flow at deploy time.
-    #
-    # The contact mobile stays the WhatsApp sender's own number either way — confirmations
-    # and queue updates have to reach the phone that's actually in this chat, not a number
-    # 1HMS may not hold for the family member. Whether the booking API also wants a
-    # patient-level mobile, age or DOB field is a question for the 1HMS team; the public
-    # schema wasn't confirmable, so age currently travels in the free-text note below.
     patient_name = context.get("patient_display_name") or sender_name or phone
     patient_age = context.get("patient_age")
+    patient_gender = context.get("patient_gender")
+    patient_guardian = context.get("patient_guardian")
 
     if await db.has_pending_appointment(phone, preferred_date):
         await whatsapp_client.send_text(client, phone, t("already_pending", lang))
@@ -994,12 +986,17 @@ async def _handle_confirming(client, phone, sender_name, input_type, input_value
     row_id = await db.create_pending_appointment(
         phone, preferred_date,
         preferred_language=lang, booking_for=booking_for, patient_display_name=patient_name,
+        patient_age=int(patient_age) if patient_age else None,
+        patient_gender=patient_gender,
+        patient_guardian=patient_guardian,
     )
     note_bits = []
     if patient_age:
         note_bits.append(f"age {patient_age}")
-    if booking_for == "family":
-        note_bits.append(f"booked by family member for their {context.get('family_relation', 'relative')}")
+    if patient_gender:
+        note_bits.append(f"gender {patient_gender}")
+    if patient_guardian:
+        note_bits.append(f"guardian {patient_guardian}")
     extra_note = "; ".join(note_bits) or None
 
     try:
@@ -1015,9 +1012,6 @@ async def _handle_confirming(client, phone, sender_name, input_type, input_value
 
     await whatsapp_client.send_text(client, phone, t("booked_success", lang, patient_name=patient_name))
 
-    # Requirement 8, map half: send a droppable pin for the clinic right away — this part
-    # doesn't depend on anything not already available (hospital lat/long/name/address come
-    # straight off the same /public/doctors response used for sorting in step 5).
     hospital_lat, hospital_lng = context.get("hospital_lat"), context.get("hospital_lng")
     if hospital_lat is not None and hospital_lng is not None:
         await whatsapp_client.send_location(
@@ -1025,10 +1019,6 @@ async def _handle_confirming(client, phone, sender_name, input_type, input_value
             name=context.get("hospital_name", ""), address=context.get("hospital_address", ""),
         )
 
-    # Requirement 8, live-queue half: NOT sent here, deliberately — there's no token number
-    # yet at booking time (tokens get called on the day, at the clinic). This just sets
-    # expectations; the actual update arrives later via POST /events/token-called
-    # (app/webhook.py) whenever 1HMS pushes one for this appointment.
     await whatsapp_client.send_text(client, phone, t("booked_queue_note", lang))
 
     await db.clear_conversation_state(phone)

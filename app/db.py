@@ -98,15 +98,28 @@ async def create_pending_appointment(
     preferred_language: str | None = None,
     booking_for: str = "self",
     patient_display_name: str | None = None,
+    patient_age: int | None = None,
+    patient_gender: str | None = None,
+    patient_guardian: str | None = None,
 ) -> UUID:
     pool = await get_pool()
     row_id = uuid4()
     async with pool.acquire() as conn, conn.cursor() as cur:
         await cur.execute(
             "INSERT INTO dbo.pending_appointments "
-            "(id, phone_number, preferred_date, status, preferred_language, booking_for, patient_display_name) "
-            "VALUES (?, ?, ?, 'pending', ?, ?, ?)",
-            (str(row_id), phone, preferred_date, preferred_language, booking_for, patient_display_name),
+            "(id, phone_number, preferred_date, status, preferred_language, booking_for, patient_display_name, patient_age, patient_gender, patient_guardian) "
+            "VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)",
+            (
+                str(row_id),
+                phone,
+                preferred_date,
+                preferred_language,
+                booking_for,
+                patient_display_name,
+                patient_age,
+                patient_gender,
+                patient_guardian,
+            ),
         )
     return row_id
 

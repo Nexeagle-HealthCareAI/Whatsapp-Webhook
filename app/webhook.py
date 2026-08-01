@@ -67,6 +67,9 @@ def _input_type_and_value(message: dict) -> tuple[str, str] | tuple[None, None]:
         if interactive.get("type") == "button_reply":
             btn_id = interactive.get("button_reply", {}).get("id")
             return ("button_reply", btn_id) if btn_id else (None, None)
+        if interactive.get("type") == "nfm_reply":
+            response_json = interactive.get("nfm_reply", {}).get("response_json")
+            return ("nfm_reply", response_json) if response_json else (None, None)
     if msg_type == "location":
         # Patient tapped "Send your current location" in response to send_location_request()
         # (app/whatsapp_client.py). Encoded as "lat,lng" — conversation.py parses this back

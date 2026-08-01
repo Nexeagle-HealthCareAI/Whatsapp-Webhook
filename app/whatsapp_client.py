@@ -142,3 +142,43 @@ async def send_location(
             },
         },
     )
+
+
+async def send_flow(
+    client: httpx.AsyncClient,
+    to: str,
+    body_text: str,
+    flow_id: str,
+    flow_cta: str,
+    screen_id: str,
+    flow_token: str,
+    initial_data: dict | None = None,
+) -> None:
+    """Sends a standalone WhatsApp Flow interactive message."""
+    await _send(
+        client,
+        {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": to,
+            "type": "interactive",
+            "interactive": {
+                "type": "flow",
+                "body": {"text": body_text},
+                "action": {
+                    "name": "flow",
+                    "parameters": {
+                        "flow_message_version": "3",
+                        "flow_token": flow_token,
+                        "flow_id": flow_id,
+                        "flow_cta": flow_cta,
+                        "flow_action": "navigate",
+                        "flow_action_payload": {
+                            "screen": screen_id,
+                            "data": initial_data or {},
+                        },
+                    },
+                },
+            },
+        },
+    )

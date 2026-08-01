@@ -90,9 +90,9 @@ LIVE_SPECIALTIES = [
 # vs list row titles (cap 24). Kept explicit rather than inferred, so adding a string
 # to the wrong bucket here is a deliberate act rather than an accident.
 BUTTON_TITLE_KEYS = [
-    "person_self", "person_family", "search_mode_symptom", "search_mode_browse",
+    "search_mode_symptom", "search_mode_browse",
     "date_today", "date_tomorrow", "confirm_btn", "cancel_btn", "search_wider_yes",
-    "change_doctor_btn",
+    "change_doctor_btn", "update_details_btn",
 ]
 LIST_ACTION_KEYS = [
     "specialty_group_button", "specialty_list_button", "sort_button", "doctor_list_button",
@@ -442,6 +442,22 @@ def test_details_parsing():
     check(conversation._parse_details("32", 2) is None, "a lone age is not enough")
     check(conversation._parse_details("Aquib, 32", 3) is None, "missing relation should be rejected")
     check(conversation._parse_details("Aquib, , 32", 3) is None, "empty middle part should be rejected")
+    check(
+        conversation._parse_details("Riya, 8, Female, Rajesh", 4) == ["Riya", "8", "Female", "Rajesh"],
+        "4-part details should parse",
+    )
+    check(conversation._parse_details("Riya, 8, Female", 4) is None, "missing guardian should be rejected")
+
+
+def test_patient_line_format():
+    context = {
+        "patient_display_name": "Riya",
+        "patient_age": "8",
+        "patient_gender": "Female",
+        "patient_guardian": "Rajesh",
+    }
+    line = conversation._patient_line(context, "en")
+    check(line == "Riya, 8, Female (Guardian: Rajesh)", f"expected formatted patient line, got {line!r}")
 
 
 def test_age_sanity_check():

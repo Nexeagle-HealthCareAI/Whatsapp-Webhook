@@ -140,7 +140,7 @@ SPECIALTY_GROUPS = [
         },
         "desc": {
             "en": "Chest pain, breathing trouble, asthma",
-            "hi": "सीने में दर्द, सांस की तकलीफ, अस्थমা",
+            "hi": "सीने में दर्द, सांस की तकलीफ, अस्थमा",
             "hg": "Seene mein dard, saans ki takleef, asthma",
             "bn": "বুকে ব্যথা, শ্বাসকষ্ট, হাঁপানি",
         },
@@ -232,50 +232,42 @@ LANG_PROMPT = (
 
 _STRINGS: dict[str, dict[str, str]] = {
     "greeting": {
-        "en": "Great, I'll continue in English. Who is this appointment for?",
-        "hi": "ठीक है, अब मैं हिंदी में बात करूँगा। यह अपॉइंटमेंट किसके लिए है?",
-        "hg": "Theek hai, ab Hinglish mein baat karte hain. Yeh appointment kiske liye hai?",
-        "bn": "ঠিক আছে, আমি বাংলায় কথা বলব। এই অ্যাপয়েন্টমেন্টটি কার জন্য?",
-    },
-    "person_prompt": {
-        "en": "Who are you booking for?",
-        "hi": "आप किसके लिए बुकिंग कर रहे हैं?",
-        "hg": "Kiske liye book kar rahe hain?",
-        "bn": "আপনি কার জন্য বুক করছেন?",
-    },
-    # Button titles are capped at 20 chars by WhatsApp (_MAX_BUTTON_TITLE) — these are kept
-    # short deliberately so they never render half-cut ("Family member ke liy").
-    "person_self": {
-        "en": "For myself",
-        "hi": "खुद के लिए",
-        "hg": "Khud ke liye",
-        "bn": "নিজের জন্য",
-    },
-    "person_family": {
-        "en": "For family",
-        "hi": "परिवार के लिए",
-        "hg": "Family ke liye",
-        "bn": "পরিবারের জন্য",
-    },
-    "person_choose_hint": {
-        "en": "Please tap one of the options above.",
-        "hi": "कृपया ऊपर दिए गए विकल्पों में से एक चुनें।",
-        "hg": "Please upar diye options mein se ek choose kar lijiye.",
-        "bn": "অনুগ্রহ করে উপরের বিকল্পগুলির মধ্যে একটিতে ট্যাপ করুন।",
+        "en": "Great, I'll continue in English.",
+        "hi": "ठीक है, अब मैं हिंदी में बात करूँगा।",
+        "hg": "Theek hai, ab Hinglish mein baat karte hain.",
+        "bn": "ঠিক আছে, আমি বাংলায় কথা বলব।",
     },
     "you": {"en": "You", "hi": "आप", "hg": "Aap", "bn": "আপনি"},
     "clinic_unknown": {"en": "Clinic", "hi": "क्लिनिक", "hg": "Clinic", "bn": "ক্লিনিক"},
-    "self_details_prompt": {
-        "en": "Please send your name and age — e.g. 'Aquib, 32'.",
-        "hi": "कृपया अपना नाम और उम्र भेजें — जैसे 'अकीब, 32'।",
-        "hg": "Apna naam aur age bhejein — jaise 'Aquib, 32'.",
-        "bn": "অনুগ্রহ করে আপনার নাম এবং বয়স পাঠান — যেমন 'Aquib, 32'।",
+    "patient_details_prompt_flow": {
+        "en": "Please fill in the patient's details (Name, Age, Gender, Guardian) by tapping below.",
+        "hi": "नीचे टैप करके मरीज़ का विवरण (नाम, उम्र, लिंग, अभिभावक) भरें।",
+        "hg": "Neeche tap karke patient ki details (Name, Age, Gender, Guardian) fill kar dijiye.",
+        "bn": "নীচে ট্যাপ করে রোগীর বিবরণ (নাম, বয়স, লিঙ্গ, অভিভাবক) পূরণ করুন।",
     },
-    "self_details_invalid": {
-        "en": "Please send it as: Name, Age (e.g. 'Aquib, 32').",
-        "hi": "कृपया इस तरह भेजें: नाम, उम्र (जैसे 'अकीब, 32')।",
-        "hg": "Is format mein bhejein: Naam, Age (jaise 'Aquib, 32').",
-        "bn": "অনুগ্রহ করে এইভাবে পাঠান: নাম, বয়স (যেমন 'Aquib, 32')।",
+    "patient_details_prompt_text": {
+        "en": "Please send the patient's details in this format: Name, Age, Gender, Guardian (e.g. 'Riya, 8, Female, Rajesh').",
+        "hi": "कृपया मरीज़ का विवरण इस प्रारूप में भेजें: नाम, उम्र, लिंग, अभिभावक (जैसे 'रिया, 8, महिला, राजेश')।",
+        "hg": "Please patient ke details is format mein bhejein: Name, Age, Gender, Guardian (jaise 'Riya, 8, Female, Rajesh').",
+        "bn": "অনুগ্রহ করে রোগীর বিবরণ এই বিন্যাসে পাঠান: নাম, বয়স, লিঙ্গ, অভিভাবক (যেমন 'Riya, 8, Female, Rajesh')।",
+    },
+    "patient_details_flow_cta": {
+        "en": "Fill Form",
+        "hi": "विवरण भरें",
+        "hg": "Form bharein",
+        "bn": "ফর্ম পূরণ করুন",
+    },
+    "patient_details_invalid": {
+        "en": "Please fill all details correctly: Name, Age, Gender, Guardian (e.g. 'Riya, 8, Female, Rajesh').",
+        "hi": "कृपया सभी विवरण सही से भरें: नाम, उम्र, लिंग, अभिभावक (जैसे 'रिया, 8, महिला, राजेश')।",
+        "hg": "Saare details sahi se fill karein: Name, Age, Gender, Guardian (jaise 'Riya, 8, Female, Rajesh').",
+        "bn": "অনুগ্রহ করে সমস্ত বিবরণ সঠিকভাবে পূরণ করুন: নাম, বয়স, লিঙ্গ, অভিভাবক (যেমন 'Riya, 8, Female, Rajesh')।",
+    },
+    "update_details_btn": {
+        "en": "Update details",
+        "hi": "विवरण बदलें",
+        "hg": "Details badlein",
+        "bn": "বিবরণ পরিবর্তন করুন",
     },
     "age_invalid": {
         "en": "That age doesn't look right — please send a number of years, e.g. 32.",
@@ -283,21 +275,9 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Ye age sahi nahi lag rahi — saalon mein number bhejein, jaise 32.",
         "bn": "এই বয়সটি সঠিক মনে হচ্ছে না — অনুগ্রহ করে বছরের সংখ্যা পাঠান, যেমন 32।",
     },
-    "family_details_prompt": {
-        "en": "Please send the patient's name, age, and relation to you — e.g. 'Riya, 8, Daughter'.",
-        "hi": "कृपया मरीज़ का नाम, उम्र और आपसे रिश्ता भेजें — जैसे 'रिया, 8, बेटी'।",
-        "hg": "Patient ka naam, age, aur aapse relation bhejein — jaise 'Riya, 8, Daughter'.",
-        "bn": "রোগীর নাম, বয়স এবং আপনার সাথে সম্পর্ক পাঠান — যেমন 'Riya, 8, Daughter'।",
-    },
-    "family_details_invalid": {
-        "en": "Please send it as: Name, Age, Relation (e.g. 'Riya, 8, Daughter').",
-        "hi": "कृपया इस तरह भेजें: नाम, उम्र, रिश्ता (जैसे 'रिया, 8, बेटी')।",
-        "hg": "Is format mein bhejein: Naam, Age, Relation (jaise 'Riya, 8, Daughter').",
-        "bn": "অনুগ্রহ করে এইভাবে পাঠান: নাম, বয়স, সম্পর্ক (যেমন 'Riya, 8, Daughter')।",
-    },
     "location_prompt": {
         "en": "To show doctors near you, please share your location — tap below, it fills in from your phone's GPS automatically.",
-        "hi": "आपके पास के डॉक्टर दिखाने के लिए, कृपया अपनी लोकेशन शेयर करें — नीचे टैপ करें, यह आपके फोन के GPS से अपने आप भर जाएगी।",
+        "hi": "आपके पास के डॉक्टर दिखाने के लिए, कृपया अपनी लोकेशन शेयर करें — नीचे टैप करें, यह आपके फोन के GPS से अपने आप भर जाएगी।",
         "hg": "Aapke paas ke doctors dikhane ke liye, apni location share kar dijiye — neeche tap karein, phone ke GPS se automatic fill ho jayegi.",
         "bn": "আপনার কাছাকাছি ডাক্তারদের দেখাতে, অনুগ্রহ করে আপনার অবস্থান শেয়ার করুন — নিচে ট্যাপ করুন, এটি আপনার ফোনের জিপিএস থেকে স্বয়ংক্রিয়ভাবে পূরণ হবে।",
     },
@@ -351,13 +331,10 @@ _STRINGS: dict[str, dict[str, str]] = {
     },
     "no_specialties": {
         "en": "Sorry, no doctors are available for booking right now. Please try later.",
-        "hi": "क्षма करें, अभी बुकिंग के लिए कोई डॉक्टर उपलब्ध नहीं है। कृपया बाद में कोशिश करें।",
+        "hi": "क्षमा करें, अभी बुकिंग के लिए कोई डॉक्टर उपलब्ध नहीं है। कृपया बाद में कोशिश करें।",
         "hg": "Sorry, abhi booking ke liye koi doctor available nahi hai. Baad mein try karein.",
         "bn": "দুঃখিত, এই মুহূর্তে বুকিংয়ের জন্য কোনো ডাক্তার উপলব্ধ নেই। অনুগ্রহ করে পরে চেষ্টা করুন।",
     },
-    # Deliberately not "Which specialty are you looking for?" — most patients don't think
-    # in specialty names, and being asked to is what makes a chat feel like a form. Ask for
-    # the rough area instead, in plain words, and say out loud that it's not a form.
     "specialty_group_prompt": {
         "en": "No long forms here 🙂 Just tell me roughly what it's about — I'll find the right doctor.",
         "hi": "यहां कोई लंबा फॉर्म नहीं है 🙂 बस मोटे तौर पर बता दीजिए किस बारे में है — सही डॉक्टर मैं ढूंढ दूंगा।",
@@ -391,9 +368,9 @@ _STRINGS: dict[str, dict[str, str]] = {
     },
     "specialty_choose_hint": {
         "en": "Please choose a specialty from the list above.",
-        "hi": "कृपया ऊपर सूची में से एक विशेषज्ञতা चुनें।",
+        "hi": "कृपया ऊपर सूची में से एक विशेषज्ञता चुनें।",
         "hg": "Upar list mein se specialty choose kar lijiye.",
-        "bn": "অনুগ্রহ করে উপরের তালিকা থেকে একটি বিশেষজ্ঞতা বেছে নিন।",
+        "bn": "অনুগ্রহ করে উপরের তালিকা থেকে একটি विशेषज्ञता বেছে নিন।",
     },
     "sort_prompt": {
         "en": "How should I sort the doctor list?",
@@ -457,11 +434,10 @@ _STRINGS: dict[str, dict[str, str]] = {
     },
     "no_doctors_in_radius": {
         "en": "I couldn't find this type of doctor within {radius} km of you. Shall I look further away?",
-        "hi": "आपसे {radius} किमी के अंदर इस तरह के डॉक्टर नहीं मिले। क्या और दूर तक देखूं?",
+        "hi": "आप आपसे {radius} किमी के अंदर इस तरह के डॉक्टर नहीं मिले। क्या और दूर तक देखूं?",
         "hg": "Aapse {radius} km ke andar is type ke doctor nahi mile. Aur door tak dekhun?",
         "bn": "আমি আপনার {radius} কিমি এর মধ্যে এই ধরণের ডাক্তার খুঁজে পাইনি। আমি কি আরও দূরে খুঁজব?",
     },
-    # Button title — must stay inside WhatsApp's 20-char cap (test_specialty_groups.py checks this).
     "search_wider_yes": {
         "en": "Yes, look further",
         "hi": "हां, और दूर देखें",
@@ -500,8 +476,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Upar Aaj ya Kal choose kar lijiye.",
         "bn": "অনুগ্রহ করে উপরে আজ বা আগামীকাল বেছে নিন।",
     },
-    # These two keep the patient's session — they're offered alongside buttons for the other
-    # day and for picking a different doctor, so nothing they've already answered is lost.
     "not_available": {
         "en": "That doctor isn't available then. Try another day, or pick a different doctor?",
         "hi": "उस दिन यह डॉक्टर उपलब्ध नहीं है। दूसरा दिन देखें, या दूसरा डॉक्टर चुनें?",
@@ -526,17 +500,12 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Din ke kis time aana theek rahega?",
         "bn": "দিনের কোন সময়টি সবচেয়ে ভালো হয়?",
     },
-    # Lists what's actually still open, so a patient who types instead of tapping is told
-    # which words will work rather than just being refused.
     "shift_choose_hint": {
         "en": "Please pick one of these: {options}",
         "hi": "इनमें से एक चुनें: {options}",
         "hg": "Inmein se ek chunein: {options}",
         "bn": "অনুগ্রহ করে এর মধ্যে একটি বেছে নিন: {options}",
     },
-    # Itemised rather than one run-on sentence, and the clinic line is the reason why: the
-    # search reaches up to 75km, so the doctor may be in a different town from the patient.
-    # That has to be visible BEFORE confirming, not after, when the map pin arrives.
     "confirm_prompt": {
         "en": "Please check and confirm:\n\n👤 {patient}\n🩺 {doctor}\n🏥 {where}\n📅 {when}\n💰 ₹{fee}",
         "hi": "देख लीजिए और कन्फ़र्म करें:\n\n👤 {patient}\n🩺 {doctor}\n🏥 {where}\n📅 {when}\n💰 ₹{fee}",
@@ -547,7 +516,7 @@ _STRINGS: dict[str, dict[str, str]] = {
     "cancel_btn": {"en": "Cancel", "hi": "रद्द करें", "hg": "Cancel", "bn": "বাতিল করুন"},
     "confirm_choose_hint": {
         "en": "Please tap Confirm or Cancel above.",
-        "hi": "कृपया ऊपर Confirm या Cancel पर tap करें।",
+        "hi": "कृपया ऊपर Confirm या Cancel पर टैप करें।",
         "hg": "Upar Confirm ya Cancel par tap karein.",
         "bn": "অনুগ্রহ করে উপরে নিশ্চিত করুন বা বাতিল করুন-এ ট্যাপ করুন।",
     },
@@ -571,7 +540,7 @@ _STRINGS: dict[str, dict[str, str]] = {
     },
     "booked_queue_note": {
         "en": "We'll send you live queue/token updates on WhatsApp on the day of the visit.",
-        "hi": "विज़ิต के दिन हम आपको WhatsApp पर लाइव क्यू/टोकन अपडेट भेजेंगे।",
+        "hi": "विज़िट के दिन हम आपको WhatsApp पर लाइव क्यू/टोकन अपडेट भेजेंगे।",
         "hg": "Visit ke din hum aapko WhatsApp par live queue/token updates bhejenge.",
         "bn": "আমরা পরিদর্শনের দিন আপনাকে হোয়াটসঅ্যাপে লাইভ কিউ/টোকন আপডেট পাঠাব।",
     },
