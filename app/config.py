@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     whatsapp_verify_token: str
     whatsapp_app_secret: str
     whatsapp_flow_id: str | None = "1534474454316152"
-    whatsapp_flow_screen_id: str = "WELCOME_SCREEN"
+    whatsapp_flow_screen_id: str = "REGISTRATION_SCREEN"
 
     # Password is embedded in the URL (redis://:{password}@redis:6379/0) — docker-compose
     # interpolates REDIS_PASSWORD into this value, the app itself only needs the one var.
