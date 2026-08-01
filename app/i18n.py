@@ -470,6 +470,24 @@ _STRINGS: dict[str, dict[str, str]] = {
     },
     "date_today": {"en": "Today", "hi": "आज", "hg": "Aaj", "bn": "আজ"},
     "date_tomorrow": {"en": "Tomorrow", "hi": "कल", "hg": "Kal", "bn": "আগামীকাল"},
+    "shift_morning": {
+        "en": "Morning",
+        "hi": "सुबह",
+        "hg": "Morning",
+        "bn": "সকাল",
+    },
+    "shift_noon": {
+        "en": "Noon",
+        "hi": "दोपहर",
+        "hg": "Noon",
+        "bn": "দুপুর",
+    },
+    "shift_evening": {
+        "en": "Evening",
+        "hi": "शाम",
+        "hg": "Evening",
+        "bn": "সন্ধ্যা",
+    },
     "date_choose_hint": {
         "en": "Please choose Today or Tomorrow above.",
         "hi": "कृपया ऊपर आज या कल चुनें।",

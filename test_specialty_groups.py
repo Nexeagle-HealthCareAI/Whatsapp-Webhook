@@ -564,6 +564,24 @@ def test_language_detection():
     check(detect("xyz abc") is None, "gibberish should trigger open option")
 
 
+def test_slot_label_formatting():
+    check(conversation._format_slot_label("Morning", True, "en") == "Morning (Today)", "morning today english")
+    check(conversation._format_slot_label("Afternoon", False, "en") == "Noon (Tomorrow)", "afternoon tomorrow english should map to Noon")
+    check(conversation._format_slot_label("Evening", False, "en") == "Evening (Tomorrow)", "evening tomorrow english")
+    
+    check(conversation._format_slot_label("Morning", True, "hg") == "Morning (Aaj)", "morning today hinglish")
+    check(conversation._format_slot_label("Afternoon", False, "hg") == "Noon (Kal)", "afternoon tomorrow hinglish should map to Noon")
+    check(conversation._format_slot_label("Evening", False, "hg") == "Evening (Kal)", "evening tomorrow hinglish")
+
+    check(conversation._format_slot_label("Morning", True, "hi") == "सुबह (आज)", "morning today hindi")
+    check(conversation._format_slot_label("Afternoon", False, "hi") == "दोपहर (कल)", "afternoon tomorrow hindi")
+    check(conversation._format_slot_label("Evening", False, "hi") == "शाम (कल)", "evening tomorrow hindi")
+
+    check(conversation._format_slot_label("Morning", True, "bn") == "সকাল (আজ)", "morning today bengali")
+    check(conversation._format_slot_label("Afternoon", False, "bn") == "দুপুর (আগামীকাল)", "afternoon tomorrow bengali")
+    check(conversation._format_slot_label("Evening", False, "bn") == "সন্ধ্যা (আগামীকাল)", "evening tomorrow bengali")
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:

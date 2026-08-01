@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -147,10 +148,8 @@ async def handle_message(
             await _handle_confirming_wider_search(client, phone, input_type, input_value, context)
         elif current_step == "choosing_doctor":
             await _handle_choosing_doctor(client, phone, input_type, input_value, context)
-        elif current_step == "choosing_date":
-            await _handle_choosing_date(client, phone, input_type, input_value, context)
-        elif current_step == "choosing_shift":
-            await _handle_choosing_shift(client, phone, input_type, input_value, context)
+        elif current_step == "choosing_slot":
+            await _handle_choosing_slot(client, phone, input_type, input_value, context)
         elif current_step == "awaiting_patient_details":
             await _handle_awaiting_patient_details(client, phone, input_type, input_value, context)
         elif current_step == "confirming":
@@ -745,11 +744,7 @@ async def _handle_choosing_doctor(client, phone, input_type, input_value, contex
     }
     context.pop("doctor_options", None)  # no longer needed, keep context_json lean
 
-    await whatsapp_client.send_buttons(
-        client, phone, t("date_prompt", lang),
-        [("today", t("date_today", lang)), ("tomorrow", t("date_tomorrow", lang))],
-    )
-    await db.save_conversation_state(phone, "choosing_date", context)
+    await _send_slot_options(client, phone, context)
 
 
 # ---------------------------------------------------------------------------------------
@@ -764,72 +759,147 @@ async def _handle_choosing_doctor(client, phone, input_type, input_value, contex
 # ---------------------------------------------------------------------------------------
 
 
-async def _offer_other_day(client, phone, context, tried: str, reason_key: str) -> None:
-    """Dead-end recovery. Whatever went wrong with the day the patient picked, keep the
-    conversation (and everything they've already chosen) and offer the obvious next moves:
-    the other day, or a different doctor. Previously this wiped the whole session and told
-    them to type 'hi', which meant redoing language, location, specialty and doctor just
-    because a doctor was busy."""
-    lang = context.get("lang")
-    other = "tomorrow" if tried == "today" else "today"
-    await whatsapp_client.send_buttons(
-        client, phone, t(reason_key, lang),
-        [
-            (other, t(f"date_{other}", lang)),
-            ("change_doctor", t("change_doctor_btn", lang)),
-        ],
-    )
-    await db.save_conversation_state(phone, "choosing_date", context)
+def _format_slot_label(shift_name: str, is_today: bool, lang: str | None) -> str:
+    # Get localized shift name
+    shift_key = shift_name.lower()
+    if shift_key == "afternoon":
+        shift_key = "noon"
+
+    localized_shift = t(f"shift_{shift_key}", lang) or shift_name
+
+    # Get localized date label
+    date_key = "date_today" if is_today else "date_tomorrow"
+    localized_date = t(date_key, lang)
+
+    return f"{localized_shift} ({localized_date})"
 
 
-async def _handle_choosing_date(client, phone, input_type, input_value, context) -> None:
-    lang = context.get("lang")
-    choice = _match_choice(input_type, input_value, ["today", "tomorrow", "change_doctor"])
-    if choice is None:
-        await whatsapp_client.send_text(client, phone, t("date_choose_hint", lang))
-        return
-
-    if choice == "change_doctor":
-        # Straight back to the doctor list, keeping specialty/location/sort — the patient
-        # only wants a different doctor, not a different everything.
-        await _send_doctor_list(client, phone, context)
-        return
-
-    # Clinic-local, not container-local: at 1am IST the container's UTC date is still
-    # yesterday, and "today" would resolve to a date that has already passed.
+async def _get_offered_slots(doctor_id: str, lang: str | None) -> list[dict]:
     today = _clinic_now().date()
-    preferred_date = today if choice == "today" else today + timedelta(days=1)
+    tomorrow = today + timedelta(days=1)
+
+    today_avail, tomorrow_avail = await asyncio.gather(
+        hms_client.get_doctor_availability(doctor_id, today),
+        hms_client.get_doctor_availability(doctor_id, tomorrow)
+    )
+
+    slots = []
+    if today_avail.get("isAvailable"):
+        today_shifts = _usable_shifts(today_avail, today)
+        for shift in today_shifts:
+            slots.append({
+                "date": today,
+                "is_today": True,
+                "shift_name": shift,
+                "button_id": f"slot_today_{shift.lower()}",
+                "label": _format_slot_label(shift, True, lang)
+            })
+
+    if tomorrow_avail.get("isAvailable"):
+        tomorrow_shifts = _usable_shifts(tomorrow_avail, tomorrow)
+        for shift in tomorrow_shifts:
+            slots.append({
+                "date": tomorrow,
+                "is_today": False,
+                "shift_name": shift,
+                "button_id": f"slot_tomorrow_{shift.lower()}",
+                "label": _format_slot_label(shift, False, lang)
+            })
+
+    return slots[:3]
+
+
+async def _send_slot_options(client: httpx.AsyncClient, phone: str, context: dict) -> None:
+    lang = context.get("lang")
     doctor_id = context["doctor_id"]
 
-    availability = await hms_client.get_doctor_availability(doctor_id, preferred_date)
-    if not availability.get("isAvailable"):
-        await _offer_other_day(client, phone, context, choice, "not_available")
+    slots = await _get_offered_slots(doctor_id, lang)
+    if not slots:
+        await whatsapp_client.send_buttons(
+            client, phone, t("today_shifts_over", lang),
+            [("change_doctor", t("change_doctor_btn", lang))],
+        )
+        await db.save_conversation_state(phone, "choosing_slot", context)
         return
 
-    shift_names = _usable_shifts(availability, preferred_date)
-    if not shift_names:
-        # Doctor works today, but every one of their shifts has already finished.
-        await _offer_other_day(client, phone, context, choice, "today_shifts_over")
-        return
+    buttons = [(s["button_id"], s["label"]) for s in slots]
 
-    offered = shift_names[:3]
+    offered_slots_data = [
+        {
+            "button_id": s["button_id"],
+            "shift_name": s["shift_name"],
+            "date": s["date"].isoformat(),
+            "is_today": s["is_today"],
+            "label": s["label"]
+        }
+        for s in slots
+    ]
+
     await whatsapp_client.send_buttons(
         client, phone, t("shift_prompt", lang),
-        [(name.lower(), name) for name in offered],
+        buttons,
     )
-    date_label = t("date_today", lang) if choice == "today" else t("date_tomorrow", lang)
+
     await db.save_conversation_state(
-        phone, "choosing_shift",
+        phone, "choosing_slot",
         {
             **context,
-            "preferred_date": preferred_date.isoformat(),
-            "date_label": date_label,
-            # Remembered so the next step can reject anything else. Without this, a patient
-            # who TYPES "morning" at 7pm gets booked into a shift that ended hours ago —
-            # the button correctly hides it, but typing bypassed the filter entirely.
-            "offered_shifts": offered,
-        },
+            "offered_slots": offered_slots_data,
+        }
     )
+
+
+async def _handle_choosing_slot(client, phone, input_type, input_value, context) -> None:
+    lang = context.get("lang")
+    offered_slots = context.get("offered_slots") or []
+
+    valid_ids = []
+    label_to_slot = {}
+    shift_name_to_slot = {}
+
+    for s in offered_slots:
+        b_id = s["button_id"]
+        valid_ids.append(b_id)
+        label_to_slot[s["label"].lower()] = s
+
+        sh_name = s["shift_name"].lower()
+        if sh_name not in shift_name_to_slot:
+            shift_name_to_slot[sh_name] = s
+
+    valid_ids.append("change_doctor")
+
+    choice = _match_choice(input_type, input_value, valid_ids)
+    selected_slot = None
+
+    if choice and choice != "change_doctor":
+        selected_slot = next(s for s in offered_slots if s["button_id"] == choice)
+    elif choice == "change_doctor":
+        await _send_doctor_list(client, phone, context)
+        return
+    else:
+        normalized = input_value.strip().lower()
+        if normalized in label_to_slot:
+            selected_slot = label_to_slot[normalized]
+        elif normalized in shift_name_to_slot:
+            selected_slot = shift_name_to_slot[normalized]
+
+    if selected_slot is None:
+        options_str = ", ".join(s["label"] for s in offered_slots)
+        await whatsapp_client.send_text(
+            client, phone, t("shift_choose_hint", lang, options=options_str)
+        )
+        return
+
+    date_label = t("date_today", lang) if selected_slot["is_today"] else t("date_tomorrow", lang)
+    context = {
+        **context,
+        "preferred_date": selected_slot["date"],
+        "date_label": date_label,
+        "shift_label": selected_slot["shift_name"],
+    }
+    context.pop("offered_slots", None)
+
+    await _send_patient_details_flow(client, phone, context)
 
 
 def _clinic_line(context: dict, lang: str | None) -> str:
@@ -864,21 +934,6 @@ def _patient_line(context: dict, lang: str | None) -> str:
     if guardian:
         line += f" (Guardian: {guardian})"
     return line
-
-
-async def _handle_choosing_shift(client, phone, input_type, input_value, context) -> None:
-    lang = context.get("lang")
-    offered = context.get("offered_shifts") or list(_SHIFT_FALLBACK)
-    choice = _match_choice(input_type, input_value, [name.lower() for name in offered])
-    if choice is None:
-        await whatsapp_client.send_text(
-            client, phone, t("shift_choose_hint", lang, options=", ".join(offered))
-        )
-        return
-    shift_label = next(name for name in offered if name.lower() == choice)
-
-    context = {**context, "shift_label": shift_label}
-    await _send_patient_details_flow(client, phone, context)
 
 
 async def _send_patient_details_flow(client: httpx.AsyncClient, phone: str, context: dict) -> None:
