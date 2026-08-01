@@ -621,6 +621,33 @@ def test_doctor_search_matching_and_formatting():
     check(len(desc) <= 72, f"description length {len(desc)} should be <= 72")
 
 
+def test_cancel_quit_and_back_logic():
+    class MockDB:
+        def __init__(self):
+            self.state = {}
+        async def save_conversation_state(self, phone, step, context):
+            self.state[phone] = (step, context)
+
+    import asyncio
+    db_mock = MockDB()
+    original_db = conversation.db
+    conversation.db = db_mock
+    try:
+        asyncio.run(conversation._transition_to("123", "step1", {"lang": "en"}, "choosing_language"))
+        step, ctx = db_mock.state["123"]
+        check(step == "step1", "should transition to step1")
+        check(len(ctx.get("_history", [])) == 1, "should have 1 history record")
+        check(ctx["_history"][0]["current_step"] == "choosing_language", "history step should be choosing_language")
+
+        asyncio.run(conversation._transition_to("123", "step2", ctx, "step1"))
+        step, ctx = db_mock.state["123"]
+        check(step == "step2", "should transition to step2")
+        check(len(ctx.get("_history", [])) == 2, "should have 2 history records")
+        check(ctx["_history"][1]["current_step"] == "step1", "second history step should be step1")
+    finally:
+        conversation.db = original_db
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:

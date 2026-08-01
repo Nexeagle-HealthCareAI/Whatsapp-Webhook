@@ -366,6 +366,12 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Hamein '{query}' naam se koi doctor nahi mila. Aaiye iske badle symptom ya specialty se search karte hain:",
         "bn": "আমরা '{query}' নামের কোনো ডাক্তার খুঁজে পাইনি। আসুন রোগ বা বিশেষত্ব অনুযায়ী খুঁজি:",
     },
+    "instructions": {
+        "en": "Type 'cancel' or 'quit' to restart at any time, and 'back' to go back 1 step.",
+        "hi": "आप किसी भी समय रीस्टार्ट करने के लिए 'cancel' या 'quit' टाइप कर सकते हैं, और 1 कदम पीछे जाने के लिए 'back' टाइप करें।",
+        "hg": "Aap kabhi bhi restart karne ke liye 'cancel' ya 'quit' type kar sakte hain, aur 1 step peeche jaane ke liye 'back' type karein.",
+        "bn": "আপনি যেকোনো সময় রিস্টার্ট করতে 'cancel' বা 'quit' টাইপ করতে পারেন, এবং ১ ধাপ পিছিয়ে যেতে 'back' টাইপ করুন।",
+    },
     "specialty_list_prompt": {
         "en": "Good — which of these fits best?",
         "hi": "ठीक है — इनमें से कौन सा सबसे सही रहेगा?",

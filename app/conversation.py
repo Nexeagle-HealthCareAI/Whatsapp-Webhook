@@ -129,6 +129,28 @@ async def handle_message(
     context = state["context"] if state else {}
     lang = context.get("lang")
 
+    if input_type == "text" and input_value.strip():
+        cmd = input_value.strip().lower()
+        if cmd in ("cancel", "quit"):
+            await whatsapp_client.send_text(client, phone, t("cancelled", lang or "en"))
+            await db.clear_conversation_state(phone)
+            await _start(client, phone)
+            return
+        if cmd == "back":
+            history = context.get("_history", [])
+            if not history:
+                await whatsapp_client.send_text(client, phone, "Cannot go back further. Starting over...")
+                await db.clear_conversation_state(phone)
+                await _start(client, phone)
+                return
+            prev = history.pop()
+            prev_step = prev["current_step"]
+            prev_context = prev["context"]
+            prev_context["_history"] = history
+            await db.save_conversation_state(phone, prev_step, prev_context)
+            await _trigger_step_prompt(client, phone, prev_step, prev_context)
+            return
+
     try:
         if current_step == "choosing_language":
             await _handle_choosing_language(client, phone, input_type, input_value, context)
@@ -165,7 +187,8 @@ async def handle_message(
                 context = {**context, "lang": detected_lang}
                 if _is_doctor_search_query(input_value):
                     context["search_doctor_query"] = input_value
-                await whatsapp_client.send_text(client, phone, t("greeting", detected_lang))
+                greeting_text = t("greeting", detected_lang) + "\n\n" + t("instructions", detected_lang)
+                await whatsapp_client.send_text(client, phone, greeting_text)
                 await _send_location_request(client, phone, context)
             else:
                 init_context = {}
@@ -189,11 +212,16 @@ async def handle_message(
 
 
 async def _start(client: httpx.AsyncClient, phone: str, init_context: dict | None = None) -> None:
+    await whatsapp_client.send_text(
+        client, phone,
+        "Welcome! You can type 'cancel' or 'quit' to restart at any time, and 'back' to go back 1 step.\n\n"
+        "स्वागत है! आप किसी भी समय रीस्टार्ट करने के लिए 'cancel' या 'quit' टाइप कर सकते हैं, और 1 कदम पीछे जाने के लिए 'back' टाइप करें।"
+    )
     await whatsapp_client.send_buttons(
         client, phone, LANG_PROMPT,
         [(code, label) for code, label in LANGUAGE_LABELS.items()],
     )
-    await db.save_conversation_state(phone, "choosing_language", init_context or {})
+    await _transition_to(phone, "choosing_language", init_context or {}, None)
 
 
 async def _handle_choosing_language(client, phone, input_type, input_value, context) -> None:
@@ -204,7 +232,8 @@ async def _handle_choosing_language(client, phone, input_type, input_value, cont
         await whatsapp_client.send_text(client, phone, "Please tap one of the language options above.")
         return
     context = {**context, "lang": lang}
-    await whatsapp_client.send_text(client, phone, t("greeting", lang))
+    greeting_text = t("greeting", lang) + "\n\n" + t("instructions", lang)
+    await whatsapp_client.send_text(client, phone, greeting_text)
     await _send_location_request(client, phone, context)
 
 
@@ -221,7 +250,7 @@ async def _send_location_request(client: httpx.AsyncClient, phone: str, context:
     lang = context.get("lang")
     await whatsapp_client.send_location_request(client, phone, t("location_prompt", lang))
     await whatsapp_client.send_text(client, phone, t("location_manual_hint", lang))
-    await db.save_conversation_state(phone, "choosing_location", context)
+    await _transition_to(phone, "choosing_location", context, "choosing_language")
 
 
 async def _safe_city_index() -> dict:
@@ -276,7 +305,7 @@ async def _handle_choosing_location(client, phone, input_type, input_value, cont
     context = await _resolve_city(context)
 
     if context.get("search_doctor_query"):
-        if await _search_doctors_flow(client, phone, context):
+        if await _search_doctors_flow(client, phone, context, "choosing_location"):
             return
         else:
             query = context.get("search_doctor_query")
@@ -300,14 +329,14 @@ async def _send_search_mode_prompt(client: httpx.AsyncClient, phone: str, contex
         client, phone, t("search_mode_prompt", lang),
         [("symptom", t("search_mode_symptom", lang)), ("browse", t("search_mode_browse", lang))],
     )
-    await db.save_conversation_state(phone, "choosing_search_mode", context)
+    await _transition_to(phone, "choosing_search_mode", context, "choosing_location")
 
 
 async def _handle_choosing_search_mode(client, phone, input_type, input_value, context) -> None:
     lang = context.get("lang")
     if input_type == "text" and _is_doctor_search_query(input_value):
         context = {**context, "search_doctor_query": input_value}
-        if await _search_doctors_flow(client, phone, context):
+        if await _search_doctors_flow(client, phone, context, "choosing_search_mode"):
             return
         else:
             await whatsapp_client.send_text(
@@ -321,7 +350,7 @@ async def _handle_choosing_search_mode(client, phone, input_type, input_value, c
         return
     if choice == "symptom":
         await whatsapp_client.send_text(client, phone, t("symptom_ask", lang))
-        await db.save_conversation_state(phone, "awaiting_symptom", context)
+        await _transition_to(phone, "awaiting_symptom", context, "choosing_search_mode")
         return
     await _send_specialty_list(client, phone, context)
 
@@ -330,7 +359,7 @@ async def _handle_awaiting_symptom(client, phone, input_type, input_value, conte
     lang = context.get("lang")
     if input_type == "text" and _is_doctor_search_query(input_value):
         context = {**context, "search_doctor_query": input_value}
-        if await _search_doctors_flow(client, phone, context):
+        if await _search_doctors_flow(client, phone, context, "awaiting_symptom"):
             return
         else:
             await whatsapp_client.send_text(
@@ -354,8 +383,7 @@ async def _handle_awaiting_symptom(client, phone, input_type, input_value, conte
         await _send_specialty_list(client, phone, context)
         return
 
-    await whatsapp_client.send_text(client, phone, t("symptom_matched", lang, category=matched_category))
-    await _send_sort_prompt(client, phone, context, matched_category)
+    await _send_sort_prompt(client, phone, context, matched_category, "awaiting_symptom")
 
 
 def _specialty_row(specialty: dict) -> tuple[str, str, str]:
@@ -422,8 +450,8 @@ async def _send_specialty_list(client: httpx.AsyncClient, phone: str, context: d
     # Remember the group -> categories split that was actually shown, so the next step
     # doesn't have to re-fetch and risk showing a group built from a different response.
     group_members = {group["id"]: [s["category"] for s in members] for group, members in paired}
-    await db.save_conversation_state(
-        phone, "choosing_specialty_group", {**context, "specialty_groups": group_members}
+    await _transition_to(
+        phone, "choosing_specialty_group", {**context, "specialty_groups": group_members}, "choosing_search_mode"
     )
 
 
@@ -453,7 +481,7 @@ async def _handle_choosing_specialty_group(client, phone, input_type, input_valu
     # Single-specialty group — asking "which of these fits best?" for a list of one is the
     # kind of pointless tap that makes a bot feel bureaucratic. Skip straight to sorting.
     if len(members) == 1:
-        await _send_sort_prompt(client, phone, context, members[0]["category"])
+        await _send_sort_prompt(client, phone, context, members[0]["category"], "choosing_specialty_group")
         return
 
     rows = [_specialty_row(s) for s in members]
@@ -461,7 +489,7 @@ async def _handle_choosing_specialty_group(client, phone, input_type, input_valu
         client, phone, t("specialty_list_prompt", lang), t("specialty_list_button", lang),
         rows, t("specialty_group_section", lang),
     )
-    await db.save_conversation_state(phone, "choosing_specialty", context)
+    await _transition_to(phone, "choosing_specialty", context, "choosing_specialty_group")
 
 
 async def _handle_choosing_specialty(client, phone, input_type, input_value, context) -> None:
@@ -469,7 +497,7 @@ async def _handle_choosing_specialty(client, phone, input_type, input_value, con
     if input_type != "list_reply":
         await whatsapp_client.send_text(client, phone, t("specialty_choose_hint", lang))
         return
-    await _send_sort_prompt(client, phone, context, input_value)
+    await _send_sort_prompt(client, phone, context, input_value, "choosing_specialty")
 
 
 # ---------------------------------------------------------------------------------------
@@ -483,7 +511,7 @@ async def _handle_choosing_specialty(client, phone, input_type, input_value, con
 # ---------------------------------------------------------------------------------------
 
 
-async def _send_sort_prompt(client: httpx.AsyncClient, phone: str, context: dict, specialty_category: str) -> None:
+async def _send_sort_prompt(client: httpx.AsyncClient, phone: str, context: dict, specialty_category: str, current_step: str) -> None:
     lang = context.get("lang")
     context = {**context, "specialty_category": specialty_category}
     rows = [
@@ -498,7 +526,7 @@ async def _send_sort_prompt(client: httpx.AsyncClient, phone: str, context: dict
     if context.get("patient_lat") is not None or context.get("location_text"):
         rows.insert(1, ("nearest", t("sort_nearest", lang)))
     await whatsapp_client.send_list(client, phone, t("sort_prompt", lang), t("sort_button", lang), rows, "Sort")
-    await db.save_conversation_state(phone, "choosing_sort", context)
+    await _transition_to(phone, "choosing_sort", context, current_step)
 
 
 async def _handle_choosing_sort(client, phone, input_type, input_value, context) -> None:
@@ -697,7 +725,7 @@ async def _send_doctor_list(client: httpx.AsyncClient, phone: str, context: dict
                 t("no_doctors_in_radius", lang, radius=int(max_radius)),
                 [("search_wider", t("search_wider_yes", lang)), ("cancel", t("cancel_btn", lang))],
             )
-            await db.save_conversation_state(phone, "confirming_wider_search", context)
+            await _transition_to(phone, "confirming_wider_search", context, "choosing_sort")
             return
     else:
         # No coordinates (patient typed a place name) — radius filtering isn't possible, so
@@ -716,11 +744,11 @@ async def _send_doctor_list(client: httpx.AsyncClient, phone: str, context: dict
             client, phone, t("doctors_widened_radius", lang, radius=int(used_radius))
         )
 
-    await _render_doctor_list(client, phone, context, doctors)
+    await _render_doctor_list(client, phone, context, doctors, "choosing_sort")
 
 
 async def _render_doctor_list(
-    client: httpx.AsyncClient, phone: str, context: dict, doctors: list[dict]
+    client: httpx.AsyncClient, phone: str, context: dict, doctors: list[dict], current_step: str | None = None
 ) -> None:
     """Sorts, trims to WhatsApp's row cap, and sends. Shared by the normal radius search and
     the opted-in wider search so both present results identically."""
@@ -737,7 +765,10 @@ async def _render_doctor_list(
     # fee/hospital name/address/lat-long without a second API round trip — see
     # _handle_choosing_doctor below. Small enough (<=10 doctors) to live in context_json.
     context = {**context, "doctor_options": {d["doctorId"]: d for d in sorted_doctors}}
-    await db.save_conversation_state(phone, "choosing_doctor", context)
+    if current_step:
+        await _transition_to(phone, "choosing_doctor", context, current_step)
+    else:
+        await db.save_conversation_state(phone, "choosing_doctor", context)
 
 
 async def _handle_confirming_wider_search(client, phone, input_type, input_value, context) -> None:
@@ -760,7 +791,7 @@ async def _handle_confirming_wider_search(client, phone, input_type, input_value
         await whatsapp_client.send_text(client, phone, t("no_doctors", lang))
         await db.clear_conversation_state(phone)
         return
-    await _render_doctor_list(client, phone, {**context, "sort_key": "nearest"}, doctors)
+    await _render_doctor_list(client, phone, {**context, "sort_key": "nearest"}, doctors, "confirming_wider_search")
 
 
 async def _handle_choosing_doctor(client, phone, input_type, input_value, context) -> None:
@@ -864,7 +895,7 @@ async def _send_slot_options(client: httpx.AsyncClient, phone: str, context: dic
             client, phone, t("today_shifts_over", lang),
             [("change_doctor", t("change_doctor_btn", lang))],
         )
-        await db.save_conversation_state(phone, "choosing_slot", context)
+        await _transition_to(phone, "choosing_slot", context, "choosing_doctor")
         return
 
     buttons = [(s["button_id"], s["label"]) for s in slots]
@@ -885,12 +916,13 @@ async def _send_slot_options(client: httpx.AsyncClient, phone: str, context: dic
         buttons,
     )
 
-    await db.save_conversation_state(
+    await _transition_to(
         phone, "choosing_slot",
         {
             **context,
             "offered_slots": offered_slots_data,
-        }
+        },
+        "choosing_doctor"
     )
 
 
@@ -997,7 +1029,7 @@ async def _send_patient_details_flow(client: httpx.AsyncClient, phone: str, cont
         )
     if not success:
         await whatsapp_client.send_text(client, phone, t("patient_details_prompt_text", lang))
-    await db.save_conversation_state(phone, "awaiting_patient_details", context)
+    await _transition_to(phone, "awaiting_patient_details", context, "choosing_slot")
 
 
 async def _handle_awaiting_patient_details(client, phone, input_type, input_value, context) -> None:
@@ -1053,7 +1085,7 @@ async def _handle_awaiting_patient_details(client, phone, input_type, input_valu
             ("cancel", t("cancel_btn", lang)),
         ],
     )
-    await db.save_conversation_state(phone, "confirming", context)
+    await _transition_to(phone, "confirming", context, "awaiting_patient_details")
 
 
 async def _handle_confirming(client, phone, sender_name, input_type, input_value, context) -> None:
@@ -1171,7 +1203,7 @@ def _match_doctor_by_query(query: str, doctors: list[dict]) -> list[dict]:
     return matches
 
 
-async def _search_doctors_flow(client: httpx.AsyncClient, phone: str, context: dict) -> bool:
+async def _search_doctors_flow(client: httpx.AsyncClient, phone: str, context: dict, current_step: str) -> bool:
     """Performs a direct doctor search by name. If matches are found, it lists them.
     Returns True if we handled the flow by finding and showing matches, False otherwise."""
     query = context.get("search_doctor_query")
@@ -1189,5 +1221,69 @@ async def _search_doctors_flow(client: httpx.AsyncClient, phone: str, context: d
     if not matches:
         return False
 
-    await _render_doctor_list(client, phone, context, matches)
+    await _render_doctor_list(client, phone, context, matches, current_step)
     return True
+
+
+async def _transition_to(phone: str, next_step: str, context: dict, current_step: str | None) -> None:
+    history = context.get("_history", [])
+    if current_step:
+        clean_context = {k: v for k, v in context.items() if k != "_history"}
+        history = list(history) + [{"current_step": current_step, "context": clean_context}]
+        if len(history) > 10:
+            history.pop(0)
+    new_context = {**context, "_history": history}
+    await db.save_conversation_state(phone, next_step, new_context)
+
+
+async def _trigger_step_prompt(client: httpx.AsyncClient, phone: str, step: str, context: dict) -> None:
+    lang = context.get("lang")
+    if step == "choosing_language":
+        await _start(client, phone)
+    elif step == "choosing_location":
+        await _send_location_request(client, phone, context)
+    elif step == "choosing_search_mode":
+        await _send_search_mode_prompt(client, phone, context)
+    elif step == "awaiting_symptom":
+        await whatsapp_client.send_text(client, phone, t("symptom_ask", lang))
+    elif step == "choosing_specialty_group":
+        await _send_specialty_list(client, phone, context)
+    elif step == "choosing_specialty":
+        group_members = context.get("specialty_groups", {})
+        rows = [_specialty_row(s) for s in group_members.values()]
+        await whatsapp_client.send_list(
+            client, phone, t("specialty_list_prompt", lang), t("specialty_list_button", lang),
+            rows, t("specialty_group_section", lang),
+        )
+    elif step == "choosing_sort":
+        await _send_sort_prompt(client, phone, context, context.get("specialty_category"))
+    elif step == "choosing_doctor":
+        docs = list(context.get("doctor_options", {}).values())
+        if docs:
+            await _render_doctor_list(client, phone, context, docs)
+        else:
+            await _send_search_mode_prompt(client, phone, context)
+    elif step == "choosing_slot":
+        await _send_slot_options(client, phone, context)
+    elif step == "awaiting_patient_details":
+        await _send_patient_details_flow(client, phone, context)
+    elif step == "confirming":
+        fee = context.get("doctor_fee")
+        await whatsapp_client.send_buttons(
+            client, phone,
+            t(
+                "confirm_prompt", lang,
+                patient=_patient_line(context, lang),
+                doctor=context.get("doctor_name", "-"),
+                where=_clinic_line(context, lang),
+                when=f"{context.get('date_label', '')}, {context.get('shift_label', '')}",
+                fee=f"{fee:.0f}" if fee is not None else "-",
+            ),
+            [
+                ("confirm", t("confirm_btn", lang)),
+                ("update_details", t("update_details_btn", lang)),
+                ("cancel", t("cancel_btn", lang)),
+            ],
+        )
+    else:
+        await _start(client, phone)
