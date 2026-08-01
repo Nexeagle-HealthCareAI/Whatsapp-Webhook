@@ -305,6 +305,24 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Specialty dekhein",
         "bn": "বিশেষজ্ঞতা খুঁজুন",
     },
+    "search_mode_name": {
+        "en": "Search by doctor name",
+        "hi": "डॉक्टर के नाम से खोजें",
+        "hg": "Doctor ke naam se search karein",
+        "bn": "ডাক্তারের নাম দিয়ে খুঁজুন",
+    },
+    "doctor_name_ask": {
+        "en": "Please type the name of the doctor you are looking for:",
+        "hi": "कृपया उस डॉक्टर का नाम टाइप करें जिन्हें आप ढूंढ रहे हैं:",
+        "hg": "Please us doctor ka naam type karein jinhe aap dhoond rahe hain:",
+        "bn": "অনুগ্রহ করে আপনি যে ডাক্তারের সন্ধান করছেন তার নাম টাইপ করুন:",
+    },
+    "doctor_name_text_required": {
+        "en": "Please type the doctor's name to search.",
+        "hi": "खोजने के लिए कृपया डॉक्टर का नाम टाइप करें।",
+        "hg": "Search karne ke liye please doctor ka naam type karein.",
+        "bn": "অনুগ্রহ করে খোঁজার জন্য ডাক্তারের নাম টাইপ করুন।",
+    },
     "symptom_ask": {
         "en": "Sure — describe what's bothering you (e.g. 'chest pain and shortness of breath').",
         "hi": "ठीक है — बताएं क्या तकलीफ़ है (जैसे 'सीने में दर्द और सांस फूलना')।",

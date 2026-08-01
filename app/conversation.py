@@ -159,6 +159,8 @@ async def handle_message(
             await _handle_choosing_search_mode(client, phone, input_type, input_value, context)
         elif current_step == "awaiting_symptom":
             await _handle_awaiting_symptom(client, phone, input_type, input_value, context)
+        elif current_step == "awaiting_doctor_name":
+            await _handle_awaiting_doctor_name(client, phone, input_type, input_value, context)
         elif current_step == "choosing_specialty_group":
             await _handle_choosing_specialty_group(client, phone, input_type, input_value, context)
         elif current_step == "choosing_specialty":
@@ -326,7 +328,11 @@ async def _send_search_mode_prompt(client: httpx.AsyncClient, phone: str, contex
     lang = context.get("lang")
     await whatsapp_client.send_buttons(
         client, phone, t("search_mode_prompt", lang),
-        [("symptom", t("search_mode_symptom", lang)), ("browse", t("search_mode_browse", lang))],
+        [
+            ("symptom", t("search_mode_symptom", lang)),
+            ("name", t("search_mode_name", lang)),
+            ("browse", t("search_mode_browse", lang)),
+        ],
     )
     await _transition_to(phone, "choosing_search_mode", context, "choosing_location")
 
@@ -343,13 +349,17 @@ async def _handle_choosing_search_mode(client, phone, input_type, input_value, c
             )
             context.pop("search_doctor_query", None)
 
-    choice = _match_choice(input_type, input_value, ["symptom", "browse"])
+    choice = _match_choice(input_type, input_value, ["symptom", "name", "browse"])
     if choice is None:
         await whatsapp_client.send_text(client, phone, t("search_mode_choose_hint", lang))
         return
     if choice == "symptom":
         await whatsapp_client.send_text(client, phone, t("symptom_ask", lang))
         await _transition_to(phone, "awaiting_symptom", context, "choosing_search_mode")
+        return
+    if choice == "name":
+        await whatsapp_client.send_text(client, phone, t("doctor_name_ask", lang))
+        await _transition_to(phone, "awaiting_doctor_name", context, "choosing_search_mode")
         return
     await _send_specialty_list(client, phone, context)
 
@@ -1296,6 +1306,8 @@ async def _trigger_step_prompt(client: httpx.AsyncClient, phone: str, step: str,
         await _send_search_mode_prompt(client, phone, context)
     elif step == "awaiting_symptom":
         await whatsapp_client.send_text(client, phone, t("symptom_ask", lang))
+    elif step == "awaiting_doctor_name":
+        await whatsapp_client.send_text(client, phone, t("doctor_name_ask", lang))
     elif step == "choosing_specialty_group":
         await _send_specialty_list(client, phone, context)
     elif step == "choosing_specialty":
@@ -1337,3 +1349,20 @@ async def _trigger_step_prompt(client: httpx.AsyncClient, phone: str, step: str,
         )
     else:
         await _start(client, phone)
+
+
+async def _handle_awaiting_doctor_name(client, phone, input_type, input_value, context) -> None:
+    lang = context.get("lang")
+    if input_type != "text" or not input_value.strip():
+        await whatsapp_client.send_text(client, phone, t("doctor_name_text_required", lang))
+        return
+
+    context = {**context, "search_doctor_query": input_value.strip()}
+    if await _search_doctors_flow(client, phone, context, "awaiting_doctor_name"):
+        return
+    else:
+        await whatsapp_client.send_text(
+            client, phone, t("search_doctor_not_found", lang, query=input_value)
+        )
+        context.pop("search_doctor_query", None)
+        await _send_search_mode_prompt(client, phone, context)

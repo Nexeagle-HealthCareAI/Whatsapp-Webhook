@@ -687,6 +687,40 @@ def test_cancel_quit_and_back_logic():
         conversation.db = original_db
 
 
+def test_three_search_modes_flow():
+    import asyncio
+    class MockClient:
+        pass
+    mock_client = MockClient()
+
+    class MockDB:
+        def __init__(self):
+            self.state = {}
+        async def save_conversation_state(self, phone, step, context):
+            self.state[phone] = (step, context)
+
+    db_mock = MockDB()
+    original_db = conversation.db
+    conversation.db = db_mock
+
+    sent_messages = []
+    original_send_text = conversation.whatsapp_client.send_text
+    async def mock_send_text(client, to, text):
+        sent_messages.append(text)
+    conversation.whatsapp_client.send_text = mock_send_text
+
+    try:
+        context = {"lang": "en"}
+        asyncio.run(conversation._handle_choosing_search_mode(mock_client, "123", "button_reply", "name", context))
+        step, ctx = db_mock.state["123"]
+        check(step == "awaiting_doctor_name", "should transition to awaiting_doctor_name")
+        check(len(sent_messages) == 1, "should send 1 text message")
+        check("type the name of the doctor" in sent_messages[0], "should ask for doctor name")
+    finally:
+        conversation.db = original_db
+        conversation.whatsapp_client.send_text = original_send_text
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:
