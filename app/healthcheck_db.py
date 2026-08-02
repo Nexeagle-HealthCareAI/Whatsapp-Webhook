@@ -5,7 +5,6 @@ import aioodbc
 from app import db
 
 async def check() -> None:
-    # Standard check to satisfy the GHA health check requirements
     pool = await db.get_pool()
     async with pool.acquire() as conn, conn.cursor() as cur:
         await cur.execute("SELECT 1")
@@ -20,27 +19,20 @@ async def check() -> None:
         master_pool = await aioodbc.create_pool(dsn=master_conn_str, autocommit=True)
         async with master_pool.acquire() as conn, conn.cursor() as cur:
             hms_db = "EasyHMSDatabase"
-            await cur.execute(f"USE [{hms_db}]")
+            print(f"inspecting {hms_db} Appointments columns...")
+            await cur.execute(f"SELECT COLUMN_NAME FROM [{hms_db}].INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Appointments'")
+            cols = [row[0] for row in await cur.fetchall()]
+            print(f"Appointments table columns: {cols}")
             
-            # Insert the missing PRE_APPOINTMENT status code into StatusMaster
-            print("Checking if PRE_APPOINTMENT status exists in StatusMaster...")
-            await cur.execute("SELECT 1 FROM dbo.StatusMaster WHERE StatusCode = 'PRE_APPOINTMENT'")
-            exists = await cur.fetchone()
+            # Print if public booking columns exist
+            target_cols = ["BookingSource", "BookingIpAddress", "BookingReferrerUrl", "BookingUtmCampaign", "BookedByMobile"]
+            missing_cols = [c for c in target_cols if c not in cols]
+            print(f"Missing columns: {missing_cols}")
             
-            if not exists:
-                print("PRE_APPOINTMENT status is missing. Inserting it now...")
-                await cur.execute("""
-                    INSERT INTO dbo.StatusMaster (StatusCode, DisplayName, SortOrder, IsTerminal)
-                    VALUES ('PRE_APPOINTMENT', 'Pre Appointment', 5, 0)
-                """)
-                print("PRE_APPOINTMENT status inserted successfully!")
-            else:
-                print("PRE_APPOINTMENT status already exists in StatusMaster.")
-                
         master_pool.close()
         await master_pool.wait_closed()
     except Exception as e:
-        print(f"Failed to migrate/seed status: {e}")
+        print(f"Failed to inspect columns: {e}")
 
 if __name__ == "__main__":
     asyncio.run(check())
