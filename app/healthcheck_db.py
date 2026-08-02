@@ -19,34 +19,50 @@ async def check() -> None:
         master_pool = await aioodbc.create_pool(dsn=master_conn_str, autocommit=True)
         async with master_pool.acquire() as conn, conn.cursor() as cur:
             hms_db = "EasyHMSDatabase"
+            await cur.execute(f"USE [{hms_db}]")
             
-            # Query indexes for PatientRegistrations
-            await cur.execute(f"""
-                SELECT 
-                    i.name AS IndexName,
-                    col.name AS ColumnName,
-                    i.is_unique AS IsUnique,
-                    i.is_primary_key AS IsPrimaryKey
-                FROM [{hms_db}].sys.indexes i
-                INNER JOIN [{hms_db}].sys.index_columns ic ON  i.object_id = ic.object_id AND i.index_id = ic.index_id
-                INNER JOIN [{hms_db}].sys.columns col ON ic.object_id = col.object_id AND ic.column_id = col.column_id
-                INNER JOIN [{hms_db}].sys.tables t ON i.object_id = t.object_id
-                WHERE t.name = 'PatientRegistrations'
-            """)
-            rows = await cur.fetchall()
-            print("Indexes on PatientRegistrations:")
-            for r in rows:
-                print(f"Index: {r[0]}, Column: {r[1]}, Unique: {r[2]}, PK: {r[3]}")
+            # Start transaction
+            await cur.execute("BEGIN TRANSACTION")
+            try:
+                # 1. Test patient insert
+                print("Simulating Patient insert...")
+                reg_id = "B5A5F6E3-1C7D-4F2A-8514-A28D053F0BFB"
+                patient_id = "PTID99999999"
+                hosp_id = "E061EEE0-8F6C-44C7-9CD8-D6AA39D0BA01" # Star Hospital
+                doc_id = "1AC0A7D9-83EE-4EA7-A545-969499498657"
                 
-            # Query existing patients with mobile '918319694497'
-            await cur.execute(f"SELECT PatientID, FullName, Mobile, HospitalID FROM [{hms_db}].dbo.PatientRegistrations WHERE Mobile = '918319694497'")
-            patients = await cur.fetchall()
-            print(f"Existing patients with mobile 918319694497: {patients}")
-            
+                await cur.execute(f"""
+                    INSERT INTO dbo.PatientRegistrations (
+                        RegistrationId, HospitalID, PatientID, FullName, Mobile, Age, Sex, MarketingConsent, RegisteredAt
+                    ) VALUES (
+                        '{reg_id}', '{hosp_id}', '{patient_id}', 'Test Patient', '918319694497', 30, 'M', 0, GETUTCDATE()
+                    )
+                """)
+                print("Patient insert succeeded!")
+                
+                # 2. Test appointment insert
+                print("Simulating Appointment insert...")
+                await cur.execute(f"""
+                    INSERT INTO dbo.Appointments (
+                        ApptId, HospitalID, DoctorID, PatientID, ApptDate, StartAt, EndAt,
+                        CurrentStatusCode, StatusHistoryJson, LastStatusCodeAt, CreatedAt
+                    ) VALUES (
+                        NEWID(), '{hosp_id}', '{doc_id}', '{patient_id}', '2026-08-03', '2026-08-03 10:00:00', '2026-08-03 10:15:00',
+                        'PRE_APPOINTMENT', '[]', GETUTCDATE(), GETUTCDATE()
+                    )
+                """)
+                print("Appointment insert succeeded!")
+                
+            except Exception as inner_e:
+                print(f"SQL Simulation FAILED: {inner_e}")
+            finally:
+                await cur.execute("ROLLBACK TRANSACTION")
+                print("Transaction rolled back successfully.")
+                
         master_pool.close()
         await master_pool.wait_closed()
     except Exception as e:
-        print(f"Failed to inspect: {e}")
+        print(f"Failed to run inspection: {e}")
 
 if __name__ == "__main__":
     asyncio.run(check())
