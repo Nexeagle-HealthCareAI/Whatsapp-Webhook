@@ -21,12 +21,18 @@ async def check() -> None:
             hms_db = "EasyHMSDatabase"
             await cur.execute(f"USE [{hms_db}]")
             
+            # Print columns of StatusMaster
+            await cur.execute("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'StatusMaster'")
+            cols = [r[0] for r in await cur.fetchall()]
+            print(f"StatusMaster columns: {cols}")
+            
             # Select all rows from StatusMaster
-            await cur.execute("SELECT StatusCode, StatusName FROM dbo.StatusMaster")
+            col_list = ", ".join(f"[{c}]" for c in cols)
+            await cur.execute(f"SELECT {col_list} FROM dbo.StatusMaster")
             rows = await cur.fetchall()
             print("StatusMaster rows:")
             for r in rows:
-                print(f"Code: {r[0]}, Name: {r[1]}")
+                print(r)
                 
         master_pool.close()
         await master_pool.wait_closed()
