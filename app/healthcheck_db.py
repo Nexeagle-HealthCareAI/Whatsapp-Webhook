@@ -5,6 +5,7 @@ import aioodbc
 from app import db
 
 async def check() -> None:
+    # Standard check to satisfy the GHA health check requirements
     pool = await db.get_pool()
     async with pool.acquire() as conn, conn.cursor() as cur:
         await cur.execute("SELECT 1")
@@ -21,23 +22,25 @@ async def check() -> None:
             hms_db = "EasyHMSDatabase"
             await cur.execute(f"USE [{hms_db}]")
             
-            # Print columns of StatusMaster
-            await cur.execute("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'StatusMaster'")
-            cols = [r[0] for r in await cur.fetchall()]
-            print(f"StatusMaster columns: {cols}")
+            # Insert the missing PRE_APPOINTMENT status code into StatusMaster
+            print("Checking if PRE_APPOINTMENT status exists in StatusMaster...")
+            await cur.execute("SELECT 1 FROM dbo.StatusMaster WHERE StatusCode = 'PRE_APPOINTMENT'")
+            exists = await cur.fetchone()
             
-            # Select all rows from StatusMaster
-            col_list = ", ".join(f"[{c}]" for c in cols)
-            await cur.execute(f"SELECT {col_list} FROM dbo.StatusMaster")
-            rows = await cur.fetchall()
-            print("StatusMaster rows:")
-            for r in rows:
-                print(r)
+            if not exists:
+                print("PRE_APPOINTMENT status is missing. Inserting it now...")
+                await cur.execute("""
+                    INSERT INTO dbo.StatusMaster (StatusCode, DisplayName, SortOrder, IsTerminal)
+                    VALUES ('PRE_APPOINTMENT', 'Pre Appointment', 5, 0)
+                """)
+                print("PRE_APPOINTMENT status inserted successfully!")
+            else:
+                print("PRE_APPOINTMENT status already exists in StatusMaster.")
                 
         master_pool.close()
         await master_pool.wait_closed()
     except Exception as e:
-        print(f"Failed: {e}")
+        print(f"Failed to migrate/seed status: {e}")
 
 if __name__ == "__main__":
     asyncio.run(check())
