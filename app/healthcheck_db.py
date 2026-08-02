@@ -19,15 +19,15 @@ async def check() -> None:
         master_pool = await aioodbc.create_pool(dsn=master_conn_str, autocommit=True)
         async with master_pool.acquire() as conn, conn.cursor() as cur:
             hms_db = "EasyHMSDatabase"
-            print(f"inspecting {hms_db} Appointments columns...")
-            await cur.execute(f"SELECT COLUMN_NAME FROM [{hms_db}].INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Appointments'")
+            print(f"inspecting {hms_db} PatientRegistrations columns...")
+            await cur.execute(f"SELECT COLUMN_NAME FROM [{hms_db}].INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'PatientRegistrations'")
             cols = [row[0] for row in await cur.fetchall()]
-            print(f"Appointments table columns: {cols}")
+            print(f"PatientRegistrations table columns: {cols}")
             
-            # Print if public booking columns exist
-            target_cols = ["BookingSource", "BookingIpAddress", "BookingReferrerUrl", "BookingUtmCampaign", "BookedByMobile"]
+            # Print if any required columns are missing
+            target_cols = ["RegistrationId", "HospitalId", "PatientId", "FullName", "Mobile", "Age", "Sex"]
             missing_cols = [c for c in target_cols if c not in cols]
-            print(f"Missing columns: {missing_cols}")
+            print(f"Missing columns in PatientRegistrations: {missing_cols}")
             
         master_pool.close()
         await master_pool.wait_closed()
