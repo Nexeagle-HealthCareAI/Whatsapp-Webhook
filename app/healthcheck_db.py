@@ -1,11 +1,10 @@
 import asyncio
 import os
-import httpx
-from datetime import date
+import re
+import aioodbc
 from app import db
 
 async def check() -> None:
-    # Standard DB pool check
     pool = await db.get_pool()
     async with pool.acquire() as conn, conn.cursor() as cur:
         await cur.execute("SELECT 1")
@@ -13,29 +12,27 @@ async def check() -> None:
     pool.close()
     await pool.wait_closed()
 
-    # Now simulate a public booking request via HTTP to the staging HMS API
-    api_url = "https://1hms-dev-api.nexeagle.com/public/appointments"
-    body = {
-        "patient": {"fullName": "Test Patient", "mobile": "918319694497"},
-        "doctorId": "1ac0a7d9-83ee-4ea7-a545-969499498657",
-        "preferredDate": date.today().isoformat(),
-        "reason": "WhatsApp booking — preferred Evening",
-    }
-    
-    print(f"Testing public booking POST request to: {api_url}")
-    print(f"Payload: {body}")
+    conn_str = os.environ.get("SQLSERVER_CONN_STRING", "")
+    master_conn_str = re.sub(r"Database=[^;]+", "Database=master", conn_str, flags=re.IGNORECASE)
     
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            response = await client.post(api_url, json=body)
-            print(f"Response status: {response.status_code}")
-            print(f"Response body: {response.text}")
-            if response.status_code == 200:
-                print("SUCCESS: Public booking test request succeeded!")
-            else:
-                print(f"FAILED: Public booking test request failed with status {response.status_code}")
+        master_pool = await aioodbc.create_pool(dsn=master_conn_str, autocommit=True)
+        async with master_pool.acquire() as conn, conn.cursor() as cur:
+            hms_db = "EasyHMSDatabase"
+            print(f"inspecting {hms_db} Appointments columns...")
+            await cur.execute(f"SELECT COLUMN_NAME FROM [{hms_db}].INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Appointments'")
+            cols = [row[0] for row in await cur.fetchall()]
+            print(f"Appointments table columns: {cols}")
+            
+            # Print if public booking columns exist
+            target_cols = ["BookingSource", "BookingIpAddress", "BookingReferrerUrl", "BookingUtmCampaign", "BookedByMobile"]
+            missing_cols = [c for c in target_cols if c not in cols]
+            print(f"Missing columns: {missing_cols}")
+            
+        master_pool.close()
+        await master_pool.wait_closed()
     except Exception as e:
-        print(f"FAILED to call public booking endpoint: {e}")
+        print(f"Failed to inspect columns: {e}")
 
 if __name__ == "__main__":
     asyncio.run(check())
