@@ -29,16 +29,11 @@ async def check() -> None:
             databases = [row[0] for row in await cur.fetchall()]
             print(f"DATABASES: {databases}")
             
-            # Find the EasyHMS database (not master, tempdb, model, msdb, WhatsAppBookingDev)
-            hms_db = None
-            for db_name in databases:
-                if db_name not in ["master", "tempdb", "model", "msdb", "WhatsAppBookingDev"]:
-                    hms_db = db_name
-                    break
+            # Find the EasyHMS database
+            hms_db = "EasyHMSDatabase"
+            print(f"Targeting EasyHMS DB: {hms_db}")
             
-            print(f"Detected EasyHMS DB: {hms_db}")
-            
-            if hms_db:
+            if hms_db in databases:
                 # 2. Check doctors in HMS database
                 print(f"--- QUERYING Tables inside {hms_db} ---")
                 await cur.execute(f"SELECT TABLE_NAME FROM [{hms_db}].INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE'")
@@ -67,7 +62,7 @@ async def check() -> None:
                     
                     if row:
                         doc_dict = dict(zip(cols, row))
-                        user_id = doc_dict.get("UserID")
+                        user_id = doc_dict.get("UserID") or doc_dict.get("UserId")
                         print(f"Doctor UserID: {user_id}")
                         
                         user_table = next((t for t in tables if t.lower() == "users"), None)
@@ -85,6 +80,11 @@ async def check() -> None:
                 # Let's inspect Hospitals
                 hosp_table = next((t for t in tables if t.lower() == "hospitals"), None)
                 if hosp_table:
+                    # Let's check columns first
+                    await cur.execute(f"SELECT COLUMN_NAME FROM [{hms_db}].INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{hosp_table}'")
+                    hosp_cols = [r[0] for r in await cur.fetchall()]
+                    print(f"Hospitals columns: {hosp_cols}")
+                    
                     await cur.execute(f"SELECT HospitalID, Name, IsPubliclyListed FROM [{hms_db}].dbo.[{hosp_table}]")
                     hosp_rows = await cur.fetchall()
                     print(f"Hospitals: {hosp_rows}")
