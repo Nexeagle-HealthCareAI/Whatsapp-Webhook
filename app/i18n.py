@@ -237,6 +237,24 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Theek hai, ab Hinglish mein baat karte hain.",
         "bn": "ঠিক আছে, আমি বাংলায় কথা বলব।",
     },
+    "confirm_lang_prompt": {
+        "en": "Continue in English?",
+        "hi": "क्या आप हिंदी में जारी रखना चाहते हैं?",
+        "hg": "Kya aap Hinglish mein continue karna chahte hain?",
+        "bn": "আপনি কি বাংলায় কথা বলতে চান?",
+    },
+    "confirm_yes": {
+        "en": "Yes",
+        "hi": "हाँ",
+        "hg": "Haan",
+        "bn": "হ্যাঁ",
+    },
+    "confirm_change": {
+        "en": "Change Language",
+        "hi": "भाषा बदलें",
+        "hg": "Language badlein",
+        "bn": "ভাষা পরিবর্তন করুন",
+    },
     "you": {"en": "You", "hi": "आप", "hg": "Aap", "bn": "আপনি"},
     "clinic_unknown": {"en": "Clinic", "hi": "क्लिनिक", "hg": "Clinic", "bn": "ক্লিনিক"},
     "patient_details_prompt_flow": {

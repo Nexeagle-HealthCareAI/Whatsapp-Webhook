@@ -560,8 +560,17 @@ def test_language_detection():
     check(detect("প্রেসক্রিপশন ডাউনলোড") == "bn", "bengali prescription download should be bn")
     check(detect("প্রেসক্রিপসন ডাউনলোড করতে চাই") == "bn", "bengali prescription typo should be bn")
 
-    # 6. Gibberish / Unknown
+    # 5b. Benglish / Romanized Bengali (bn)
+    check(detect("amar doctor lagbe") == "bn", "benglish amar doctor lagbe should be bn")
+    check(detect("amar daktarer appointment lagbe") == "bn", "benglish daktarer appointment lagbe should be bn")
+    check(detect("daktar dekhate chai") == "bn", "benglish daktar dekhate chai should be bn")
+    check(detect("oshudh prescription lagbe") == "bn", "benglish oshudh prescription lagbe should be bn")
+
+    # 6. Gibberish / Unknown / Mixed Tie-breaking / Standalone 'he' regression
     check(detect("xyz abc") is None, "gibberish should trigger open option")
+    check(detect("He needs an appointment") == "en", "standalone 'he' should detect as English, not Hinglish")
+    check(detect("doctor appointment lagbe") == "bn", "tie-breaking between english loanwords and lagbe (benglish) should be bn")
+    check(detect("appointment book karna hai") == "hg", "tie-breaking with karna hai (hinglish) should be hg")
 
 
 def test_slot_label_formatting():
@@ -719,6 +728,87 @@ def test_three_search_modes_flow():
     finally:
         conversation.db = original_db
         conversation.whatsapp_client.send_text = original_send_text
+
+
+def test_language_confirmation_flow():
+    import asyncio
+    class MockClient:
+        pass
+    mock_client = MockClient()
+
+    class MockDB:
+        def __init__(self):
+            self.state = {}
+        async def get_conversation_state(self, phone):
+            return self.state.get(phone)
+        async def save_conversation_state(self, phone, step, context):
+            self.state[phone] = {"current_step": step, "context": context}
+        async def clear_conversation_state(self, phone):
+            self.state[phone] = None
+
+    db_mock = MockDB()
+    original_db = conversation.db
+    conversation.db = db_mock
+
+    sent_texts = []
+    sent_buttons = []
+    sent_locations = []
+
+    original_send_text = conversation.whatsapp_client.send_text
+    original_send_buttons = conversation.whatsapp_client.send_buttons
+    original_send_location = conversation.whatsapp_client.send_location_request
+
+    async def mock_send_text(client, to, text):
+        sent_texts.append(text)
+    async def mock_send_buttons(client, to, text, buttons):
+        sent_buttons.append((text, buttons))
+    async def mock_send_location(client, to, text):
+        sent_locations.append(text)
+
+    conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_buttons = mock_send_buttons
+    conversation.whatsapp_client.send_location_request = mock_send_location
+
+    try:
+        # 1. Trigger initial text input that gets auto-detected as Hinglish
+        asyncio.run(conversation.handle_message(mock_client, "123", "User", "text", "mujhe doctor chahiye"))
+        state = asyncio.run(db_mock.get_conversation_state("123"))
+        check(state is not None, "conversation state should be created")
+        check(state["current_step"] == "confirming_language", "should transition to confirming_language")
+        check(state["context"].get("guess_lang") == "hg", "should guess Hinglish")
+        check(len(sent_buttons) == 1, "should send 1 button message")
+        check("Kya aap Hinglish mein continue karna chahte hain?" in sent_buttons[0][0], "should ask Hinglish confirmation")
+
+        # 2. Confirm language yes
+        asyncio.run(conversation.handle_message(mock_client, "123", "User", "button_reply", "lang_confirm_yes"))
+        state = asyncio.run(db_mock.get_conversation_state("123"))
+        check(state["current_step"] == "choosing_location", "should transition to choosing_location")
+        check(state["context"].get("lang") == "hg", "should set real language to Hinglish")
+        check(any("Hinglish mein baat karte hain" in t for t in sent_texts), "should send Hinglish greeting")
+        check(len(sent_locations) == 1, "should send location request")
+
+        # 3. Reset and test change language path
+        asyncio.run(db_mock.clear_conversation_state("123"))
+        asyncio.run(conversation.handle_message(mock_client, "123", "User", "text", "mujhe doctor chahiye"))
+        asyncio.run(conversation.handle_message(mock_client, "123", "User", "button_reply", "lang_confirm_change"))
+        state = asyncio.run(db_mock.get_conversation_state("123"))
+        check(state["current_step"] == "choosing_language", "should transition to choosing_language start over")
+
+        # 4. Reset and test colloquial text "yes" confirm
+        asyncio.run(db_mock.clear_conversation_state("123"))
+        asyncio.run(conversation.handle_message(mock_client, "123", "User", "text", "mujhe doctor chahiye"))
+        sent_locations.clear()
+        asyncio.run(conversation.handle_message(mock_client, "123", "User", "text", "haan"))
+        state = asyncio.run(db_mock.get_conversation_state("123"))
+        check(state["current_step"] == "choosing_location", "colloquial haan should transition to choosing_location")
+        check(state["context"].get("lang") == "hg", "colloquial haan should confirm Hinglish")
+        check(len(sent_locations) == 1, "colloquial haan should trigger location request")
+        
+    finally:
+        conversation.db = original_db
+        conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_buttons = original_send_buttons
+        conversation.whatsapp_client.send_location_request = original_send_location
 
 
 if __name__ == "__main__":

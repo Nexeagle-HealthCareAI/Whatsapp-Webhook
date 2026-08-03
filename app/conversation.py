@@ -89,7 +89,7 @@ def _detect_language(text: str) -> str | None:
         "mujhe", "muje", "mjhe", "mjh", "mje",
         "chahiye", "chahie", "cahiye", "chaye", "chaiye", "chahye",
         "karna", "krna", "karana", "krne", "karne", "krni", "karni", "karo", "kro",
-        "hai", "he", "h", "bhejo", "dikhao", "dikho", "dikhayein", "dikhaye",
+        "hai", "bhejo", "dikhao", "dikho", "dikhayein", "dikhaye",
         "parcha", "parchi", "pacha", "dawa", "dawae", "dawai", "dawo", "hona"
     }
 
@@ -102,17 +102,43 @@ def _detect_language(text: str) -> str | None:
         "rx", "medicine", "list", "get"
     }
 
+    # Benglish (romanized Bengali) keywords/typos
+    benglish_keywords = {
+        "amar", "amr", "amake",
+        "lagbe", "lagba", "lagbo",
+        "chai", "chay", "dorkar", "drkar", "proyojon",
+        "daktar", "daktarer", "dekhate", "dekhabo", "dekha",
+        "korte", "korbo", "korate", "krte", "ashish", "ashis",
+        "oushodh", "oushadh", "oshudh", "oshud", "osudh", "osud"
+    }
+
     words = re.findall(r'\b\w+\b', normalized)
     if not words:
         return None
 
-    has_hinglish = any(w in hinglish_keywords for w in words)
-    has_english = any(w in english_keywords for w in words)
+    # Calculate scores: unambiguous keywords (Hinglish/Benglish) get higher weight
+    # than English keywords, which are frequently used as loanwords in other languages.
+    hi_score = sum(2 for w in words if w in hinglish_keywords)
+    bn_score = sum(2 for w in words if w in benglish_keywords)
+    en_score = sum(1 for w in words if w in english_keywords)
 
-    if has_hinglish:
+    if hi_score == 0 and bn_score == 0 and en_score == 0:
+        return None
+
+    max_score = max(hi_score, bn_score, en_score)
+
+    if hi_score == max_score and hi_score > 0 and hi_score > bn_score:
         return "hg"
-    elif has_english:
+    elif bn_score == max_score and bn_score > 0 and bn_score > hi_score:
+        return "bn"
+    elif en_score == max_score and en_score > hi_score and en_score > bn_score:
         return "en"
+    elif hi_score == en_score and hi_score > bn_score and hi_score > 0:
+        return "hg"
+    elif bn_score == en_score and bn_score > hi_score and bn_score > 0:
+        return "bn"
+    else:
+        return None
 
     return None
 
@@ -153,6 +179,8 @@ async def handle_message(
     try:
         if current_step == "choosing_language":
             await _handle_choosing_language(client, phone, input_type, input_value, context)
+        elif current_step == "confirming_language":
+            await _handle_confirming_language(client, phone, input_type, input_value, context)
         elif current_step == "choosing_location":
             await _handle_choosing_location(client, phone, input_type, input_value, context)
         elif current_step == "choosing_search_mode":
@@ -185,12 +213,24 @@ async def handle_message(
                 detected_lang = _detect_language(input_value)
 
             if detected_lang:
-                context = {**context, "lang": detected_lang}
+                confirm_context = {
+                    "guess_lang": detected_lang,
+                }
                 if _is_doctor_search_query(input_value):
-                    context["search_doctor_query"] = input_value
-                greeting_text = t("greeting", detected_lang) + "\n\n" + t("instructions", detected_lang)
-                await whatsapp_client.send_text(client, phone, greeting_text)
-                await _send_location_request(client, phone, context)
+                    confirm_context["search_doctor_query"] = input_value
+                
+                await whatsapp_client.send_text(
+                    client, phone,
+                    "Welcome! You can type 'cancel' or 'quit' to restart at any time, and 'back' to go back 1 step.\n\n"
+                    "स्वागत है! आप किसी भी समय रीस्टार्ट करने के लिए 'cancel' या 'quit' टाइप कर सकते हैं, और 1 कदम पीछे जाने के लिए 'back' टाइप करें।"
+                )
+                prompt = t("confirm_lang_prompt", detected_lang)
+                buttons = [
+                    ("lang_confirm_yes", t("confirm_yes", detected_lang)),
+                    ("lang_confirm_change", t("confirm_change", detected_lang))
+                ]
+                await whatsapp_client.send_buttons(client, phone, prompt, buttons)
+                await _transition_to(phone, "confirming_language", confirm_context, None)
             else:
                 init_context = {}
                 if input_type == "text" and _is_doctor_search_query(input_value):
@@ -236,6 +276,61 @@ async def _handle_choosing_language(client, phone, input_type, input_value, cont
     greeting_text = t("greeting", lang) + "\n\n" + t("instructions", lang)
     await whatsapp_client.send_text(client, phone, greeting_text)
     await _send_location_request(client, phone, context)
+
+
+async def _handle_confirming_language(client, phone, input_type, input_value, context) -> None:
+    guess_lang = context.get("guess_lang", "en")
+    
+    # Try direct button reply or exact match ID matching first
+    choice = _match_choice(input_type, input_value, ["lang_confirm_yes", "lang_confirm_change"])
+    
+    # Fallback to colloquial text input matching
+    if not choice and input_type == "text" and input_value.strip():
+        val = input_value.strip().lower()
+        # Yes indicators:
+        yes_indicators = {
+            "yes", "y", "haan", "ha", "haa", "confirm", "ok", "okay", "haji", "ji", "yes, continue", "continue",
+            "হ্যাঁ", "হ্যা", "হ্যাঁ, চালিয়ে যান", "কন্টিনিউ", "হ্যাঁ কন্টিনিউ", "হ্যাঁ, চালিয়ে যাও"
+        }
+        # Change / No indicators:
+        change_indicators = {
+            "no", "change", "n", "no, change", "badlo", "badlein", "language change", "change language",
+            "না", "না, পরিবর্তন করুন", "ভাষা পরিবর্তন", "ভাষা বদলান"
+        }
+        
+        # Add dynamic localized button label strings to the sets
+        for lang_code in LANGUAGE_LABELS.keys():
+            yes_indicators.add(t("confirm_yes", lang_code).lower())
+            change_indicators.add(t("confirm_change", lang_code).lower())
+            
+        if val in yes_indicators:
+            choice = "lang_confirm_yes"
+        elif val in change_indicators:
+            choice = "lang_confirm_change"
+            
+    if choice == "lang_confirm_yes":
+        lang = guess_lang
+        new_context = {"lang": lang}
+        if "search_doctor_query" in context:
+            new_context["search_doctor_query"] = context["search_doctor_query"]
+        
+        greeting_text = t("greeting", lang) + "\n\n" + t("instructions", lang)
+        await whatsapp_client.send_text(client, phone, greeting_text)
+        await _send_location_request(client, phone, new_context)
+    elif choice == "lang_confirm_change":
+        init_context = {}
+        if "search_doctor_query" in context:
+            init_context["search_doctor_query"] = context["search_doctor_query"]
+        await db.clear_conversation_state(phone)
+        await _start(client, phone, init_context)
+    else:
+        # Prompt them again
+        prompt = t("confirm_lang_prompt", guess_lang)
+        buttons = [
+            ("lang_confirm_yes", t("confirm_yes", guess_lang)),
+            ("lang_confirm_change", t("confirm_change", guess_lang))
+        ]
+        await whatsapp_client.send_buttons(client, phone, prompt, buttons)
 
 
 # ---------------------------------------------------------------------------------------
@@ -1300,6 +1395,14 @@ async def _trigger_step_prompt(client: httpx.AsyncClient, phone: str, step: str,
     lang = context.get("lang")
     if step == "choosing_language":
         await _start(client, phone)
+    elif step == "confirming_language":
+        guess_lang = context.get("guess_lang", "en")
+        prompt = t("confirm_lang_prompt", guess_lang)
+        buttons = [
+            ("lang_confirm_yes", t("confirm_yes", guess_lang)),
+            ("lang_confirm_change", t("confirm_change", guess_lang))
+        ]
+        await whatsapp_client.send_buttons(client, phone, prompt, buttons)
     elif step == "choosing_location":
         await _send_location_request(client, phone, context)
     elif step == "choosing_search_mode":
