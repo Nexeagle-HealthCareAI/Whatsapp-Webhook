@@ -765,10 +765,12 @@ def test_language_confirmation_flow():
     sent_texts = []
     sent_buttons = []
     sent_locations = []
+    sent_lists = []
 
     original_send_text = conversation.whatsapp_client.send_text
     original_send_buttons = conversation.whatsapp_client.send_buttons
     original_send_location = conversation.whatsapp_client.send_location_request
+    original_send_list = conversation.whatsapp_client.send_list
 
     async def mock_send_text(client, to, text):
         sent_texts.append(text)
@@ -776,10 +778,13 @@ def test_language_confirmation_flow():
         sent_buttons.append((text, buttons))
     async def mock_send_location(client, to, text):
         sent_locations.append(text)
+    async def mock_send_list(client, to, text, button_label, rows, section_title="Options"):
+        sent_lists.append((text, button_label, rows, section_title))
 
     conversation.whatsapp_client.send_text = mock_send_text
     conversation.whatsapp_client.send_buttons = mock_send_buttons
     conversation.whatsapp_client.send_location_request = mock_send_location
+    conversation.whatsapp_client.send_list = mock_send_list
 
     try:
         # 1. Trigger initial text input that gets auto-detected as Hinglish
@@ -805,6 +810,8 @@ def test_language_confirmation_flow():
         asyncio.run(conversation.handle_message(mock_client, "123", "User", "button_reply", "lang_confirm_change"))
         state = asyncio.run(db_mock.get_conversation_state("123"))
         check(state["current_step"] == "choosing_language", "should transition to choosing_language start over")
+        check(len(sent_lists) == 1, "should send 1 list message")
+        check(len(sent_lists[0][2]) == 4, "list message must contain all 4 languages")
 
         # 4. Reset and test colloquial text "yes" confirm
         asyncio.run(db_mock.clear_conversation_state("123"))
@@ -821,6 +828,7 @@ def test_language_confirmation_flow():
         conversation.whatsapp_client.send_text = original_send_text
         conversation.whatsapp_client.send_buttons = original_send_buttons
         conversation.whatsapp_client.send_location_request = original_send_location
+        conversation.whatsapp_client.send_list = original_send_list
 
 
 if __name__ == "__main__":

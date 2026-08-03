@@ -250,9 +250,10 @@ async def handle_message(
 
 async def _start(client: httpx.AsyncClient, phone: str, init_context: dict | None = None) -> None:
     await whatsapp_client.send_text(client, phone, t("welcome_banner", None))
-    await whatsapp_client.send_buttons(
-        client, phone, LANG_PROMPT,
+    await whatsapp_client.send_list(
+        client, phone, LANG_PROMPT, "Choose / चुनें",
         [(code, label) for code, label in LANGUAGE_LABELS.items()],
+        "Languages",
     )
     await _transition_to(phone, "choosing_language", init_context or {}, None)
 
