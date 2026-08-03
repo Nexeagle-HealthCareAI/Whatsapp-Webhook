@@ -523,6 +523,18 @@ def test_every_string_has_all_three_languages():
             check(variants.get(lang), f"string {key!r} is missing a {lang} translation")
 
 
+def test_welcome_banner_languages():
+    variants = i18n._STRINGS.get("welcome_banner")
+    check(variants is not None, "welcome_banner key must exist")
+    for lang in LANGS:
+        val = variants.get(lang)
+        check(val is not None, f"welcome_banner must have {lang} translation")
+        check("Welcome! You can type" in val, f"welcome_banner {lang} must contain English text")
+        check("स्वागत है! आप किसी भी समय" in val, f"welcome_banner {lang} must contain Hindi text")
+        check("Aap kabhi bhi chat khatam karne ke liye" in val, f"welcome_banner {lang} must contain Hinglish text")
+        check("আপনি যেকোনো সময় চ্যাট শেষ করতে" in val, f"welcome_banner {lang} must contain Bengali text")
+
+
 def test_language_detection():
     detect = conversation._detect_language
 

@@ -255,6 +255,38 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Language badlein",
         "bn": "ভাষা পরিবর্তন করুন",
     },
+    "welcome_banner": {
+        "en": (
+            "Welcome! You can type 'cancel' or 'quit' to end this chat anytime (send a new message to start again), and 'back' to go back 1 step.\n\n"
+            "स्वागत है! आप किसी भी समय बातचीत खत्म करने के लिए 'cancel' या 'quit' टाइप कर सकते हैं (फिर से शुरू करने के लिए नया संदेश भेजें), और 1 कदम पीछे जाने के लिए 'back' टाइप करें।\n\n"
+            "Aap kabhi bhi chat khatam karne ke liye 'cancel' ya 'quit' type kar sakte hain (phir se shuru karne ke liye naya message bhejein), aur 1 step peeche jaane ke liye 'back' type karein.\n\n"
+            "আপনি যেকোনো সময় চ্যাট শেষ করতে 'cancel' বা 'quit' টাইপ করতে পারেন (আবার শুরু করতে নতুন বার্তা পাঠান), এবং ১ ধাপ পিছিয়ে যেতে 'back' টাইপ করুন。"
+        ),
+        "hi": (
+            "Welcome! You can type 'cancel' or 'quit' to end this chat anytime (send a new message to start again), and 'back' to go back 1 step.\n\n"
+            "स्वागत है! आप किसी भी समय बातचीत खत्म करने के लिए 'cancel' या 'quit' टाइप कर सकते हैं (फिर से शुरू करने के लिए नया संदेश भेजें), और 1 कदम पीछे जाने के लिए 'back' टाइप करें।\n\n"
+            "Aap kabhi bhi chat khatam karne ke liye 'cancel' ya 'quit' type kar sakte hain (phir se shuru karne ke liye naya message bhejein), aur 1 step peeche jaane ke liye 'back' type karein.\n\n"
+            "আপনি যেকোনো সময় চ্যাট শেষ করতে 'cancel' বা 'quit' টাইপ করতে পারেন (আবার শুরু করতে নতুন বার্তা পাঠান), এবং ১ ধাপ পিছিয়ে যেতে 'back' টাইপ করুন。"
+        ),
+        "hg": (
+            "Welcome! You can type 'cancel' or 'quit' to end this chat anytime (send a new message to start again), and 'back' to go back 1 step.\n\n"
+            "स्वागत है! आप किसी भी समय बातचीत खत्म करने के लिए 'cancel' या 'quit' टाइप कर सकते हैं (फिर से शुरू करने के लिए नया संदेश भेजें), और 1 कदम पीछे जाने के लिए 'back' टाइप करें।\n\n"
+            "Aap kabhi bhi chat khatam karne ke liye 'cancel' ya 'quit' type kar sakte hain (phir se shuru karne ke liye naya message bhejein), aur 1 step peeche jaane ke liye 'back' type karein.\n\n"
+            "আপনি যেকোনো সময় চ্যাট শেষ করতে 'cancel' বা 'quit' টাইপ করতে পারেন (আবার শুরু করতে নতুন বার্তা পাঠান), এবং ১ ধাপ পিছিয়ে যেতে 'back' টাইপ করুন。"
+        ),
+        "bn": (
+            "Welcome! You can type 'cancel' or 'quit' to end this chat anytime (send a new message to start again), and 'back' to go back 1 step.\n\n"
+            "स्वागत है! आप किसी भी समय बातचीत खत्म करने के लिए 'cancel' या 'quit' टाइप कर सकते हैं (फिर से शुरू करने के लिए नया संदेश भेजें), और 1 कदम पीछे जाने के लिए 'back' टाइप करें।\n\n"
+            "Aap kabhi bhi chat khatam karne ke liye 'cancel' ya 'quit' type kar sakte hain (phir se shuru karne ke liye naya message bhejein), aur 1 step peeche jaane ke liye 'back' type karein.\n\n"
+            "আপনি যেকোনো সময় চ্যাট শেষ করতে 'cancel' বা 'quit' টাইপ করতে পারেন (আবার শুরু করতে নতুন বার্তা পাঠান), এবং ১ ধাপ পিছিয়ে যেতে 'back' টাইপ করুন。"
+        ),
+    },
+    "back_no_history": {
+        "en": "Cannot go back further. Starting over...",
+        "hi": "अब और पीछे नहीं जा सकते। फिर से शुरू कर रहे हैं...",
+        "hg": "Ab aur peeche nahi ja sakte. Phir se shuru kar rahe hain...",
+        "bn": "আর পিছনে যাওয়া যাবে না। আবার শুরু করা হচ্ছে...",
+    },
     "you": {"en": "You", "hi": "आप", "hg": "Aap", "bn": "আপনি"},
     "clinic_unknown": {"en": "Clinic", "hi": "क्लिनिक", "hg": "Clinic", "bn": "ক্লিনিক"},
     "patient_details_prompt_flow": {
@@ -403,10 +435,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "bn": "আমরা '{query}' নামের কোনো ডাক্তার খুঁজে পাইনি। আসুন রোগ বা বিশেষত্ব অনুযায়ী খুঁজি:",
     },
     "instructions": {
-        "en": "Type 'cancel' or 'quit' to restart at any time, and 'back' to go back 1 step.",
-        "hi": "आप किसी भी समय रीस्टार्ट करने के लिए 'cancel' या 'quit' टाइप कर सकते हैं, और 1 कदम पीछे जाने के लिए 'back' टाइप करें।",
-        "hg": "Aap kabhi bhi restart karne ke liye 'cancel' ya 'quit' type kar sakte hain, aur 1 step peeche jaane ke liye 'back' type karein.",
-        "bn": "আপনি যেকোনো সময় রিস্টার্ট করতে 'cancel' বা 'quit' টাইপ করতে পারেন, এবং ১ ধাপ পিছিয়ে যেতে 'back' টাইপ করুন।",
+        "en": "Type 'cancel' or 'quit' to end this chat anytime (just send a new message to start again), and 'back' to go back 1 step.",
+        "hi": "आप किसी भी समय बातचीत खत्म करने के लिए 'cancel' या 'quit' टाइप कर सकते हैं (फिर से शुरू करने के लिए नया संदेश भेजें), और 1 कदम पीछे जाने के लिए 'back' टाइप करें।",
+        "hg": "Aap kabhi bhi chat khatam karne ke liye 'cancel' ya 'quit' type kar sakte hain (phir se shuru karne ke liye naya message bhejein), aur 1 step peeche jaane ke liye 'back' type karein.",
+        "bn": "আপনি যেকোনো সময় চ্যাট শেষ করতে 'cancel' বা 'quit' টাইপ করতে পারেন (আবার শুরু করতে নতুন বার্তা পাঠান), এবং ১ ধাপ পিছিয়ে যেতে 'back' টাইপ করুন।",
     },
     "specialty_list_prompt": {
         "en": "Good — which of these fits best?",
@@ -593,10 +625,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "bn": "অনুগ্রহ করে উপরে নিশ্চিত করুন বা বাতিল করুন-এ ট্যাপ করুন।",
     },
     "cancelled": {
-        "en": "Thank you. If you need any help, just ask me again.",
-        "hi": "धन्यवाद। यदि आपको कोई सहायता चाहिए, तो मुझसे फिर से पूछें।",
-        "hg": "Thank you. Agar aapko koi help chahiye, to mujhe firse pooch sakte hain.",
-        "bn": "ধন্যবাদ। আপনার কোনো সাহায্যের প্রয়োজন হলে, আমাকে আবার জিজ্ঞাসা করুন।",
+        "en": "Thank you. Send any message to start over, or just ask if you need help.",
+        "hi": "धन्यवाद। फिर से शुरू करने के लिए कोई भी संदेश भेजें, या सहायता के लिए पूछें।",
+        "hg": "Thank you. Phir se shuru karne ke liye koi bhi message bhejein, ya help ke liye pooch sakte hain.",
+        "bn": "ধন্যবাদ। আবার শুরু করতে যেকোনো বার্তা পাঠান, অথবা সাহায্যের জন্য জিজ্ঞাসা করুন।",
     },
     "already_pending": {
         "en": "You already have a pending request for that day — our team will reach out shortly.",

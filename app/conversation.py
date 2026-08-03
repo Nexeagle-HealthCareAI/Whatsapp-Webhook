@@ -164,7 +164,7 @@ async def handle_message(
         if cmd == "back":
             history = context.get("_history", [])
             if not history:
-                await whatsapp_client.send_text(client, phone, "Cannot go back further. Starting over...")
+                await whatsapp_client.send_text(client, phone, t("back_no_history", lang))
                 await db.clear_conversation_state(phone)
                 await _start(client, phone)
                 return
@@ -219,11 +219,7 @@ async def handle_message(
                 if _is_doctor_search_query(input_value):
                     confirm_context["search_doctor_query"] = input_value
                 
-                await whatsapp_client.send_text(
-                    client, phone,
-                    "Welcome! You can type 'cancel' or 'quit' to restart at any time, and 'back' to go back 1 step.\n\n"
-                    "स्वागत है! आप किसी भी समय रीस्टार्ट करने के लिए 'cancel' या 'quit' टाइप कर सकते हैं, और 1 कदम पीछे जाने के लिए 'back' टाइप करें।"
-                )
+                await whatsapp_client.send_text(client, phone, t("welcome_banner", None))
                 prompt = t("confirm_lang_prompt", detected_lang)
                 buttons = [
                     ("lang_confirm_yes", t("confirm_yes", detected_lang)),
@@ -253,11 +249,7 @@ async def handle_message(
 
 
 async def _start(client: httpx.AsyncClient, phone: str, init_context: dict | None = None) -> None:
-    await whatsapp_client.send_text(
-        client, phone,
-        "Welcome! You can type 'cancel' or 'quit' to restart at any time, and 'back' to go back 1 step.\n\n"
-        "स्वागत है! आप किसी भी समय रीस्टार्ट करने के लिए 'cancel' या 'quit' टाइप कर सकते हैं, और 1 कदम पीछे जाने के लिए 'back' टाइप करें।"
-    )
+    await whatsapp_client.send_text(client, phone, t("welcome_banner", None))
     await whatsapp_client.send_buttons(
         client, phone, LANG_PROMPT,
         [(code, label) for code, label in LANGUAGE_LABELS.items()],
