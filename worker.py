@@ -55,6 +55,7 @@ async def main() -> None:
     await warm_city_index()
     async with httpx.AsyncClient(timeout=10) as client:
         logger.info("Worker started, waiting on %s", settings.booking_jobs_key)
+        background_tasks = set()
         while True:
             item = await redis.brpop(settings.booking_jobs_key, timeout=5)
             if item is None:
@@ -62,7 +63,10 @@ async def main() -> None:
             _, raw_job = item
             try:
                 job = json.loads(raw_job)
-                await handle_job(client, job)
+                # Create a concurrent task to handle the job without blocking the loop
+                task = asyncio.create_task(handle_job(client, job))
+                background_tasks.add(task)
+                task.add_done_callback(background_tasks.discard)
             except Exception:
                 logger.exception("Failed to process job: %s", raw_job)
 
