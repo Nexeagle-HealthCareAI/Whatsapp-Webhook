@@ -78,6 +78,7 @@ class Settings(BaseSettings):
     # different trust boundary. Required (no default) so a misconfigured deploy fails loud
     # rather than silently accepting unauthenticated event pushes.
     internal_events_token: str
+    wit_server_token: str = ""
 
 
 
