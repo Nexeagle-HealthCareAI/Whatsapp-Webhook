@@ -757,6 +757,8 @@ def test_language_confirmation_flow():
             self.state[phone] = {"current_step": step, "context": context}
         async def clear_conversation_state(self, phone):
             self.state[phone] = None
+        async def log_nlu_interaction(self, *args, **kwargs):
+            pass
 
     db_mock = MockDB()
     original_db = conversation.db
@@ -838,12 +840,15 @@ def test_wit_nlu_integration():
     class MockDB:
         def __init__(self):
             self.state = {}
+            self.nlu_logs = []
         async def get_conversation_state(self, phone):
             return self.state.get(phone)
         async def save_conversation_state(self, phone, step, context):
             self.state[phone] = {"current_step": step, "context": context}
         async def clear_conversation_state(self, phone):
             self.state[phone] = None
+        async def log_nlu_interaction(self, phone, utterance, intent, confidence, doc_name, spec_name, sym_name, pref_date):
+            self.nlu_logs.append((phone, utterance, intent, confidence, doc_name, spec_name, sym_name, pref_date))
 
     db_mock = MockDB()
     original_db = conversation.db
@@ -940,6 +945,8 @@ def test_wit_nlu_integration():
         check(state is not None, "change selection state should exist")
         check(state["current_step"] == "awaiting_doctor_name", "should transition to awaiting_doctor_name step")
         check(any("looking for" in t.lower() or "dhoond" in t.lower() for t in sent_texts), "should ask user for doctor's name")
+        
+        check(len(db_mock.nlu_logs) > 0, "should log NLU interactions to the database")
 
     finally:
         conversation.db = original_db

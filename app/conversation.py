@@ -161,6 +161,17 @@ async def handle_message(
         try:
             nlu_result = await parse_message_intent(input_value)
             logger.info("Wit.ai NLU Result: %s", nlu_result)
+            if hasattr(db, "log_nlu_interaction"):
+                await db.log_nlu_interaction(
+                    phone,
+                    input_value,
+                    nlu_result.get("intent"),
+                    nlu_result.get("confidence"),
+                    nlu_result.get("doctor_name"),
+                    nlu_result.get("specialty"),
+                    nlu_result.get("symptom"),
+                    nlu_result.get("formatted_date")
+                )
         except Exception as exc:
             logger.warning("Wit.ai parsing failed: %s", exc)
 

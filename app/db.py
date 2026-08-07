@@ -215,3 +215,26 @@ async def mark_followup_sent(row_id) -> None:
             "UPDATE dbo.pending_appointments SET followup_sent_at = SYSUTCDATETIME() WHERE id = ?",
             (str(row_id),),
         )
+
+
+async def log_nlu_interaction(
+    phone: str,
+    utterance: str,
+    intent: str | None,
+    confidence: float | None,
+    doctor_name: str | None,
+    specialty: str | None,
+    symptom: str | None,
+    formatted_date: str | None
+) -> None:
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.cursor() as cur:
+        await cur.execute(
+            """
+            INSERT INTO dbo.nlu_logs (
+                phone_number, utterance, intent, confidence, 
+                doctor_name, specialty, symptom, formatted_date
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+            """,
+            (phone, utterance, intent, confidence, doctor_name, specialty, symptom, formatted_date)
+        )
