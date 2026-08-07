@@ -164,6 +164,18 @@ async def handle_message(
         except Exception as exc:
             logger.warning("Wit.ai parsing failed: %s", exc)
 
+    # If a doctor is mentioned anywhere in the text while in selection states, hot-swap immediately
+    if nlu_result and nlu_result.get("doctor_name"):
+        doc_name = nlu_result["doctor_name"]
+        if current_step in ("choosing_doctor", "choosing_slot", "awaiting_doctor_name"):
+            context["search_doctor_query"] = doc_name
+            await _transition_to(phone, "awaiting_doctor_name", context, current_step)
+            if await _search_doctors_flow(client, phone, context, "awaiting_doctor_name"):
+                return
+            else:
+                await whatsapp_client.send_text(client, phone, t("search_doctor_not_found", context.get("lang"), query=doc_name))
+                return
+
     # Prioritize NLU global intents / shortcuts if confidence is high
     if nlu_result and nlu_result.get("confidence", 0.0) >= 0.7:
         intent = nlu_result["intent"]
@@ -274,6 +286,10 @@ async def handle_message(
                 else:
                     await whatsapp_client.send_text(client, phone, t("search_doctor_not_found", context.get("lang"), query=doc_name))
                     return
+            elif current_step in ("choosing_doctor", "choosing_slot", "awaiting_doctor_name"):
+                await _transition_to(phone, "awaiting_doctor_name", context, current_step)
+                await whatsapp_client.send_text(client, phone, t("doctor_name_ask", context.get("lang")))
+                return
 
     # Fallback to manual exact-match command parsing
     if input_type == "text" and input_value.strip():

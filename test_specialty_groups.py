@@ -898,6 +898,49 @@ def test_wit_nlu_integration():
         check(state is not None, "NLU back should preserve state")
         check(state["current_step"] == "choosing_language", "NLU back should transition to previous step in history")
 
+        # 3. Test doctor name entity matching directly in choosing_doctor state (Avinash)
+        sent_texts.clear()
+        mock_nlu_val.update({
+            "intent": "unknown",
+            "confidence": 0.1,
+            "doctor_name": "Avinash",
+            "specialty": None,
+            "symptom": None,
+            "formatted_date": None
+        })
+        original_get_all_doctors = city_index.get_all_doctors
+        async def mock_get_docs():
+            return [{"doctorId": "5", "fullName": "Dr. Avinash", "city": "Kishanganj", "latitude": 26.1, "longitude": 87.9}]
+        city_index.get_all_doctors = mock_get_docs
+        
+        asyncio.run(db_mock.save_conversation_state("123", "choosing_doctor", {"lang": "en", "city": "Kishanganj"}))
+        asyncio.run(conversation.handle_message(mock_client, "123", "User", "text", "Sorry dr Avinash tha"))
+        
+        state = asyncio.run(db_mock.get_conversation_state("123"))
+        check(state is not None, "entity state should exist")
+        check(state["current_step"] == "choosing_doctor", "should transition to choosing_doctor after listing matches")
+        check(state["context"].get("search_doctor_query") == "Avinash", "should set search query to Avinash")
+        
+        city_index.get_all_doctors = original_get_all_doctors
+
+        # 4. Test change selection without doctor name
+        sent_texts.clear()
+        mock_nlu_val.update({
+            "intent": "change_selection",
+            "confidence": 0.9,
+            "doctor_name": None,
+            "specialty": None,
+            "symptom": None,
+            "formatted_date": None
+        })
+        asyncio.run(db_mock.save_conversation_state("123", "choosing_doctor", {"lang": "en", "city": "Kishanganj"}))
+        asyncio.run(conversation.handle_message(mock_client, "123", "User", "text", "Change the doctor"))
+        
+        state = asyncio.run(db_mock.get_conversation_state("123"))
+        check(state is not None, "change selection state should exist")
+        check(state["current_step"] == "awaiting_doctor_name", "should transition to awaiting_doctor_name step")
+        check(any("looking for" in t.lower() or "dhoond" in t.lower() for t in sent_texts), "should ask user for doctor's name")
+
     finally:
         conversation.db = original_db
         conversation.whatsapp_client.send_text = original_send_text
