@@ -8,6 +8,15 @@ WIT_VERSION = "20260807"
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=4))
 async def parse_message_intent(text: str) -> dict:
+    if not settings.wit_server_token or settings.wit_server_token == "test":
+        return {
+            "intent": "unknown",
+            "confidence": 0.0,
+            "doctor_name": None,
+            "specialty": None,
+            "symptom": None,
+            "formatted_date": None
+        }
     headers = {"Authorization": f"Bearer {settings.wit_server_token}"}
     params = {"v": WIT_VERSION, "q": text}
     

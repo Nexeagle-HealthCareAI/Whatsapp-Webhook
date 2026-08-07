@@ -11,6 +11,7 @@ from app import city_index, db, hms_client, i18n, symptom_client, whatsapp_clien
 from app.config import settings
 from app.geo import haversine_km
 from app.hms_client import HmsApiError
+from app.wit_client import parse_message_intent
 from app.i18n import LANGUAGE_LABELS, LANG_PROMPT, t
 
 logger = logging.getLogger("conversation")
@@ -155,6 +156,126 @@ async def handle_message(
     context = state["context"] if state else {}
     lang = context.get("lang")
 
+    nlu_result = None
+    if input_type == "text" and input_value.strip():
+        try:
+            nlu_result = await parse_message_intent(input_value)
+            logger.info("Wit.ai NLU Result: %s", nlu_result)
+        except Exception as exc:
+            logger.warning("Wit.ai parsing failed: %s", exc)
+
+    # Prioritize NLU global intents / shortcuts if confidence is high
+    if nlu_result and nlu_result.get("confidence", 0.0) >= 0.7:
+        intent = nlu_result["intent"]
+        
+        if intent == "cancel_appointment":
+            await whatsapp_client.send_text(client, phone, t("cancelled", lang or "en"))
+            await db.clear_conversation_state(phone)
+            return
+            
+        elif intent == "navigate_back":
+            history = context.get("_history", [])
+            if not history:
+                await whatsapp_client.send_text(client, phone, t("back_no_history", lang))
+                await db.clear_conversation_state(phone)
+                await _start(client, phone)
+                return
+            prev = history.pop()
+            prev_step = prev["current_step"]
+            prev_context = prev["context"]
+            prev_context["_history"] = history
+            await db.save_conversation_state(phone, prev_step, prev_context)
+            await _trigger_step_prompt(client, phone, prev_step, prev_context)
+            return
+            
+        elif intent == "greeting":
+            await db.clear_conversation_state(phone)
+            await _start(client, phone)
+            return
+            
+        elif intent in ("book_appointment", "check_availability"):
+            doc_name = nlu_result.get("doctor_name")
+            spec_name = nlu_result.get("specialty")
+            sym_name = nlu_result.get("symptom")
+            pref_date = nlu_result.get("formatted_date")
+            
+            new_context = {**context}
+            if pref_date:
+                new_context["preferred_date"] = pref_date
+                
+            if doc_name:
+                new_context["search_doctor_query"] = doc_name
+                new_context.pop("pending_specialty", None)
+                new_context.pop("search_symptom", None)
+                
+                has_loc = new_context.get("city") or (new_context.get("patient_lat") is not None and new_context.get("patient_lng") is not None)
+                if new_context.get("lang") and has_loc:
+                    await _transition_to(phone, "awaiting_doctor_name", new_context, current_step)
+                    if await _search_doctors_flow(client, phone, new_context, "awaiting_doctor_name"):
+                        return
+                    else:
+                        await whatsapp_client.send_text(client, phone, t("search_doctor_not_found", new_context.get("lang"), query=doc_name))
+                        return
+                else:
+                    if not new_context.get("lang"):
+                        await _start(client, phone, new_context)
+                    else:
+                        await _transition_to(phone, "choosing_location", new_context, current_step)
+                        await _trigger_step_prompt(client, phone, "choosing_location", new_context)
+                    return
+            
+            elif spec_name:
+                categories = await hms_client.list_specialties()
+                category_list = [c["category"] for c in categories]
+                matched = symptom_client.match_category(spec_name, category_list)
+                if matched:
+                    new_context["pending_specialty"] = matched
+                    has_loc = new_context.get("city") or (new_context.get("patient_lat") is not None and new_context.get("patient_lng") is not None)
+                    if new_context.get("lang") and has_loc:
+                        await _send_sort_prompt(client, phone, new_context, matched, current_step)
+                        return
+                    else:
+                        if not new_context.get("lang"):
+                            await _start(client, phone, new_context)
+                        else:
+                            await _transition_to(phone, "choosing_location", new_context, current_step)
+                            await _trigger_step_prompt(client, phone, "choosing_location", new_context)
+                        return
+            
+            elif sym_name:
+                labels = await symptom_client.route_symptom(sym_name)
+                categories = await hms_client.list_specialties()
+                category_list = [c["category"] for c in categories]
+                matched = next(
+                    (m for m in (symptom_client.match_category(label, category_list) for label in labels) if m),
+                    None
+                )
+                if matched:
+                    new_context["pending_specialty"] = matched
+                    has_loc = new_context.get("city") or (new_context.get("patient_lat") is not None and new_context.get("patient_lng") is not None)
+                    if new_context.get("lang") and has_loc:
+                        await _send_sort_prompt(client, phone, new_context, matched, current_step)
+                        return
+                    else:
+                        if not new_context.get("lang"):
+                            await _start(client, phone, new_context)
+                        else:
+                            await _transition_to(phone, "choosing_location", new_context, current_step)
+                            await _trigger_step_prompt(client, phone, "choosing_location", new_context)
+                        return
+
+        elif intent == "change_selection":
+            doc_name = nlu_result.get("doctor_name")
+            if doc_name and current_step in ("choosing_doctor", "choosing_slot", "awaiting_doctor_name"):
+                context["search_doctor_query"] = doc_name
+                await _transition_to(phone, "awaiting_doctor_name", context, current_step)
+                if await _search_doctors_flow(client, phone, context, "awaiting_doctor_name"):
+                    return
+                else:
+                    await whatsapp_client.send_text(client, phone, t("search_doctor_not_found", context.get("lang"), query=doc_name))
+                    return
+
+    # Fallback to manual exact-match command parsing
     if input_type == "text" and input_value.strip():
         cmd = input_value.strip().lower()
         if cmd in ("cancel", "quit"):

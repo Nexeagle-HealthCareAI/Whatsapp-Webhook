@@ -831,6 +831,81 @@ def test_language_confirmation_flow():
         conversation.whatsapp_client.send_list = original_send_list
 
 
+def test_wit_nlu_integration():
+    import asyncio
+    mock_client = object()
+    
+    class MockDB:
+        def __init__(self):
+            self.state = {}
+        async def get_conversation_state(self, phone):
+            return self.state.get(phone)
+        async def save_conversation_state(self, phone, step, context):
+            self.state[phone] = {"current_step": step, "context": context}
+        async def clear_conversation_state(self, phone):
+            self.state[phone] = None
+
+    db_mock = MockDB()
+    original_db = conversation.db
+    conversation.db = db_mock
+
+    sent_texts = []
+    sent_buttons = []
+    sent_lists = []
+
+    original_send_text = conversation.whatsapp_client.send_text
+    original_send_buttons = conversation.whatsapp_client.send_buttons
+    original_send_list = conversation.whatsapp_client.send_list
+
+    async def mock_send_text(client, to, text):
+        sent_texts.append(text)
+    async def mock_send_buttons(client, to, text, buttons):
+        sent_buttons.append((text, buttons))
+    async def mock_send_list(client, to, text, button_label, rows, section_title="Options"):
+        sent_lists.append((text, button_label, rows, section_title))
+
+    conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_buttons = mock_send_buttons
+    conversation.whatsapp_client.send_list = mock_send_list
+
+    original_parse = conversation.parse_message_intent
+    
+    # Mock NLU results
+    mock_nlu_val = {"intent": "unknown", "confidence": 0.0, "doctor_name": None, "specialty": None, "symptom": None, "formatted_date": None}
+    async def mock_parse(text):
+        return mock_nlu_val
+        
+    conversation.parse_message_intent = mock_parse
+
+    try:
+        # 1. Test cancel intent
+        mock_nlu_val.update({"intent": "cancel_appointment", "confidence": 0.9})
+        asyncio.run(db_mock.save_conversation_state("123", "choosing_location", {"lang": "en"}))
+        asyncio.run(conversation.handle_message(mock_client, "123", "User", "text", "cancel please"))
+        
+        state = asyncio.run(db_mock.get_conversation_state("123"))
+        check(state is None, "NLU cancel should clear conversation state")
+        check(any("thank" in t.lower() or "cancel" in t.lower() for t in sent_texts), "should send cancellation confirmation")
+
+        # 2. Test navigate back intent
+        sent_texts.clear()
+        mock_nlu_val.update({"intent": "navigate_back", "confidence": 0.95})
+        history_context = {"lang": "en", "_history": [{"current_step": "choosing_language", "context": {"lang": "en"}}]}
+        asyncio.run(db_mock.save_conversation_state("123", "choosing_location", history_context))
+        asyncio.run(conversation.handle_message(mock_client, "123", "User", "text", "go back"))
+        
+        state = asyncio.run(db_mock.get_conversation_state("123"))
+        check(state is not None, "NLU back should preserve state")
+        check(state["current_step"] == "choosing_language", "NLU back should transition to previous step in history")
+
+    finally:
+        conversation.db = original_db
+        conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_buttons = original_send_buttons
+        conversation.whatsapp_client.send_list = original_send_list
+        conversation.parse_message_intent = original_parse
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:
