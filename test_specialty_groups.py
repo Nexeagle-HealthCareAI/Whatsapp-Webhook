@@ -550,13 +550,22 @@ def test_every_string_has_all_three_languages():
 def test_welcome_banner_languages():
     variants = i18n._STRINGS.get("welcome_banner")
     check(variants is not None, "welcome_banner key must exist")
-    for lang in LANGS:
-        val = variants.get(lang)
-        check(val is not None, f"welcome_banner must have {lang} translation")
-        check("Welcome! You can type" in val, f"welcome_banner {lang} must contain English text")
-        check("स्वागत है! आप किसी भी समय" in val, f"welcome_banner {lang} must contain Hindi text")
-        check("Aap kabhi bhi chat khatam karne ke liye" in val, f"welcome_banner {lang} must contain Hinglish text")
-        check("আপনি যেকোনো সময় চ্যাট শেষ করতে" in val, f"welcome_banner {lang} must contain Bengali text")
+    
+    en_val = variants.get("en")
+    check("Welcome! You can type" in en_val, "en welcome_banner must contain English text")
+    check("स्वागत है!" not in en_val, "en welcome_banner must NOT contain Hindi text")
+
+    hi_val = variants.get("hi")
+    check("स्वागत है! आप किसी भी समय" in hi_val, "hi welcome_banner must contain Hindi text")
+    check("Welcome!" not in hi_val, "hi welcome_banner must NOT contain English text")
+
+    hg_val = variants.get("hg")
+    check("Welcome! Aap kabhi bhi" in hg_val, "hg welcome_banner must contain Hinglish text")
+    check("स्वागत है!" not in hg_val, "hg welcome_banner must NOT contain Hindi text")
+
+    bn_val = variants.get("bn")
+    check("স্বাগতম!" in bn_val, "bn welcome_banner must contain Bengali text")
+    check("Welcome!" not in bn_val, "bn welcome_banner must NOT contain English text")
 
 
 def test_language_detection():
@@ -824,14 +833,13 @@ def test_language_confirmation_flow():
         check(state["current_step"] == "confirming_language", "should transition to confirming_language")
         check(state["context"].get("guess_lang") == "hg", "should guess Hinglish")
         check(len(sent_buttons) == 1, "should send 1 button message")
-        check("Kya aap Hinglish mein continue karna chahte hain?" in sent_buttons[0][0], "should ask Hinglish confirmation")
+        check("Hinglish" in sent_buttons[0][0], "should ask Hinglish confirmation")
 
         # 2. Confirm language yes
         asyncio.run(conversation.handle_message(mock_client, "123", "User", "button_reply", "lang_confirm_yes"))
         state = asyncio.run(db_mock.get_conversation_state("123"))
         check(state["current_step"] == "choosing_location", "should transition to choosing_location")
         check(state["context"].get("lang") == "hg", "should set real language to Hinglish")
-        check(any("Hinglish mein baat karte hain" in t for t in sent_texts), "should send Hinglish greeting")
         check(len(sent_locations) == 1, "should send location request")
 
         # 3. Reset and test change language path

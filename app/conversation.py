@@ -434,13 +434,14 @@ async def handle_message(
                 if _is_doctor_search_query(input_value):
                     confirm_context["search_doctor_query"] = input_value
                 
-                await whatsapp_client.send_text(client, phone, t("welcome_banner", None))
+                welcome = t("welcome_banner", detected_lang)
                 prompt = t("confirm_lang_prompt", detected_lang)
+                combined_prompt = f"{welcome}\n\n{prompt}"
                 buttons = [
                     ("lang_confirm_yes", t("confirm_yes", detected_lang)),
                     ("lang_confirm_change", t("confirm_change", detected_lang))
                 ]
-                await whatsapp_client.send_buttons(client, phone, prompt, buttons)
+                await whatsapp_client.send_buttons(client, phone, combined_prompt, buttons)
                 await _transition_to(phone, "confirming_language", confirm_context, None)
             else:
                 init_context = {}
@@ -464,7 +465,7 @@ async def handle_message(
 
 
 async def _start(client: httpx.AsyncClient, phone: str, init_context: dict | None = None) -> None:
-    await whatsapp_client.send_text(client, phone, t("welcome_banner", None))
+    await whatsapp_client.send_text(client, phone, t("welcome_multilang", None))
     await whatsapp_client.send_list(
         client, phone, LANG_PROMPT, "Choose / चुनें",
         [(code, label) for code, label in LANGUAGE_LABELS.items()],
@@ -484,8 +485,7 @@ async def _handle_choosing_language(client, phone, input_type, input_value, cont
         await whatsapp_client.send_text(client, phone, "Please tap one of the language options above.")
         return
     context = {**context, "lang": lang}
-    greeting_text = t("greeting", lang) + "\n\n" + t("instructions", lang)
-    await whatsapp_client.send_text(client, phone, greeting_text)
+    await whatsapp_client.send_text(client, phone, t("greeting", lang))
     await _send_location_request(client, phone, context)
 
 
@@ -525,8 +525,6 @@ async def _handle_confirming_language(client, phone, input_type, input_value, co
         if "search_doctor_query" in context:
             new_context["search_doctor_query"] = context["search_doctor_query"]
         
-        greeting_text = t("greeting", lang) + "\n\n" + t("instructions", lang)
-        await whatsapp_client.send_text(client, phone, greeting_text)
         await _send_location_request(client, phone, new_context)
     elif choice == "lang_confirm_change":
         init_context = {}
