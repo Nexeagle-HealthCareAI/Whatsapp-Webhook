@@ -7,66 +7,13 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from app import city_index, db, hms_client, i18n, symptom_client
-from app import whatsapp_client as raw_whatsapp_client
+from app import city_index, db, hms_client, i18n, symptom_client, whatsapp_client
 from app.config import settings
 from app.geo import haversine_km
 from app.hms_client import HmsApiError
 from app import nlu_client, intent_router
 from app.model_config import PRIMARY_NLU
 from app.i18n import LANGUAGE_LABELS, LANG_PROMPT, t
-from contextvars import ContextVar
-
-current_request_context: ContextVar[tuple[str, dict, str]] = ContextVar("current_request_context")
-
-class DynamicWhatsappClient:
-    def __init__(self, original):
-        self.original = original
-        
-    async def send_text(self, client, to, text, *args, **kwargs):
-        try:
-            req_info = current_request_context.get(None)
-            if req_info:
-                step, context, user_msg = req_info
-                # Only rephrase if it's a real chat message (not empty, not system URLs)
-                if len(text.strip()) > 3 and not text.startswith("http") and not text.startswith("Choose /"):
-                    dynamic_text = await nlu_client.generate_conversational_response(step, context, user_msg)
-                    if dynamic_text:
-                        text = dynamic_text
-        except Exception as e:
-            logger.warning("Dynamic send_text generation failed, falling back: %s", e)
-        return await self.original.send_text(client, to, text, *args, **kwargs)
-
-    async def send_buttons(self, client, to, text, buttons, *args, **kwargs):
-        try:
-            req_info = current_request_context.get(None)
-            if req_info:
-                step, context, user_msg = req_info
-                if len(text.strip()) > 3:
-                    dynamic_text = await nlu_client.generate_conversational_response(step, context, user_msg)
-                    if dynamic_text:
-                        text = dynamic_text
-        except Exception as e:
-            logger.warning("Dynamic send_buttons generation failed, falling back: %s", e)
-        return await self.original.send_buttons(client, to, text, buttons, *args, **kwargs)
-
-    async def send_list(self, client, to, text, button_label, rows, section_title="Options", *args, **kwargs):
-        try:
-            req_info = current_request_context.get(None)
-            if req_info:
-                step, context, user_msg = req_info
-                if len(text.strip()) > 3:
-                    dynamic_text = await nlu_client.generate_conversational_response(step, context, user_msg)
-                    if dynamic_text:
-                        text = dynamic_text
-        except Exception as e:
-            logger.warning("Dynamic send_list generation failed, falling back: %s", e)
-        return await self.original.send_list(client, to, text, button_label, rows, section_title, *args, **kwargs)
-
-    def __getattr__(self, name):
-        return getattr(self.original, name)
-
-whatsapp_client = DynamicWhatsappClient(raw_whatsapp_client)
 
 logger = logging.getLogger("conversation")
 
@@ -208,7 +155,6 @@ async def handle_message(
     state = await db.get_conversation_state(phone)
     current_step = state["current_step"] if state else None
     context = state["context"] if state else {}
-    current_request_context.set((current_step or "general_chat", context, input_value))
     lang = context.get("lang")
 
     nlu_result = None
@@ -422,6 +368,28 @@ async def handle_message(
             await db.save_conversation_state(phone, prev_step, prev_context)
             await _trigger_step_prompt(client, phone, prev_step, prev_context)
             return
+
+    # 1.5 Handle off-topic / out-of-scope casual conversation dynamically via LLM
+    if input_type == "text" and input_value.strip() and lang:
+        has_entities = nlu_result and any(nlu_result.get(k) for k in ("doctor_name", "specialty", "symptom"))
+        if not nlu_result or nlu_result.get("intent") == "out_of_scope" or nlu_result.get("confidence", 0.0) < 0.7:
+            if not has_entities:
+                if current_step not in ("awaiting_symptom", "awaiting_doctor_name", "awaiting_patient_details"):
+                    try:
+                        dynamic_reply = await nlu_client.generate_conversational_response("general_chat", context, input_value)
+                        if dynamic_reply:
+                            await whatsapp_client.send_text(client, phone, dynamic_reply)
+                        else:
+                            await whatsapp_client.send_text(client, phone, t("error_nlu_fallback", lang))
+                    except Exception as exc:
+                        logger.warning("Casual chat generation failed: %s", exc)
+                        await whatsapp_client.send_text(client, phone, t("error_nlu_fallback", lang))
+                    
+                    if current_step:
+                        await _trigger_step_prompt(client, phone, current_step, context)
+                    else:
+                        await _start(client, phone)
+                    return
 
     try:
         if current_step == "choosing_language":
@@ -1665,13 +1633,6 @@ async def _transition_to(phone: str, next_step: str, context: dict, current_step
             history.pop(0)
     new_context = {**context, "_history": history}
     await db.save_conversation_state(phone, next_step, new_context)
-    try:
-        req_info = current_request_context.get(None)
-        if req_info:
-            _, _, user_msg = req_info
-            current_request_context.set((next_step, new_context, user_msg))
-    except Exception:
-        pass
 
 
 async def _trigger_step_prompt(client: httpx.AsyncClient, phone: str, step: str, context: dict) -> None:
