@@ -4,6 +4,7 @@ import httpx
 from app.config import settings
 from app.nlu_config import SYSTEM_PROMPT
 from app.nlu_validator import validate_nlu_response
+from app.model_config import PRIMARY_NLU, FALLBACK_NLU
 
 logger = logging.getLogger("nlu_client")
 
@@ -54,47 +55,35 @@ def normalize_datetime_to_date(text: str) -> str | None:
     return None
 
 async def classify_message(text: str) -> dict:
-    """Classifies incoming text messages using Sarvam AI (sarvam-105b) with Google Gemini as fallback.
+    """Classifies incoming text messages using configured Primary NLU, with optional configured Fallback NLU.
 
     Enforces schema matching via validate_nlu_response.
     """
     sarvam_api_key = getattr(settings, "sarvam_api_key", None)
-    gemini_api_key = getattr(settings, "gemini_api_key", None)
 
-    # 1. Attempt Primary classification with Sarvam AI
-    if sarvam_api_key and sarvam_api_key != "test":
+    # 1. Attempt Primary classification
+    if PRIMARY_NLU["provider"] == "sarvam" and sarvam_api_key and sarvam_api_key != "test":
         try:
-            logger.info("Attempting Sarvam AI classification for utterance: %r", text)
-            result = await _query_sarvam(text, sarvam_api_key)
+            logger.info("Attempting NLU classification using %s for utterance: %r", PRIMARY_NLU["model"], text)
+            result = await _query_sarvam(text, sarvam_api_key, PRIMARY_NLU)
             if result:
                 if "entities" in result and "datetime" in result["entities"]:
                     normalized = normalize_datetime_to_date(result["entities"]["datetime"])
                     if normalized:
                         result["entities"]["datetime"] = normalized
-                validated = validate_nlu_response(result, raw_text=text, model_name="sarvam-105b")
-                logger.info("Sarvam NLU classification successful: %s", validated)
+                validated = validate_nlu_response(result, raw_text=text, model_name=PRIMARY_NLU["model"])
+                logger.info("Primary NLU classification successful: %s", validated)
                 return validated
         except Exception as exc:
-            logger.warning("Sarvam AI classification failed or timed out: %s. Falling back to Gemini.", exc)
+            logger.warning("Primary NLU classification failed: %s", exc)
 
-    # 2. Attempt Secondary/Fallback classification with Gemini
-    if gemini_api_key and gemini_api_key != "test":
-        try:
-            logger.info("Attempting Gemini fallback classification for utterance: %r", text)
-            result = await _query_gemini(text, gemini_api_key)
-            if result:
-                if "entities" in result and "datetime" in result["entities"]:
-                    normalized = normalize_datetime_to_date(result["entities"]["datetime"])
-                    if normalized:
-                        result["entities"]["datetime"] = normalized
-                validated = validate_nlu_response(result, raw_text=text, model_name="gemini-2.5-flash-lite")
-                logger.info("Gemini NLU fallback classification successful: %s", validated)
-                return validated
-        except Exception as exc:
-            logger.error("Gemini fallback classification failed: %s", exc)
+    # 2. Attempt Fallback classification if configured
+    if FALLBACK_NLU:
+        # In the future, fallback providers can be implemented here (e.g. OpenAI GPT-4)
+        logger.info("Fallback NLU is configured but currently unsupported or skipped.")
 
-    # 3. Hard fallback if both models fail
-    logger.error("All NLU classification brains failed for utterance: %r. Returning out_of_scope fallback.", text)
+    # 3. Hard fallback if all attempts fail
+    logger.error("NLU classification failed for utterance: %r. Returning out_of_scope fallback.", text)
     return {
         "intent": "out_of_scope",
         "entities": {},
@@ -103,8 +92,8 @@ async def classify_message(text: str) -> dict:
         "_had_hallucination": False
     }
 
-async def _query_sarvam(text: str, api_key: str, retry: bool = True) -> dict | None:
-    url = "https://api.sarvam.ai/v1/chat/completions"
+async def _query_sarvam(text: str, api_key: str, config: dict, retry: bool = True) -> dict | None:
+    url = config["endpoint"]
     headers = {
         "api-subscription-key": api_key,
         "Content-Type": "application/json"
@@ -114,14 +103,14 @@ async def _query_sarvam(text: str, api_key: str, retry: bool = True) -> dict | N
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": text}
         ],
-        "model": "sarvam-105b",
-        "temperature": 0.2,
-        "max_tokens": 300,
+        "model": config["model"],
+        "temperature": config["temperature"],
+        "max_tokens": config["max_tokens"],
         "reasoning_effort": None
     }
     
     async with httpx.AsyncClient() as client:
-        resp = await client.post(url, headers=headers, json=body, timeout=5.0)
+        resp = await client.post(url, headers=headers, json=body, timeout=config["timeout"])
         if resp.status_code != 200:
             logger.warning("Sarvam API returned non-200 status code: %d", resp.status_code)
             return None
@@ -134,11 +123,11 @@ async def _query_sarvam(text: str, api_key: str, retry: bool = True) -> dict | N
             logger.warning("Failed to parse Sarvam AI response as JSON: %s", err)
             if retry:
                 logger.info("Retrying Sarvam AI call with JSON reminder...")
-                return await _query_sarvam_retry(text, api_key)
+                return await _query_sarvam_retry(text, api_key, config)
             return None
 
-async def _query_sarvam_retry(text: str, api_key: str) -> dict | None:
-    url = "https://api.sarvam.ai/v1/chat/completions"
+async def _query_sarvam_retry(text: str, api_key: str, config: dict) -> dict | None:
+    url = config["endpoint"]
     headers = {
         "api-subscription-key": api_key,
         "Content-Type": "application/json"
@@ -148,13 +137,13 @@ async def _query_sarvam_retry(text: str, api_key: str) -> dict | None:
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": text + "\nReminder: respond with JSON only"}
         ],
-        "model": "sarvam-105b",
-        "temperature": 0.2,
-        "max_tokens": 300,
+        "model": config["model"],
+        "temperature": config["temperature"],
+        "max_tokens": config["max_tokens"],
         "reasoning_effort": None
     }
     async with httpx.AsyncClient() as client:
-        resp = await client.post(url, headers=headers, json=body, timeout=5.0)
+        resp = await client.post(url, headers=headers, json=body, timeout=config["timeout"])
         if resp.status_code == 200:
             try:
                 data = resp.json()
@@ -163,34 +152,3 @@ async def _query_sarvam_retry(text: str, api_key: str) -> dict | None:
             except Exception:
                 pass
         return None
-
-async def _query_gemini(text: str, api_key: str) -> dict | None:
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={api_key}"
-    headers = {"Content-Type": "application/json"}
-    body = {
-        "contents": [
-            {
-                "role": "user",
-                "parts": [
-                    {"text": f"{SYSTEM_PROMPT}\n\nUser: {text}"}
-                ]
-            }
-        ],
-        "generationConfig": {
-            "responseMimeType": "application/json"
-        }
-    }
-    
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(url, headers=headers, json=body, timeout=5.0)
-        if resp.status_code != 200:
-            logger.warning("Gemini API returned non-200 status code: %d", resp.status_code)
-            return None
-        
-        try:
-            data = resp.json()
-            content = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-            return json.loads(content)
-        except Exception as err:
-            logger.warning("Failed to parse Gemini response as JSON: %s", err)
-            return None

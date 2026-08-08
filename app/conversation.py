@@ -12,6 +12,7 @@ from app.config import settings
 from app.geo import haversine_km
 from app.hms_client import HmsApiError
 from app import nlu_client, intent_router
+from app.model_config import PRIMARY_NLU
 from app.i18n import LANGUAGE_LABELS, LANG_PROMPT, t
 
 logger = logging.getLogger("conversation")
@@ -159,15 +160,15 @@ async def handle_message(
     nlu_result = None
     if input_type == "text" and input_value.strip() and lang:
         try:
-            # 1. Classify message using the new NLU client (Sarvam with Gemini fallback)
+            # 1. Classify message using the new NLU client
             raw_nlu_result = await nlu_client.classify_message(input_value)
-            logger.info("Sarvam/Gemini NLU Result: %s", raw_nlu_result)
+            logger.info("NLU Result: %s", raw_nlu_result)
             
             # Log the raw interaction to the database
             if hasattr(db, "log_nlu_interaction"):
-                brain_name = "sarvam_ai"
+                brain_name = PRIMARY_NLU["model"]
                 if raw_nlu_result.get("intent") == "out_of_scope" and raw_nlu_result.get("confidence") == "low":
-                    brain_name = "gemini_fallback"
+                    brain_name = "nlu_hard_fallback"
                 
                 await db.log_nlu_interaction(
                     phone=phone,
