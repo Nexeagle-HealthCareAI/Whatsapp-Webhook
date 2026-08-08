@@ -12,6 +12,7 @@ from app.config import settings
 from app.geo import haversine_km
 from app.hms_client import HmsApiError
 from app.wit_client import parse_message_intent
+from app import nlu_client, intent_router
 from app.i18n import LANGUAGE_LABELS, LANG_PROMPT, t
 
 logger = logging.getLogger("conversation")
@@ -157,26 +158,55 @@ async def handle_message(
     lang = context.get("lang")
 
     nlu_result = None
-    if input_type == "text" and input_value.strip():
+    if input_type == "text" and input_value.strip() and lang:
         try:
-            nlu_result = await parse_message_intent(input_value)
-            logger.info("Wit.ai NLU Result: %s", nlu_result)
+            # 1. Classify message using the new NLU client (Sarvam with Gemini fallback)
+            raw_nlu_result = await nlu_client.classify_message(input_value)
+            logger.info("Sarvam/Gemini NLU Result: %s", raw_nlu_result)
+            
+            # Log the raw interaction to the database
             if hasattr(db, "log_nlu_interaction"):
+                brain_name = "sarvam_ai"
+                if raw_nlu_result.get("intent") == "out_of_scope" and raw_nlu_result.get("confidence") == "low":
+                    brain_name = "gemini_fallback"
+                
                 await db.log_nlu_interaction(
                     phone=phone,
                     session_id=context.get("session_id"),
                     utterance=input_value,
-                    nlu_brain="wit_ai",
-                    intent=nlu_result.get("intent"),
-                    confidence=nlu_result.get("confidence"),
-                    doctor_name=nlu_result.get("doctor_name"),
-                    specialty=nlu_result.get("specialty"),
-                    symptom=nlu_result.get("symptom"),
-                    formatted_date=nlu_result.get("formatted_date"),
+                    nlu_brain=brain_name,
+                    intent=raw_nlu_result.get("intent"),
+                    confidence=0.9 if raw_nlu_result.get("confidence") in ("high", "medium") else 0.2,
+                    doctor_name=raw_nlu_result.get("entities", {}).get("doctor_name"),
+                    specialty=raw_nlu_result.get("entities", {}).get("specialty"),
+                    symptom=raw_nlu_result.get("entities", {}).get("symptom"),
+                    formatted_date=raw_nlu_result.get("entities", {}).get("datetime"),
                     routed_step=current_step
                 )
+            
+            # 2. Route intent using intent_router (slot filling, session merge, duplicate booking check)
+            routed = await intent_router.route_intent(phone, raw_nlu_result, input_value)
+            logger.info("NLU Router Result: %s", routed)
+            
+            if routed.action == "ask_followup":
+                if routed.intent == "change_selection" and current_step in ("choosing_doctor", "choosing_slot", "awaiting_doctor_name"):
+                    await _transition_to(phone, "awaiting_doctor_name", context, current_step)
+                    await whatsapp_client.send_text(client, phone, t("doctor_name_ask", lang or "en"))
+                else:
+                    await whatsapp_client.send_text(client, phone, routed.followup_prompt)
+                return
+            
+            # 3. Flatten NLU result so downstream business logic remains completely untouched
+            nlu_result = {
+                "intent": routed.intent,
+                "confidence": 0.9,
+                "doctor_name": routed.entities.get("doctor_name") or routed.entities.get("new_doctor_name"),
+                "specialty": routed.entities.get("specialty"),
+                "symptom": routed.entities.get("symptom"),
+                "formatted_date": routed.entities.get("datetime")
+            }
         except Exception as exc:
-            logger.warning("Wit.ai parsing failed: %s", exc)
+            logger.warning("NLU client parsing or routing failed: %s", exc)
 
     # If a doctor is mentioned anywhere in the text while in selection states, hot-swap immediately
     if nlu_result and nlu_result.get("doctor_name"):

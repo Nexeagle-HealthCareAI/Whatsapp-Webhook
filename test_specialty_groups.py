@@ -29,6 +29,30 @@ async def _create_pool(*a, **k):
 _fake.create_pool = _create_pool
 sys.modules.setdefault("aioodbc", _fake)
 
+# Stub redis before importing app.*
+_fake_redis_mod = types.ModuleType("redis")
+_fake_redis_mod.asyncio = types.ModuleType("redis.asyncio")
+
+class MockRedis:
+    def __init__(self):
+        self.data = {}
+    @classmethod
+    def from_url(cls, *args, **kwargs):
+        return _mock_redis_instance
+    async def get(self, key):
+        return self.data.get(key)
+    async def set(self, key, value, ex=None):
+        self.data[key] = value
+        return True
+    async def delete(self, key):
+        self.data.pop(key, None)
+        return True
+
+_mock_redis_instance = MockRedis()
+_fake_redis_mod.asyncio.Redis = MockRedis
+sys.modules.setdefault("redis", _fake_redis_mod)
+sys.modules.setdefault("redis.asyncio", _fake_redis_mod.asyncio)
+
 os.environ.setdefault("WHATSAPP_TOKEN", "test")
 os.environ.setdefault("WHATSAPP_PHONE_NUMBER_ID", "test")
 os.environ.setdefault("WHATSAPP_VERIFY_TOKEN", "test")
@@ -883,18 +907,18 @@ def test_wit_nlu_integration():
     conversation.whatsapp_client.send_buttons = mock_send_buttons
     conversation.whatsapp_client.send_list = mock_send_list
 
-    original_parse = conversation.parse_message_intent
+    original_classify = conversation.nlu_client.classify_message
     
     # Mock NLU results
-    mock_nlu_val = {"intent": "unknown", "confidence": 0.0, "doctor_name": None, "specialty": None, "symptom": None, "formatted_date": None}
-    async def mock_parse(text):
+    mock_nlu_val = {"intent": "unknown", "confidence": "low", "entities": {}}
+    async def mock_classify(text):
         return mock_nlu_val
         
-    conversation.parse_message_intent = mock_parse
+    conversation.nlu_client.classify_message = mock_classify
 
     try:
         # 1. Test cancel intent
-        mock_nlu_val.update({"intent": "cancel_appointment", "confidence": 0.9})
+        mock_nlu_val.update({"intent": "cancel_appointment", "confidence": "high", "entities": {}})
         asyncio.run(db_mock.save_conversation_state("123", "choosing_location", {"lang": "en"}))
         asyncio.run(conversation.handle_message(mock_client, "123", "User", "text", "cancel please"))
         
@@ -904,7 +928,7 @@ def test_wit_nlu_integration():
 
         # 2. Test navigate back intent
         sent_texts.clear()
-        mock_nlu_val.update({"intent": "navigate_back", "confidence": 0.95})
+        mock_nlu_val.update({"intent": "navigate_back", "confidence": "high", "entities": {}})
         history_context = {"lang": "en", "_history": [{"current_step": "choosing_language", "context": {"lang": "en"}}]}
         asyncio.run(db_mock.save_conversation_state("123", "choosing_location", history_context))
         asyncio.run(conversation.handle_message(mock_client, "123", "User", "text", "go back"))
@@ -917,11 +941,10 @@ def test_wit_nlu_integration():
         sent_texts.clear()
         mock_nlu_val.update({
             "intent": "unknown",
-            "confidence": 0.1,
-            "doctor_name": "Avinash",
-            "specialty": None,
-            "symptom": None,
-            "formatted_date": None
+            "confidence": "low",
+            "entities": {
+                "doctor_name": "Avinash"
+            }
         })
         original_get_all_doctors = city_index.get_all_doctors
         async def mock_get_docs():
@@ -942,11 +965,8 @@ def test_wit_nlu_integration():
         sent_texts.clear()
         mock_nlu_val.update({
             "intent": "change_selection",
-            "confidence": 0.9,
-            "doctor_name": None,
-            "specialty": None,
-            "symptom": None,
-            "formatted_date": None
+            "confidence": "high",
+            "entities": {}
         })
         asyncio.run(db_mock.save_conversation_state("123", "choosing_doctor", {"lang": "en", "city": "Kishanganj"}))
         asyncio.run(conversation.handle_message(mock_client, "123", "User", "text", "Change the doctor"))
@@ -963,7 +983,7 @@ def test_wit_nlu_integration():
         conversation.whatsapp_client.send_text = original_send_text
         conversation.whatsapp_client.send_buttons = original_send_buttons
         conversation.whatsapp_client.send_list = original_send_list
-        conversation.parse_message_intent = original_parse
+        conversation.nlu_client.classify_message = original_classify
 
 
 if __name__ == "__main__":

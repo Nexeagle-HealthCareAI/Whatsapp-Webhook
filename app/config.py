@@ -79,6 +79,8 @@ class Settings(BaseSettings):
     # rather than silently accepting unauthenticated event pushes.
     internal_events_token: str
     wit_server_token: str = ""
+    sarvam_api_key: str | None = None
+    gemini_api_key: str | None = None
 
 
 
