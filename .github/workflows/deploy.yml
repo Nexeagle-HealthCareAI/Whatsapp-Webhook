@@ -85,12 +85,13 @@ jobs:
           SQLSERVER_CONN_STRING_DEV: ${{ secrets.SQLSERVER_CONN_STRING_DEV }}
           HMS_API_KEY: ${{ secrets.HMS_API_KEY }}
           INTERNAL_EVENTS_TOKEN: ${{ secrets.INTERNAL_EVENTS_TOKEN }}
+          SARVAM_API_KEY: ${{ secrets.SARVAM_API_KEY }}
         with:
           host: ${{ secrets.DEV_SSH_HOST }}
           username: ${{ secrets.DEV_SSH_USER }}
           password: ${{ secrets.DEV_SSH_PASSWORD }}
           port: 22
-          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,SQLSERVER_CONN_STRING_DEV,HMS_API_KEY, INTERNAL_EVENTS_TOKEN
+          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,SQLSERVER_CONN_STRING_DEV,HMS_API_KEY,INTERNAL_EVENTS_TOKEN,SARVAM_API_KEY
           script: |
             set -e
             cd "$DEPLOY_PATH"
@@ -102,6 +103,7 @@ jobs:
             : "${REDIS_PASSWORD:?REDIS_PASSWORD is empty}"
             : "${SQLSERVER_CONN_STRING_DEV:?SQLSERVER_CONN_STRING_DEV is empty}"
             : "${INTERNAL_EVENTS_TOKEN:?INTERNAL_EVENTS_TOKEN is empty}"
+            : "${SARVAM_API_KEY:?SARVAM_API_KEY is empty}"
           
 
             # Doesn't print the secret itself, just confirms the shape pyodbc needs is there —
@@ -124,6 +126,7 @@ jobs:
               printf 'SQLSERVER_CONN_STRING=%s\n' "$SQLSERVER_CONN_STRING_DEV"
               printf 'HMS_API_KEY=%s\n' "$HMS_API_KEY"
               printf 'INTERNAL_EVENTS_TOKEN=%s\n' "$INTERNAL_EVENTS_TOKEN"
+              printf 'SARVAM_API_KEY=%s\n' "$SARVAM_API_KEY"
             } > "$ENVFILE"
             chmod 600 "$ENVFILE"
 
