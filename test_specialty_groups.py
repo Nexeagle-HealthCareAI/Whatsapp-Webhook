@@ -759,6 +759,10 @@ def test_language_confirmation_flow():
             self.state[phone] = None
         async def log_nlu_interaction(self, *args, **kwargs):
             pass
+        async def update_last_nlu_log_correctness(self, *args, **kwargs):
+            pass
+        async def mark_session_nlu_correctness_on_booking(self, *args, **kwargs):
+            pass
 
     db_mock = MockDB()
     original_db = conversation.db
@@ -841,14 +845,20 @@ def test_wit_nlu_integration():
         def __init__(self):
             self.state = {}
             self.nlu_logs = []
+            self.correctness_updates = []
+            self.booking_updates = []
         async def get_conversation_state(self, phone):
             return self.state.get(phone)
         async def save_conversation_state(self, phone, step, context):
             self.state[phone] = {"current_step": step, "context": context}
         async def clear_conversation_state(self, phone):
             self.state[phone] = None
-        async def log_nlu_interaction(self, phone, utterance, intent, confidence, doc_name, spec_name, sym_name, pref_date):
-            self.nlu_logs.append((phone, utterance, intent, confidence, doc_name, spec_name, sym_name, pref_date))
+        async def log_nlu_interaction(self, phone, session_id, utterance, nlu_brain, intent, confidence, doctor_name, specialty, symptom, formatted_date, routed_step=None, is_correct=None, user_feedback=None):
+            self.nlu_logs.append((phone, session_id, utterance, nlu_brain, intent, confidence, doctor_name, specialty, symptom, formatted_date, routed_step, is_correct, user_feedback))
+        async def update_last_nlu_log_correctness(self, phone, is_correct, feedback):
+            self.correctness_updates.append((phone, is_correct, feedback))
+        async def mark_session_nlu_correctness_on_booking(self, phone, booked_doctor_name):
+            self.booking_updates.append((phone, booked_doctor_name))
 
     db_mock = MockDB()
     original_db = conversation.db

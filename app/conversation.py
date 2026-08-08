@@ -163,14 +163,17 @@ async def handle_message(
             logger.info("Wit.ai NLU Result: %s", nlu_result)
             if hasattr(db, "log_nlu_interaction"):
                 await db.log_nlu_interaction(
-                    phone,
-                    input_value,
-                    nlu_result.get("intent"),
-                    nlu_result.get("confidence"),
-                    nlu_result.get("doctor_name"),
-                    nlu_result.get("specialty"),
-                    nlu_result.get("symptom"),
-                    nlu_result.get("formatted_date")
+                    phone=phone,
+                    session_id=context.get("session_id"),
+                    utterance=input_value,
+                    nlu_brain="wit_ai",
+                    intent=nlu_result.get("intent"),
+                    confidence=nlu_result.get("confidence"),
+                    doctor_name=nlu_result.get("doctor_name"),
+                    specialty=nlu_result.get("specialty"),
+                    symptom=nlu_result.get("symptom"),
+                    formatted_date=nlu_result.get("formatted_date"),
+                    routed_step=current_step
                 )
         except Exception as exc:
             logger.warning("Wit.ai parsing failed: %s", exc)
@@ -305,11 +308,23 @@ async def handle_message(
     # Fallback to manual exact-match command parsing
     if input_type == "text" and input_value.strip():
         cmd = input_value.strip().lower()
+        
+        # Check for negation/correction words in user text to flag NLU incorrectness
+        negations = {"no", "wrong", "incorrect", "galat", "nahi", "not", "false"}
+        if any(re.search(r'\b' + n + r'\b', cmd) for n in negations):
+            if hasattr(db, "update_last_nlu_log_correctness"):
+                await db.update_last_nlu_log_correctness(phone, 0, "user_negation")
+                
         if cmd in ("cancel", "quit"):
+            if hasattr(db, "update_last_nlu_log_correctness"):
+                await db.update_last_nlu_log_correctness(phone, 0, "cancel_command")
             await whatsapp_client.send_text(client, phone, t("cancelled", lang or "en"))
             await db.clear_conversation_state(phone)
             return
+            
         if cmd == "back":
+            if hasattr(db, "update_last_nlu_log_correctness"):
+                await db.update_last_nlu_log_correctness(phone, 0, "back_navigation")
             history = context.get("_history", [])
             if not history:
                 await whatsapp_client.send_text(client, phone, t("back_no_history", lang))
@@ -403,7 +418,10 @@ async def _start(client: httpx.AsyncClient, phone: str, init_context: dict | Non
         [(code, label) for code, label in LANGUAGE_LABELS.items()],
         "Languages",
     )
-    await _transition_to(phone, "choosing_language", init_context or {}, None)
+    from uuid import uuid4
+    ctx = init_context or {}
+    ctx["session_id"] = str(uuid4())
+    await _transition_to(phone, "choosing_language", ctx, None)
 
 
 async def _handle_choosing_language(client, phone, input_type, input_value, context) -> None:
@@ -1428,6 +1446,11 @@ async def _handle_confirming(client, phone, sender_name, input_type, input_value
         )
 
     await whatsapp_client.send_text(client, phone, t("booked_queue_note", lang))
+
+    # Mark NLU correctness based on final booked doctor matching extracted NLU name
+    final_doctor_name = context.get("doctor_name")
+    if final_doctor_name and hasattr(db, "mark_session_nlu_correctness_on_booking"):
+        await db.mark_session_nlu_correctness_on_booking(phone, final_doctor_name)
 
     await db.clear_conversation_state(phone)
 

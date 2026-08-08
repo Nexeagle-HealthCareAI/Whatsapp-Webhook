@@ -118,23 +118,30 @@ BEGIN
 END
 GO
 
--- Logger table for tracking Wit.ai NLU requests and parses
+-- Logger table for tracking NLU brain requests, parses, and accuracy metrics
 IF OBJECT_ID('dbo.nlu_logs') IS NULL
 BEGIN
     CREATE TABLE dbo.nlu_logs (
         id INT IDENTITY(1,1) PRIMARY KEY,
         phone_number NVARCHAR(20) NOT NULL,
+        session_id NVARCHAR(100) NULL,
         utterance NVARCHAR(MAX) NOT NULL,
-        intent NVARCHAR(100) NULL,
+        nlu_brain NVARCHAR(50) NOT NULL,
+        detected_intent NVARCHAR(100) NULL,
         confidence FLOAT NULL,
         doctor_name NVARCHAR(200) NULL,
         specialty NVARCHAR(200) NULL,
         symptom NVARCHAR(MAX) NULL,
         formatted_date NVARCHAR(20) NULL,
+        routed_step NVARCHAR(50) NULL,
+        is_correct BIT NULL,
+        user_feedback NVARCHAR(100) NULL,
         created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
     );
     CREATE INDEX IX_nlu_logs_phone
         ON dbo.nlu_logs(phone_number, created_at DESC);
+    CREATE INDEX IX_nlu_logs_session
+        ON dbo.nlu_logs(session_id);
 END
 GO
 
