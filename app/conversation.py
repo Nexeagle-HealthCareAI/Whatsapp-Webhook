@@ -11,7 +11,6 @@ from app import city_index, db, hms_client, i18n, symptom_client, whatsapp_clien
 from app.config import settings
 from app.geo import haversine_km
 from app.hms_client import HmsApiError
-from app.wit_client import parse_message_intent
 from app import nlu_client, intent_router
 from app.i18n import LANGUAGE_LABELS, LANG_PROMPT, t
 
