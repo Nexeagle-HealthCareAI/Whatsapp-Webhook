@@ -27,6 +27,7 @@ services:
       # Authenticates 1HMS/1Rad's POST /events/token-called calls into this gateway (app/webhook.py)
       # — a different secret from WHATSAPP_APP_SECRET, which authenticates Meta instead.
       INTERNAL_EVENTS_TOKEN: "${INTERNAL_EVENTS_TOKEN}"
+      SARVAM_API_KEY: "${SARVAM_API_KEY}"
     # Bound to localhost only — the VM's existing shared Caddy/reverse proxy (already
     # serving other nexeagle.com subdomains) reverse_proxy's to this from the host side.
     # This stack does NOT run its own Caddy: a second process can't also bind 80/443
@@ -58,6 +59,10 @@ services:
       SQLSERVER_CONN_STRING: "${SQLSERVER_CONN_STRING}"
       SYMPTOM_API_BASE_URL: "${SYMPTOM_API_BASE_URL:-http://host.docker.internal:82}"
       INTERNAL_EVENTS_TOKEN: "${INTERNAL_EVENTS_TOKEN}"
+      # NLU classification (app/nlu_client.py) runs inside this container via
+      # conversation.handle_message — without this, settings.sarvam_api_key is None here
+      # and every message silently falls back to out_of_scope (see nlu_logs).
+      SARVAM_API_KEY: "${SARVAM_API_KEY}"
 
   scheduler:
     build: .
