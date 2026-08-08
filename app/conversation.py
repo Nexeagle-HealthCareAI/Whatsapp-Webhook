@@ -7,13 +7,66 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from app import city_index, db, hms_client, i18n, symptom_client, whatsapp_client
+from app import city_index, db, hms_client, i18n, symptom_client
+from app import whatsapp_client as raw_whatsapp_client
 from app.config import settings
 from app.geo import haversine_km
 from app.hms_client import HmsApiError
 from app import nlu_client, intent_router
 from app.model_config import PRIMARY_NLU
 from app.i18n import LANGUAGE_LABELS, LANG_PROMPT, t
+from contextvars import ContextVar
+
+current_request_context: ContextVar[tuple[str, dict, str]] = ContextVar("current_request_context")
+
+class DynamicWhatsappClient:
+    def __init__(self, original):
+        self.original = original
+        
+    async def send_text(self, client, to, text, *args, **kwargs):
+        try:
+            req_info = current_request_context.get(None)
+            if req_info:
+                step, context, user_msg = req_info
+                # Only rephrase if it's a real chat message (not empty, not system URLs)
+                if len(text.strip()) > 3 and not text.startswith("http") and not text.startswith("Choose /"):
+                    dynamic_text = await nlu_client.generate_conversational_response(step, context, user_msg)
+                    if dynamic_text:
+                        text = dynamic_text
+        except Exception as e:
+            logger.warning("Dynamic send_text generation failed, falling back: %s", e)
+        return await self.original.send_text(client, to, text, *args, **kwargs)
+
+    async def send_buttons(self, client, to, text, buttons, *args, **kwargs):
+        try:
+            req_info = current_request_context.get(None)
+            if req_info:
+                step, context, user_msg = req_info
+                if len(text.strip()) > 3:
+                    dynamic_text = await nlu_client.generate_conversational_response(step, context, user_msg)
+                    if dynamic_text:
+                        text = dynamic_text
+        except Exception as e:
+            logger.warning("Dynamic send_buttons generation failed, falling back: %s", e)
+        return await self.original.send_buttons(client, to, text, buttons, *args, **kwargs)
+
+    async def send_list(self, client, to, text, button_label, rows, section_title="Options", *args, **kwargs):
+        try:
+            req_info = current_request_context.get(None)
+            if req_info:
+                step, context, user_msg = req_info
+                if len(text.strip()) > 3:
+                    dynamic_text = await nlu_client.generate_conversational_response(step, context, user_msg)
+                    if dynamic_text:
+                        text = dynamic_text
+        except Exception as e:
+            logger.warning("Dynamic send_list generation failed, falling back: %s", e)
+        return await self.original.send_list(client, to, text, button_label, rows, section_title, *args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self.original, name)
+
+whatsapp_client = DynamicWhatsappClient(raw_whatsapp_client)
 
 logger = logging.getLogger("conversation")
 
@@ -155,6 +208,7 @@ async def handle_message(
     state = await db.get_conversation_state(phone)
     current_step = state["current_step"] if state else None
     context = state["context"] if state else {}
+    current_request_context.set((current_step or "general_chat", context, input_value))
     lang = context.get("lang")
 
     nlu_result = None
@@ -1077,6 +1131,34 @@ async def _render_doctor_list(
     the opted-in wider search so both present results identically."""
     lang = context.get("lang")
     sorted_doctors = _sort_doctors(doctors, context)[:10]
+    
+    if len(sorted_doctors) == 1:
+        d = sorted_doctors[0]
+        context = {
+            **context,
+            "doctor_id": d["doctorId"],
+            "doctor_name": d.get("fullName") or "Doctor",
+            "doctor_fee": _doctor_fee(d),
+            "hospital_name": d.get("hospitalName") or "",
+            "hospital_address": d.get("address") or "",
+            "hospital_city": d.get("city") or "",
+            "hospital_lat": d.get("latitude"),
+            "hospital_lng": d.get("longitude"),
+        }
+        context.pop("doctor_options", None)
+        
+        info_msg = f"Found matching doctor: {context['doctor_name']} ({context['hospital_name']})."
+        if lang == "hi":
+            info_msg = f"आपके लिए डॉक्टर मिले: {context['doctor_name']} ({context['hospital_name']})."
+        elif lang == "hg":
+            info_msg = f"Aapke matching doctor mile: {context['doctor_name']} ({context['hospital_name']})."
+        elif lang == "bn":
+            info_msg = f"আপনার জন্য ডাক্তার পাওয়া গেছে: {context['doctor_name']} ({context['hospital_name']})."
+            
+        await whatsapp_client.send_text(client, phone, info_msg)
+        await _send_slot_options(client, phone, context)
+        return
+
     rows = [
         (d["doctorId"], d.get("fullName") or "Doctor", _doctor_row_description(d, context))
         for d in sorted_doctors
@@ -1583,6 +1665,13 @@ async def _transition_to(phone: str, next_step: str, context: dict, current_step
             history.pop(0)
     new_context = {**context, "_history": history}
     await db.save_conversation_state(phone, next_step, new_context)
+    try:
+        req_info = current_request_context.get(None)
+        if req_info:
+            _, _, user_msg = req_info
+            current_request_context.set((next_step, new_context, user_msg))
+    except Exception:
+        pass
 
 
 async def _trigger_step_prompt(client: httpx.AsyncClient, phone: str, step: str, context: dict) -> None:

@@ -8,6 +8,34 @@ from app.model_config import PRIMARY_NLU, FALLBACK_NLU
 
 logger = logging.getLogger("nlu_client")
 
+RECEPTIONIST_SYSTEM_PROMPT = """
+You are a warm, friendly, and helpful medical receptionist at NexEagle clinic.
+Your job is to talk to the patient and guide them naturally to the next step of booking an appointment.
+
+The patient's current conversation state context: {context}
+The patient's last message: "{user_message}"
+The next step we need them to do is: {step}
+The user's preferred language is: {lang_label} (Write your response strictly in this language/dialect/script style).
+
+Guide details for steps:
+- "choosing_language": Greet the user warmly and ask them to choose their preferred language (English, Hindi, Bengali, Hinglish).
+- "confirming_language": Confirm if they want to continue in the auto-detected language.
+- "choosing_location": Politely ask them to share their location/GPS or type their city name so we can find doctors nearby.
+- "choosing_search_mode": Ask if they want to search doctors by name, specialty, or browse all categories.
+- "awaiting_symptom": Ask them to describe their symptoms so we can recommend a specialist.
+- "choosing_doctor": Present the list of matching doctors and ask them to select one.
+- "choosing_slot": Prompt them to select a preferred day and time shift for their appointment.
+- "awaiting_patient_details": Politely ask them to type the patient's full name, age, and gender.
+- "confirming": Summarize the booking details and ask them to confirm if everything looks correct.
+- "general_chat": Warmly answer their general questions or chit-chat, and then guide them back to booking.
+
+Guidelines:
+1. Keep the response short, warm, and natural (1-3 sentences maximum).
+2. Avoid looking like a robot. Speak like a real human receptionist on WhatsApp.
+3. Respond in the style of the target language. For example, if it is Hinglish, write in warm, natural Hinglish using English characters (Latin script).
+4. Strictly do NOT mention variables, technical keys, JSON structures, or internal steps.
+"""
+
 def normalize_datetime_to_date(text: str) -> str | None:
     if not text:
         return None
@@ -79,7 +107,6 @@ async def classify_message(text: str) -> dict:
 
     # 2. Attempt Fallback classification if configured
     if FALLBACK_NLU:
-        # In the future, fallback providers can be implemented here (e.g. OpenAI GPT-4)
         logger.info("Fallback NLU is configured but currently unsupported or skipped.")
 
     # 3. Hard fallback if all attempts fail
@@ -91,6 +118,59 @@ async def classify_message(text: str) -> dict:
         "_validated": True,
         "_had_hallucination": False
     }
+
+async def generate_conversational_response(step: str, context: dict, user_message: str) -> str | None:
+    """Generates a natural-sounding response using the LLM based on the current step and history context.
+
+    Returns the generated response string, or None if the LLM query fails.
+    """
+    lang = context.get("lang") or "en"
+    lang_labels = {"en": "English", "hi": "Hindi", "bn": "Bengali", "hg": "Hinglish (Hindi written in English alphabets/Latin script)"}
+    lang_label = lang_labels.get(lang, "Hinglish")
+    
+    # Render system prompt
+    sys_prompt = RECEPTIONIST_SYSTEM_PROMPT.format(
+        context=json.dumps({k: v for k, v in context.items() if k != "_history"}),
+        user_message=user_message,
+        step=step,
+        lang_label=lang_label
+    )
+    
+    # We strip history or metadata from context inside user prompt to keep it short
+    user_prompt = f"Patient says: \"{user_message}\"\nNext Step needed: {step}"
+    
+    return await _query_llm_text(sys_prompt, user_prompt, PRIMARY_NLU)
+
+async def _query_llm_text(system_prompt: str, user_prompt: str, config: dict) -> str | None:
+    sarvam_api_key = getattr(settings, "sarvam_api_key", None)
+    if not sarvam_api_key or sarvam_api_key == "test":
+        return None
+        
+    url = config["endpoint"]
+    headers = {
+        "api-subscription-key": sarvam_api_key,
+        "Content-Type": "application/json"
+    }
+    body = {
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "model": config["model"],
+        "temperature": 0.5,
+        "max_tokens": 150,
+        "reasoning_effort": None
+    }
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(url, headers=headers, json=body, timeout=config["timeout"])
+            if resp.status_code == 200:
+                data = resp.json()
+                return data["choices"][0]["message"]["content"].strip()
+    except Exception as exc:
+        logger.warning("LLM text generation failed: %s", exc)
+    return None
 
 async def _query_sarvam(text: str, api_key: str, config: dict, retry: bool = True) -> dict | None:
     url = config["endpoint"]

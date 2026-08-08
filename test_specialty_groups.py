@@ -888,6 +888,11 @@ def test_wit_nlu_integration():
     original_db = conversation.db
     conversation.db = db_mock
 
+    original_availability = conversation.hms_client.get_doctor_availability
+    async def mock_availability(doc_id, date_val):
+        return {"shifts": [{"name": "Morning", "startTime": "09:00:00", "endTime": "12:00:00"}]}
+    conversation.hms_client.get_doctor_availability = mock_availability
+
     sent_texts = []
     sent_buttons = []
     sent_lists = []
@@ -948,7 +953,10 @@ def test_wit_nlu_integration():
         })
         original_get_all_doctors = city_index.get_all_doctors
         async def mock_get_docs():
-            return [{"doctorId": "5", "fullName": "Dr. Avinash", "city": "Kishanganj", "latitude": 26.1, "longitude": 87.9}]
+            return [
+                {"doctorId": "5", "fullName": "Dr. Avinash", "city": "Kishanganj", "latitude": 26.1, "longitude": 87.9},
+                {"doctorId": "6", "fullName": "Dr. Avinash Senior", "city": "Kishanganj", "latitude": 26.1, "longitude": 87.9}
+            ]
         city_index.get_all_doctors = mock_get_docs
         
         asyncio.run(db_mock.save_conversation_state("123", "choosing_doctor", {"lang": "en", "city": "Kishanganj"}))
@@ -984,6 +992,7 @@ def test_wit_nlu_integration():
         conversation.whatsapp_client.send_buttons = original_send_buttons
         conversation.whatsapp_client.send_list = original_send_list
         conversation.nlu_client.classify_message = original_classify
+        conversation.hms_client.get_doctor_availability = original_availability
 
 
 if __name__ == "__main__":
