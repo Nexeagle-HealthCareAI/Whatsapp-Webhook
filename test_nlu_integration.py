@@ -148,6 +148,31 @@ def test_booking_vs_reschedule_ambiguity():
     check(routed_new.action == "proceed_to_business_logic", "Choosing new booking should proceed")
     check(routed_new.intent == "book_appointment", "Intent should remain book_appointment")
 
+def test_confidence_gate_on_zero_slot_intents():
+    print("\n--- Running Confidence Gate Tests (cancel/back/greeting) ---")
+    # cancel_appointment has no REQUIRED_ENTITIES check (maps to []), so nothing else
+    # verifies the classification before it wipes conversation state — the router's own
+    # confidence score is the only safety net. A low-confidence guess must be reported as
+    # low, not silently upgraded to a safe 0.9 the way a slot-filled book_appointment is.
+    low_conf = {"intent": "cancel_appointment", "confidence": "low", "entities": {}}
+    routed = asyncio.run(intent_router.route_intent("user_conf_1", low_conf, "nahi cancel jaisa kuch nahi"))
+    check(routed.action == "proceed_to_business_logic", "cancel still routes to proceed (router doesn't block it)")
+    check(routed.confidence < 0.7, "low-confidence cancel must NOT report a safe/high confidence")
+
+    high_conf = {"intent": "cancel_appointment", "confidence": "high", "entities": {}}
+    routed = asyncio.run(intent_router.route_intent("user_conf_2", high_conf, "cancel my appointment"))
+    check(routed.confidence >= 0.7, "high-confidence cancel reports a confidence that clears the gate")
+
+    # book_appointment DOES have a REQUIRED_ENTITIES check — reaching proceed_to_business_logic
+    # already means every slot passed that check across however many turns it took, so this
+    # must report a safe confidence even when the single message that filled the last slot
+    # was itself low-confidence (this is exactly turn 3 of test_multi_turn_slot_filling).
+    db_mock.has_active_appt = False  # test_booking_vs_reschedule_ambiguity leaves this True
+    low_conf_but_slots_filled = {"intent": "book_appointment", "confidence": "low", "entities": {"specialty": "gyno", "datetime": "kal"}}
+    routed = asyncio.run(intent_router.route_intent("user_conf_3", low_conf_but_slots_filled, "kal"))
+    check(routed.action == "proceed_to_business_logic", "slot-filled book_appointment proceeds")
+    check(routed.confidence >= 0.7, "slot-filling safety net overrides a low per-message confidence")
+
 def test_gemini_fallback_simulation():
     print("\n--- Running Gemini Fallback Simulation Tests ---")
     original_api_key = settings.sarvam_api_key
@@ -173,6 +198,7 @@ if __name__ == "__main__":
     test_classify_message_wrapper()
     test_multi_turn_slot_filling()
     test_booking_vs_reschedule_ambiguity()
+    test_confidence_gate_on_zero_slot_intents()
     test_gemini_fallback_simulation()
 
     intent_router.db = original_db

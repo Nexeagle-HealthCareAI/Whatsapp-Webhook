@@ -55,14 +55,51 @@ def _pick(prompt_map: dict, lang: str | None) -> str:
     return prompt_map.get(lang or "hg", prompt_map["hg"])
 
 class RoutedResult:
-    def __init__(self, action: str, intent: str, entities: dict, followup_prompt: str | None = None):
+    def __init__(
+        self, action: str, intent: str, entities: dict, followup_prompt: str | None = None,
+        confidence: float = 0.9,
+    ):
         self.action = action  # "ask_followup" or "proceed_to_business_logic"
         self.intent = intent
         self.entities = entities
         self.followup_prompt = followup_prompt
+        # Only meaningful when action == "proceed_to_business_logic" — see the confidence
+        # computation at the bottom of route_intent() for why this isn't just a passthrough
+        # of the current turn's raw NLU confidence.
+        self.confidence = confidence
 
     def __repr__(self):
-        return f"<RoutedResult action={self.action} intent={self.intent} entities={self.entities}>"
+        return f"<RoutedResult action={self.action} intent={self.intent} entities={self.entities} confidence={self.confidence}>"
+
+
+_CONFIDENCE_SCORE = {"high": 0.9, "medium": 0.75, "low": 0.3}
+
+# Intents with no REQUIRED_ENTITIES entry (cancel_appointment maps to an empty list;
+# navigate_back and greeting aren't in the map at all) skip the missing-slot check
+# entirely and always reach "proceed_to_business_logic" on the very message that named
+# them — there is no slot-filling safety net verifying the classification is right.
+# These are exactly the intents where the raw NLU confidence must actually gate
+# execution, since misreading e.g. "nahi... cancel jaisa kuch nahi bola" as
+# cancel_appointment would otherwise wipe a booking on a single low-confidence guess.
+_NO_SLOT_SAFETY_NET = {"cancel_appointment", "navigate_back", "greeting"}
+
+
+def _proceed_confidence(intent: str, current_turn_confidence: str | None) -> float:
+    """Confidence to report when action="proceed_to_business_logic".
+
+    For intents backed by a REQUIRED_ENTITIES check (book_appointment, check_availability,
+    change_selection, ask_pricing, reschedule_appointment), reaching this point already
+    means every required slot was filled and validated across however many turns it took —
+    that IS the trust signal, not the raw confidence of whichever single message happened to
+    fill the last slot. A multi-turn booking where turn 3 is just "kal" (a low-confidence
+    fragment on its own) must not be blocked here; see test_multi_turn_slot_filling in
+    test_nlu_integration.py.
+
+    For _NO_SLOT_SAFETY_NET intents, there is no such multi-turn validation, so the current
+    turn's own confidence is what gets reported."""
+    if intent in _NO_SLOT_SAFETY_NET:
+        return _CONFIDENCE_SCORE.get(current_turn_confidence, _CONFIDENCE_SCORE["low"])
+    return _CONFIDENCE_SCORE["high"]
 
 
 def get_followup_prompt(intent: str, missing_slot, lang: str | None = None) -> str:
@@ -222,5 +259,6 @@ async def route_intent(wa_id: str, validated_nlu_result: dict, raw_text: str = "
     return RoutedResult(
         action="proceed_to_business_logic",
         intent=current_intent,
-        entities=current_entities
+        entities=current_entities,
+        confidence=_proceed_confidence(current_intent, new_confidence),
     )

@@ -319,7 +319,7 @@ async def handle_message(
             # 3. Flatten NLU result so downstream business logic remains completely untouched
             nlu_result = {
                 "intent": routed.intent,
-                "confidence": 0.9,
+                "confidence": routed.confidence,
                 "doctor_name": routed.entities.get("doctor_name") or routed.entities.get("new_doctor_name"),
                 "specialty": routed.entities.get("specialty"),
                 "symptom": routed.entities.get("symptom"),
