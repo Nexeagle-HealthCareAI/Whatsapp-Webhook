@@ -1057,6 +1057,136 @@ def test_wit_nlu_integration():
         conversation.hms_client.get_doctor_availability = original_availability
 
 
+def test_previously_dropped_intents_now_handled():
+    """ask_pricing, describe_symptom, and provide_location used to be classified,
+    routed, and then silently fall through every elif in handle_message — the patient's
+    actual question got ignored and they'd get bounced to a fresh welcome/location prompt
+    instead. Covers all three now having a real response."""
+    import asyncio
+    mock_client = object()
+
+    class MockDB:
+        def __init__(self):
+            self.state = {}
+        async def get_conversation_state(self, phone):
+            return self.state.get(phone)
+        async def save_conversation_state(self, phone, step, context):
+            self.state[phone] = {"current_step": step, "context": context}
+        async def clear_conversation_state(self, phone):
+            self.state[phone] = None
+        async def log_nlu_interaction(self, *args, **kwargs):
+            pass
+        async def update_last_nlu_log_correctness(self, *args, **kwargs):
+            pass
+
+    db_mock = MockDB()
+    original_db = conversation.db
+    conversation.db = db_mock
+
+    sent_texts = []
+    sent_lists = []
+    original_send_text = conversation.whatsapp_client.send_text
+    original_send_buttons = conversation.whatsapp_client.send_buttons
+    original_send_list = conversation.whatsapp_client.send_list
+    async def mock_send_text(client, to, text):
+        sent_texts.append(text)
+    async def mock_send_buttons(client, to, text, buttons):
+        pass
+    async def mock_send_list(client, to, text, button_label, rows, section_title="Options"):
+        sent_lists.append((text, button_label, rows, section_title))
+    conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_buttons = mock_send_buttons
+    conversation.whatsapp_client.send_list = mock_send_list
+
+    mock_nlu_val = {"intent": "unknown", "confidence": "high", "entities": {}}
+    async def mock_classify(client, text):
+        return mock_nlu_val
+    original_classify = conversation.nlu_client.classify_message
+    conversation.nlu_client.classify_message = mock_classify
+
+    doctors = [
+        {"doctorId": "1", "fullName": "Dr. Amit Sharma", "city": "Kishanganj", "fee": 500},
+        {"doctorId": "2", "fullName": "Dr. Priya Sharma", "city": "Patna", "fee": 700},
+        {"doctorId": "3", "fullName": "Dr. Manoj Kumar", "city": "Kishanganj", "fee": 400},
+        {"doctorId": "4", "fullName": "Dr. Kavita Sharma", "city": "Kishanganj", "fee": 600},
+    ]
+    original_get_all_doctors = conversation.city_index.get_all_doctors
+    async def mock_get_all_doctors(force_refresh=False):
+        return doctors
+    conversation.city_index.get_all_doctors = mock_get_all_doctors
+
+    original_list_specialties = conversation.hms_client.list_specialties
+    async def mock_list_specialties():
+        return [{"category": "Gynaecologist"}, {"category": "Orthopaedic Surgeon (Bone)"}]
+    conversation.hms_client.list_specialties = mock_list_specialties
+
+    original_list_doctors = conversation.hms_client.list_doctors
+    async def mock_list_doctors(specialty_category, page_size=10, city=None):
+        return [d for d in doctors if specialty_category == "Gynaecologist"]
+    conversation.hms_client.list_doctors = mock_list_doctors
+
+    original_route_symptom = conversation.symptom_client.route_symptom
+    async def mock_route_symptom(query):
+        return ["Gynaecologist"]
+    conversation.symptom_client.route_symptom = mock_route_symptom
+
+    original_get_index = conversation.city_index.get_index
+    async def mock_get_index(force_refresh=False):
+        return {"Kishanganj": [[26.10, 87.95]], "Patna": [[25.61, 85.14]]}
+    conversation.city_index.get_index = mock_get_index
+
+    try:
+        # 1. ask_pricing + a name matching exactly one doctor -> a fee, not a dropped message
+        mock_nlu_val.update({"intent": "ask_pricing", "entities": {"doctor_name": "Manoj"}})
+        asyncio.run(db_mock.save_conversation_state("p1", "choosing_location", {"lang": "en", "city": "Kishanganj"}))
+        asyncio.run(conversation.handle_message(mock_client, "p1", "User", "text", "Dr Manoj ki fees kitni hai?"))
+        check(sent_texts and "400" in sent_texts[-1] and "500" not in sent_texts[-1], f"unique doctor -> their own fee, got {sent_texts[-1] if sent_texts else None!r}")
+
+        # 2. ask_pricing + a name matching multiple doctors (even after narrowing to the
+        # patient's own city — two different Sharmas both practise in Kishanganj) -> a
+        # list, not silence and not a guess
+        sent_texts.clear()
+        mock_nlu_val.update({"intent": "ask_pricing", "entities": {"doctor_name": "Sharma"}})
+        asyncio.run(conversation.handle_message(mock_client, "p1", "User", "text", "Sharma ki fees?"))
+        check(sent_texts and "500" in sent_texts[-1] and "600" in sent_texts[-1], f"ambiguous name -> lists every match's fee, got {sent_texts[-1] if sent_texts else None!r}")
+
+        # 3. ask_pricing + a specialty -> a fee range (mock_list_doctors returns all 4
+        # doctors for this category: fees 400/500/600/700 -> range is 400 to 700)
+        sent_texts.clear()
+        mock_nlu_val.update({"intent": "ask_pricing", "entities": {"specialty": "Gynaecologist"}})
+        asyncio.run(conversation.handle_message(mock_client, "p1", "User", "text", "Gynaecologist consultation kitne ki hai?"))
+        check(sent_texts and "400" in sent_texts[-1] and "700" in sent_texts[-1], f"specialty pricing -> a fee range, got {sent_texts[-1] if sent_texts else None!r}")
+
+        # 4. describe_symptom -> proceeds to the sort/doctor-list flow, same as
+        # book_appointment already does for a symptom, instead of being dropped
+        sent_lists.clear()
+        mock_nlu_val.update({"intent": "describe_symptom", "entities": {"symptom": "pet me dard"}})
+        asyncio.run(conversation.handle_message(mock_client, "p1", "User", "text", "pet me bahut dard ho raha hai"))
+        state = asyncio.run(db_mock.get_conversation_state("p1"))
+        check(state["current_step"] == "choosing_sort", f"describe_symptom should reach choosing_sort, got {state['current_step']!r}")
+
+        # 5. provide_location -> updates city and moves the conversation forward, instead
+        # of the message being silently ignored
+        asyncio.run(db_mock.save_conversation_state("p2", "choosing_search_mode", {"lang": "en"}))
+        mock_nlu_val.update({"intent": "provide_location", "entities": {"location": "Kishanganj"}})
+        asyncio.run(conversation.handle_message(mock_client, "p2", "User", "text", "main Kishanganj mein hoon"))
+        state = asyncio.run(db_mock.get_conversation_state("p2"))
+        check(state["context"].get("city") == "Kishanganj", f"provide_location should resolve and set city, got {state['context'].get('city')!r}")
+        check(state["current_step"] == "choosing_search_mode", "should proceed to the search-mode prompt after location is known")
+
+    finally:
+        conversation.db = original_db
+        conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_buttons = original_send_buttons
+        conversation.whatsapp_client.send_list = original_send_list
+        conversation.nlu_client.classify_message = original_classify
+        conversation.city_index.get_all_doctors = original_get_all_doctors
+        conversation.hms_client.list_specialties = original_list_specialties
+        conversation.hms_client.list_doctors = original_list_doctors
+        conversation.symptom_client.route_symptom = original_route_symptom
+        conversation.city_index.get_index = original_get_index
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:

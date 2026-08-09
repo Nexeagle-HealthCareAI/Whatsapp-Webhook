@@ -9,6 +9,7 @@ import httpx
 
 from app import booking_slots, city_index, db, hms_client, i18n, symptom_client, whatsapp_client
 from app.resolver import match_doctor_by_query as _match_doctor_by_query
+from app.resolver import resolve_doctor
 from app.config import settings
 from app.geo import haversine_km
 from app.hms_client import HmsApiError
@@ -325,6 +326,7 @@ async def handle_message(
                 "symptom": routed.entities.get("symptom"),
                 "formatted_date": routed.entities.get("datetime"),
                 "time_of_day": routed.entities.get("time_of_day"),
+                "location": routed.entities.get("location"),
             }
         except Exception as exc:
             logger.warning("NLU client parsing or routing failed: %s", exc)
@@ -370,7 +372,11 @@ async def handle_message(
             await _start(client, phone)
             return
             
-        elif intent in ("book_appointment", "check_availability"):
+        elif intent in ("book_appointment", "check_availability", "describe_symptom"):
+            # describe_symptom reuses this block's sym_name branch unchanged (below) — a
+            # patient just describing a symptom gets the same "here are relevant doctors"
+            # response book_appointment/check_availability already give when a symptom is
+            # mentioned, rather than being silently dropped.
             doc_name = nlu_result.get("doctor_name")
             spec_name = nlu_result.get("specialty")
             sym_name = nlu_result.get("symptom")
@@ -446,6 +452,70 @@ async def handle_message(
                             await _transition_to(phone, "choosing_location", new_context, current_step)
                             await _trigger_step_prompt(client, phone, "choosing_location", new_context)
                         return
+
+        elif intent == "provide_location":
+            location_text = nlu_result.get("location")
+            if location_text:
+                new_context = {**context, "location_text": location_text}
+                new_context = await _resolve_city(new_context)
+                if new_context.get("search_doctor_query"):
+                    if await _search_doctors_flow(client, phone, new_context, current_step):
+                        return
+                    query = new_context.get("search_doctor_query")
+                    await whatsapp_client.send_text(client, phone, t("search_doctor_not_found", lang, query=query))
+                    new_context.pop("search_doctor_query", None)
+                await _send_search_mode_prompt(client, phone, new_context)
+                return
+
+        elif intent == "ask_pricing":
+            doc_name = nlu_result.get("doctor_name")
+            spec_name = nlu_result.get("specialty")
+
+            if doc_name:
+                all_docs = await city_index.get_all_doctors()
+                resolution = resolve_doctor(
+                    doc_name, all_docs,
+                    city=context.get("city"),
+                    patient_lat=context.get("patient_lat"), patient_lng=context.get("patient_lng"),
+                )
+                if resolution.status == "one":
+                    fee = _doctor_fee(resolution.value)
+                    name = resolution.value.get("fullName") or "Doctor"
+                    if fee == float("inf"):
+                        await whatsapp_client.send_text(client, phone, t("pricing_not_available", lang))
+                    else:
+                        await whatsapp_client.send_text(client, phone, t("pricing_doctor_fee", lang, doctor=name, fee=f"{fee:.0f}"))
+                elif resolution.status == "many":
+                    priced = [d for d in resolution.candidates if _doctor_fee(d) != float("inf")]
+                    lines = "\n".join(
+                        f"- {d.get('fullName') or 'Doctor'}: ₹{_doctor_fee(d):.0f}" for d in priced[:5]
+                    )
+                    if lines:
+                        await whatsapp_client.send_text(client, phone, t("pricing_multiple_doctors", lang, query=doc_name, list=lines))
+                    else:
+                        await whatsapp_client.send_text(client, phone, t("pricing_not_available", lang))
+                else:
+                    await whatsapp_client.send_text(client, phone, t("search_doctor_not_found", lang, query=doc_name))
+                return
+
+            elif spec_name:
+                categories = await hms_client.list_specialties()
+                category_list = [c["category"] for c in categories]
+                matched = symptom_client.match_category(spec_name, category_list)
+                doctors = await hms_client.list_doctors(matched, page_size=50, city=context.get("city")) if matched else []
+                fees = sorted({_doctor_fee(d) for d in doctors if _doctor_fee(d) != float("inf")})
+                if fees:
+                    await whatsapp_client.send_text(
+                        client, phone,
+                        t("pricing_specialty_range", lang, specialty=matched, min_fee=f"{fees[0]:.0f}", max_fee=f"{fees[-1]:.0f}"),
+                    )
+                else:
+                    await whatsapp_client.send_text(client, phone, t("pricing_not_available", lang))
+                return
+
+            else:
+                await whatsapp_client.send_text(client, phone, t("pricing_ask_which", lang))
+                return
 
         elif intent == "change_selection":
             doc_name = nlu_result.get("doctor_name")

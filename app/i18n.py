@@ -432,6 +432,36 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Hamein '{query}' naam se koi doctor nahi mila. Aaiye iske badle symptom ya specialty se search karte hain:",
         "bn": "আমরা '{query}' নামের কোনো ডাক্তার খুঁজে পাইনি। আসুন রোগ বা বিশেষত্ব অনুযায়ী খুঁজি:",
     },
+    "pricing_doctor_fee": {
+        "en": "{doctor}'s consultation fee is ₹{fee}.",
+        "hi": "{doctor} की परामर्श फीस ₹{fee} है।",
+        "hg": "{doctor} ki consultation fee ₹{fee} hai.",
+        "bn": "{doctor}-এর পরামর্শ ফি ₹{fee}।",
+    },
+    "pricing_multiple_doctors": {
+        "en": "A few doctors match '{query}':\n{list}",
+        "hi": "'{query}' से मिलते-जुलते कुछ डॉक्टर:\n{list}",
+        "hg": "'{query}' se milte julte kuch doctors:\n{list}",
+        "bn": "'{query}' এর সাথে মিলে যাওয়া কয়েকজন ডাক্তার:\n{list}",
+    },
+    "pricing_specialty_range": {
+        "en": "{specialty} consultation fees range from ₹{min_fee} to ₹{max_fee}, depending on the doctor.",
+        "hi": "{specialty} परामर्श की फीस डॉक्टर के अनुसार ₹{min_fee} से ₹{max_fee} तक है।",
+        "hg": "{specialty} consultation ki fee doctor ke hisaab se ₹{min_fee} se ₹{max_fee} tak hai.",
+        "bn": "{specialty} পরামর্শের ফি ডাক্তার অনুযায়ী ₹{min_fee} থেকে ₹{max_fee} পর্যন্ত।",
+    },
+    "pricing_not_available": {
+        "en": "Sorry, fee information isn't available for that right now.",
+        "hi": "क्षमा करें, अभी इसकी फीस की जानकारी उपलब्ध नहीं है।",
+        "hg": "Sorry, abhi iski fee ki jaankari available nahi hai.",
+        "bn": "দুঃখিত, এই মুহূর্তে ফি সংক্রান্ত তথ্য পাওয়া যাচ্ছে না।",
+    },
+    "pricing_ask_which": {
+        "en": "Which doctor or specialty would you like pricing for?",
+        "hi": "आप किस डॉक्टर या विशेषता की फीस जानना चाहते हैं?",
+        "hg": "Aap kis doctor ya specialty ki fee jaanna chahte hain?",
+        "bn": "আপনি কোন ডাক্তার বা বিশেষত্বের ফি জানতে চান?",
+    },
     "instructions": {
         "en": "Type 'cancel' or 'quit' to end this chat anytime (just send a new message to start again), and 'back' to go back 1 step.",
         "hi": "आप किसी भी समय बातचीत खत्म करने के लिए 'cancel' या 'quit' टाइप कर सकते हैं (फिर से शुरू करने के लिए नया संदेश भेजें), और 1 कदम पीछे जाने के लिए 'back' टाइप करें।",

@@ -14,6 +14,8 @@ REQUIRED_ENTITIES = {
     "reschedule_appointment": ["datetime"],
     "change_selection": ["new_doctor_name"],
     "ask_pricing": [("doctor_name", "specialty")],
+    "describe_symptom": ["symptom"],
+    "provide_location": ["location"],
 }
 
 # Per-language follow-up copy. Keyed the same way as app/i18n.py (en/hi/hg/bn) so this stays
