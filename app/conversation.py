@@ -815,10 +815,37 @@ async def _handle_choosing_location(client, phone, input_type, input_value, cont
 # ---------------------------------------------------------------------------------------
 
 
+async def _phrase(
+    client: httpx.AsyncClient, step: str, context: dict, fallback_key: str, **fallback_kwargs
+) -> str:
+    """Model-written wording for a step's prompt, falling back to the i18n template.
+
+    The template is always computed first, so an unavailable, slow, or failing model costs
+    the patient nothing — they get the same message the bot has always sent. Only the
+    *wording* is ever model-written: doctor names, fees, dates, slot labels and the
+    confirmation summary are rendered separately from real data and never pass through
+    here (nlu_client.STEP_GOALS deliberately has no entry for those steps).
+
+    The clipboard's known_summary is what stops the model re-asking for something the
+    patient already gave — it sees the collected details, not the raw context dict."""
+    lang = context.get("lang")
+    fallback = t(fallback_key, lang, **fallback_kwargs)
+    try:
+        known = booking_slots.known_summary(_shadow_clipboard(context))
+        phrased = await nlu_client.generate_step_prompt(client, step, lang, known)
+    except Exception:
+        logger.warning("Step-prompt phrasing failed for %s, using template", step, exc_info=True)
+        return fallback
+    return phrased or fallback
+
+
 async def _send_search_mode_prompt(client: httpx.AsyncClient, phone: str, context: dict) -> None:
     lang = context.get("lang")
+    # Only the question is phrased — the three button labels stay templated, since they
+    # have to match the ids _handle_choosing_search_mode matches against.
+    body = await _phrase(client, "choosing_search_mode", context, "search_mode_prompt")
     await whatsapp_client.send_buttons(
-        client, phone, t("search_mode_prompt", lang),
+        client, phone, body,
         [
             ("symptom", t("search_mode_symptom", lang)),
             ("name", t("search_mode_name", lang)),
@@ -851,7 +878,8 @@ async def _handle_doctor_search_miss(
     already did both; the NLU-driven paths in handle_message each did neither, in three
     separate places."""
     await whatsapp_client.send_text(
-        client, phone, t("search_doctor_not_found", context.get("lang"), query=query)
+        client, phone,
+        await _phrase(client, "search_doctor_miss", context, "search_doctor_not_found", query=query),
     )
     context.pop("search_doctor_query", None)
     for key in _DOCTOR_SELECTION_KEYS:
@@ -876,11 +904,15 @@ async def _handle_choosing_search_mode(client, phone, input_type, input_value, c
         await whatsapp_client.send_text(client, phone, t("search_mode_choose_hint", lang))
         return
     if choice == "symptom":
-        await whatsapp_client.send_text(client, phone, t("symptom_ask", lang))
+        await whatsapp_client.send_text(
+            client, phone, await _phrase(client, "awaiting_symptom", context, "symptom_ask")
+        )
         await _transition_to(phone, "awaiting_symptom", context, "choosing_search_mode")
         return
     if choice == "name":
-        await whatsapp_client.send_text(client, phone, t("doctor_name_ask", lang))
+        await whatsapp_client.send_text(
+            client, phone, await _phrase(client, "awaiting_doctor_name", context, "doctor_name_ask")
+        )
         await _transition_to(phone, "awaiting_doctor_name", context, "choosing_search_mode")
         return
     await _send_specialty_list(client, phone, context)

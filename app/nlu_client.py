@@ -183,7 +183,74 @@ async def generate_conversational_response(client: httpx.AsyncClient, step: str,
     
     return await _query_llm_text(client, sys_prompt, user_prompt, PRIMARY_NLU)
 
-async def _query_llm_text(client: httpx.AsyncClient, system_prompt: str, user_prompt: str, config: dict) -> str | None:
+STEP_PROMPT_SYSTEM = """You are a warm, friendly medical receptionist at NexEagle clinic, talking to a patient on WhatsApp.
+
+Write ONLY the next thing you would say to move the booking forward. This is the message the patient will see.
+
+What you need from them now: {goal}
+Details already collected (never ask for any of these again): {known}
+Write strictly in this language/script: {lang_label}
+
+Rules:
+1. One or two short sentences. WhatsApp, not a letter.
+2. Sound like a real person, not a form. No greetings if the conversation is already underway.
+3. NEVER invent or mention a doctor's name, a fee, a date, a time, or a hospital. Those are shown separately — you only write the question.
+4. Never mention variables, JSON, internal step names, or that you are an AI.
+5. Do not add options or lists — buttons are attached separately by the system.
+"""
+
+# What each step actually needs from the patient, in plain language. Steps whose message
+# carries real booking data (the confirmation summary, doctor lists, slot labels) are
+# deliberately absent — those must never be model-written. See _phrase() in
+# app/conversation.py.
+STEP_GOALS = {
+    "choosing_location": "their city, area, or a shared location, so nearby doctors can be found",
+    "choosing_search_mode": "whether they want to search by symptom, by doctor name, or browse specialities",
+    "awaiting_symptom": "a description of what they are feeling, so the right specialist can be suggested",
+    "awaiting_doctor_name": "the name of the doctor they want to see",
+    "awaiting_patient_details": "the patient's full name, age, gender and guardian name, typed as one comma-separated line",
+    "search_doctor_miss": "a gentle note that no doctor matched what they typed, and an invitation to try another way",
+}
+
+# Shorter than the classification timeout: a phrasing call always has a ready template
+# fallback, so waiting the full classification budget would make the patient wait longer
+# for a message we could already have sent.
+_PHRASE_TIMEOUT_SECONDS = 2.5
+
+
+async def generate_step_prompt(
+    client: httpx.AsyncClient, step: str, lang: str | None, known: dict | None = None
+) -> str | None:
+    """Model-written wording for a step's prompt, or None if unavailable/too slow.
+
+    Callers MUST have a template fallback ready — see _phrase() in app/conversation.py.
+    Only steps present in STEP_GOALS can be phrased; anything else returns None so a new
+    step can't silently start getting model-written copy."""
+    goal = STEP_GOALS.get(step)
+    if goal is None:
+        return None
+
+    lang_labels = {
+        "en": "English",
+        "hi": "Hindi (Devanagari script)",
+        "bn": "Bengali (Bengali script)",
+        "hg": "Hinglish (Hindi written in English alphabets/Latin script)",
+    }
+    system_prompt = STEP_PROMPT_SYSTEM.format(
+        goal=goal,
+        known=json.dumps(known or {}, ensure_ascii=False) if known else "nothing yet",
+        lang_label=lang_labels.get(lang or "en", lang_labels["en"]),
+    )
+    return await _query_llm_text(
+        client, system_prompt, "Write that message now.", PRIMARY_NLU,
+        timeout=_PHRASE_TIMEOUT_SECONDS,
+    )
+
+
+async def _query_llm_text(
+    client: httpx.AsyncClient, system_prompt: str, user_prompt: str, config: dict,
+    timeout: float | None = None,
+) -> str | None:
     sarvam_api_key = getattr(settings, "sarvam_api_key", None)
     if not sarvam_api_key or sarvam_api_key == "test":
         return None
@@ -205,10 +272,13 @@ async def _query_llm_text(client: httpx.AsyncClient, system_prompt: str, user_pr
     }
 
     try:
-        resp = await client.post(url, headers=headers, json=body, timeout=config["timeout"])
+        resp = await client.post(
+            url, headers=headers, json=body, timeout=timeout or config["timeout"]
+        )
         if resp.status_code == 200:
             data = resp.json()
             return data["choices"][0]["message"]["content"].strip()
+        logger.warning("LLM text generation returned status %d", resp.status_code)
     except Exception as exc:
         logger.warning("LLM text generation failed: %s", exc)
     return None

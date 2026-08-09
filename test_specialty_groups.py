@@ -1187,6 +1187,54 @@ def test_previously_dropped_intents_now_handled():
         conversation.city_index.get_index = original_get_index
 
 
+def test_data_bearing_steps_are_never_model_phrased():
+    """The safety boundary for LLM phrasing: any step whose message carries real booking
+    data (the confirmation summary with doctor/fee/date, the doctor list, slot labels)
+    must have no STEP_GOALS entry, so generate_step_prompt structurally cannot write it.
+    A hallucinated fee or appointment time reaching a patient is the failure this prevents."""
+    from app import nlu_client as nc
+    for data_bearing_step in ("confirming", "choosing_doctor", "choosing_slot", "choosing_specialty", "choosing_sort"):
+        check(data_bearing_step not in nc.STEP_GOALS, f"{data_bearing_step} must not be model-phrasable — it carries booking data")
+
+    # And the phrasing prompt itself must forbid inventing that data, belt-and-braces.
+    lowered = nc.STEP_PROMPT_SYSTEM.lower()
+    check("never invent" in lowered, "phrasing prompt should explicitly forbid inventing details")
+
+
+def test_phrase_falls_back_to_template_when_model_unavailable():
+    """Phrasing must never be load-bearing: if the model is unavailable, slow, or errors,
+    the patient gets exactly the message the bot has always sent. This is also why the
+    existing template-asserting tests still pass — in tests the key is "test", so
+    _query_llm_text returns None and every _phrase call lands on its template."""
+    import asyncio
+    from app import nlu_client as nc
+
+    context = {"lang": "en", "city": "Kishanganj"}
+    expected = i18n.t("symptom_ask", "en")
+
+    original = nc.generate_step_prompt
+    try:
+        async def model_unavailable(client, step, lang, known=None):
+            return None
+        nc.generate_step_prompt = model_unavailable
+        got = asyncio.run(conversation._phrase(object(), "awaiting_symptom", context, "symptom_ask"))
+        check(got == expected, f"unavailable model should fall back to the template, got {got!r}")
+
+        async def model_raises(client, step, lang, known=None):
+            raise RuntimeError("simulated model outage")
+        nc.generate_step_prompt = model_raises
+        got = asyncio.run(conversation._phrase(object(), "awaiting_symptom", context, "symptom_ask"))
+        check(got == expected, f"a raising model must not break the reply, got {got!r}")
+
+        async def model_works(client, step, lang, known=None):
+            return "Aapko kya ho raha hai?"
+        nc.generate_step_prompt = model_works
+        got = asyncio.run(conversation._phrase(object(), "awaiting_symptom", context, "symptom_ask"))
+        check(got == "Aapko kya ho raha hai?", f"a working model's wording should be used, got {got!r}")
+    finally:
+        nc.generate_step_prompt = original
+
+
 def test_failed_hot_swap_clears_stale_doctor_and_reprompts():
     """A patient at choosing_slot (an existing doctor already selected) names a DIFFERENT
     doctor who resolves to zero matches. Before this fix: search_doctor_query and the old
