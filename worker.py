@@ -30,6 +30,7 @@ async def handle_job(client: httpx.AsyncClient, job: dict) -> None:
         job.get("sender_name"),
         job.get("input_type") or "text",
         job.get("input_value") or "",
+        message_id,
     )
 
     if message_id:

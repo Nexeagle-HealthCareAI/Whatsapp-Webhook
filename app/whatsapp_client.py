@@ -21,7 +21,11 @@ async def _send(client: httpx.AsyncClient, payload: dict) -> httpx.Response:
         headers={"Authorization": f"Bearer {settings.whatsapp_token}"},
         json=payload,
     )
-    logger.info("WhatsApp send to %s -> %s", payload.get("to"), response.status_code)
+    logger.info(
+        "WhatsApp send to %s -> %s",
+        payload.get("to") or f"msg:{payload.get('message_id')}",
+        response.status_code,
+    )
     if response.status_code >= 400:
         logger.error("WhatsApp send failed: %s", response.text)
     return response
@@ -31,6 +35,22 @@ async def send_text(client: httpx.AsyncClient, to: str, body: str) -> None:
     await _send(
         client,
         {"messaging_product": "whatsapp", "to": to, "text": {"body": body}},
+    )
+
+
+async def send_typing_indicator(client: httpx.AsyncClient, message_id: str) -> None:
+    """Marks the inbound message read and shows "typing…" to the sender — one combined
+    call (per Meta's Cloud API), not two. Meta dismisses the indicator once we actually
+    reply or after 25s, whichever comes first. Best-effort: a failure here shouldn't stop
+    the reply itself, so callers should swallow exceptions from this rather than propagate."""
+    await _send(
+        client,
+        {
+            "messaging_product": "whatsapp",
+            "status": "read",
+            "message_id": message_id,
+            "typing_indicator": {"type": "text"},
+        },
     )
 
 

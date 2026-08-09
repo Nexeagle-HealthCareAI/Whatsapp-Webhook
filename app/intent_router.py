@@ -16,6 +16,44 @@ REQUIRED_ENTITIES = {
     "ask_pricing": [("doctor_name", "specialty")],
 }
 
+# Per-language follow-up copy. Keyed the same way as app/i18n.py (en/hi/hg/bn) so this stays
+# consistent with the rest of the bot's language handling — previously these prompts were
+# hardcoded Hinglish regardless of the patient's chosen language.
+_DOCTOR_OR_SPECIALTY_PROMPT = {
+    "en": "Which doctor would you like to see, or which specialty do you need? (e.g. Dr. Avinash or Gynaecologist)",
+    "hi": "आप किस डॉक्टर से मिलना चाहते हैं या किस विशेषज्ञता के लिए परामर्श चाहते हैं? (जैसे: डॉ. अविनाश या स्त्री रोग विशेषज्ञ)",
+    "hg": "Aap kis doctor se milna chahte hain ya kis specialty ke liye consult karna chahte hain? (Jaise: Dr. Avinash ya Gynaecologist)",
+    "bn": "আপনি কোন ডাক্তারের সাথে দেখা করতে চান বা কোন বিশেষত্বের জন্য পরামর্শ করতে চান? (যেমন: ডঃ অবিনাশ বা স্ত্রীরোগ বিশেষজ্ঞ)",
+}
+_DATETIME_PROMPT = {
+    "en": "When would you like the appointment? Please share a date (e.g. today, tomorrow, or a specific date).",
+    "hi": "आप अपॉइंटमेंट कब बुक करना चाहते हैं? कृपया तारीख बताएं (जैसे: आज, कल या कोई खास तारीख)।",
+    "hg": "Aap appointment kab ki book karna chahte hain? Kripya date batayein (jaise: aaj, kal, parso ya koi specific date).",
+    "bn": "আপনি কখন অ্যাপয়েন্টমেন্ট বুক করতে চান? অনুগ্রহ করে তারিখ জানান (যেমন: আজ, আগামীকাল বা নির্দিষ্ট তারিখ)।",
+}
+_NEW_DOCTOR_PROMPT = {
+    "en": "Which new doctor would you like to select? Please tell us their name.",
+    "hi": "आप किस नए डॉक्टर को चुनना चाहते हैं? कृपया उनका नाम बताएं।",
+    "hg": "Aap kis naye doctor ko select karna chahte hain? Kripya unka naam batayein.",
+    "bn": "আপনি কোন নতুন ডাক্তার নির্বাচন করতে চান? অনুগ্রহ করে তাদের নাম বলুন।",
+}
+_GENERIC_SLOT_PROMPT = {
+    "en": "Could you tell me more about {slot}?",
+    "hi": "कृपया {slot} के बारे में बताएं।",
+    "hg": "Kripya {slot} ke baare mein batayein.",
+    "bn": "অনুগ্রহ করে {slot} সম্পর্কে বলুন।",
+}
+_RESCHEDULE_CLARIFY_PROMPT = {
+    "en": "You already have an appointment on {date}. Would you like to book a new one, or reschedule it?",
+    "hi": "आपकी पहले से ही {date} को एक अपॉइंटमेंट है। क्या आप नई बुक करना चाहते हैं या इसे रीशेड्यूल करना चाहते हैं?",
+    "hg": "Aapki already ek appointment hai {date}. Naya book karna hai ya usko reschedule karna hai?",
+    "bn": "আপনার ইতিমধ্যে {date} তারিখে একটি অ্যাপয়েন্টমেন্ট আছে। আপনি কি নতুন বুক করতে চান নাকি এটি পুনঃনির্ধারণ করতে চান?",
+}
+
+
+def _pick(prompt_map: dict, lang: str | None) -> str:
+    return prompt_map.get(lang or "hg", prompt_map["hg"])
+
 class RoutedResult:
     def __init__(self, action: str, intent: str, entities: dict, followup_prompt: str | None = None):
         self.action = action  # "ask_followup" or "proceed_to_business_logic"
@@ -27,22 +65,24 @@ class RoutedResult:
         return f"<RoutedResult action={self.action} intent={self.intent} entities={self.entities}>"
 
 
-def get_followup_prompt(intent: str, missing_slot) -> str:
-    """Returns a friendly conversational question in Hinglish/Hindi for a missing slot."""
+def get_followup_prompt(intent: str, missing_slot, lang: str | None = None) -> str:
+    """Returns a friendly conversational question for a missing slot, in the patient's
+    chosen language (falls back to Hinglish if lang is unknown, matching this bot's
+    established default tone — see app/i18n.py)."""
     if isinstance(missing_slot, (tuple, list)):
         if "doctor_name" in missing_slot or "specialty" in missing_slot:
-            return "Aap kis doctor se milna chahte hain ya kis specialty ke liye consult karna chahte hain? (Jaise: Dr. Avinash ya Gynaecologist)"
-    
+            return _pick(_DOCTOR_OR_SPECIALTY_PROMPT, lang)
+
     if missing_slot == "datetime":
-        return "Aap appointment kab ki book karna chahte hain? Kripya date aur time batayein (jaise: aaj, kal, parso ya koi specific date)."
-    
+        return _pick(_DATETIME_PROMPT, lang)
+
     if missing_slot == "new_doctor_name":
-        return "Aap kis naye doctor ko select karna chahte hain? Kripya unka naam batayein."
-        
-    return f"Kripya {missing_slot} ke baare mein batayein."
+        return _pick(_NEW_DOCTOR_PROMPT, lang)
+
+    return _pick(_GENERIC_SLOT_PROMPT, lang).format(slot=missing_slot)
 
 
-async def route_intent(wa_id: str, validated_nlu_result: dict, raw_text: str = "") -> RoutedResult:
+async def route_intent(wa_id: str, validated_nlu_result: dict, raw_text: str = "", lang: str | None = None) -> RoutedResult:
     redis = get_redis()
     redis_key = f"nlu:session:{wa_id}"
     
@@ -93,7 +133,7 @@ async def route_intent(wa_id: str, validated_nlu_result: dict, raw_text: str = "
                     action="ask_followup",
                     intent=stored_intent,
                     entities=stored_entities,
-                    followup_prompt=f"Aapki already ek appointment hai {active_date}. Naya book karna hai ya usko reschedule karna hai?"
+                    followup_prompt=_pick(_RESCHEDULE_CLARIFY_PROMPT, lang).format(date=active_date)
                 )
         else:
             # General state merging:
@@ -128,8 +168,8 @@ async def route_intent(wa_id: str, validated_nlu_result: dict, raw_text: str = "
             "updated_at": time.time()
         }
         await redis.set(redis_key, json.dumps(state_to_save), ex=900)  # 15 minutes TTL
-        
-        prompt = get_followup_prompt(current_intent, missing_slot)
+
+        prompt = get_followup_prompt(current_intent, missing_slot, lang)
         return RoutedResult(
             action="ask_followup",
             intent=current_intent,
@@ -168,8 +208,8 @@ async def route_intent(wa_id: str, validated_nlu_result: dict, raw_text: str = "
                 "updated_at": time.time()
             }
             await redis.set(redis_key, json.dumps(state_to_save), ex=900)
-            
-            prompt = f"Aapki already ek appointment hai {active_date_str}. Naya book karna hai ya usko reschedule karna hai?"
+
+            prompt = _pick(_RESCHEDULE_CLARIFY_PROMPT, lang).format(date=active_date_str)
             return RoutedResult(
                 action="ask_followup",
                 intent=current_intent,

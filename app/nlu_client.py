@@ -82,10 +82,13 @@ def normalize_datetime_to_date(text: str) -> str | None:
             
     return None
 
-async def classify_message(text: str) -> dict:
+async def classify_message(client: httpx.AsyncClient, text: str) -> dict:
     """Classifies incoming text messages using configured Primary NLU, with optional configured Fallback NLU.
 
     Enforces schema matching via validate_nlu_response.
+
+    `client` is the caller's shared httpx.AsyncClient (worker.py owns one connection pool for
+    the process) — reusing it avoids a fresh TCP+TLS handshake to Sarvam on every message.
     """
     sarvam_api_key = getattr(settings, "sarvam_api_key", None)
 
@@ -93,7 +96,7 @@ async def classify_message(text: str) -> dict:
     if PRIMARY_NLU["provider"] == "sarvam" and sarvam_api_key and sarvam_api_key != "test":
         try:
             logger.info("Attempting NLU classification using %s for utterance: %r", PRIMARY_NLU["model"], text)
-            result = await _query_sarvam(text, sarvam_api_key, PRIMARY_NLU)
+            result = await _query_sarvam(client, text, sarvam_api_key, PRIMARY_NLU)
             if result:
                 if "entities" in result and "datetime" in result["entities"]:
                     normalized = normalize_datetime_to_date(result["entities"]["datetime"])
@@ -119,7 +122,7 @@ async def classify_message(text: str) -> dict:
         "_had_hallucination": False
     }
 
-async def generate_conversational_response(step: str, context: dict, user_message: str) -> str | None:
+async def generate_conversational_response(client: httpx.AsyncClient, step: str, context: dict, user_message: str) -> str | None:
     """Generates a natural-sounding response using the LLM based on the current step and history context.
 
     Returns the generated response string, or None if the LLM query fails.
@@ -139,13 +142,13 @@ async def generate_conversational_response(step: str, context: dict, user_messag
     # We strip history or metadata from context inside user prompt to keep it short
     user_prompt = f"Patient says: \"{user_message}\"\nNext Step needed: {step}"
     
-    return await _query_llm_text(sys_prompt, user_prompt, PRIMARY_NLU)
+    return await _query_llm_text(client, sys_prompt, user_prompt, PRIMARY_NLU)
 
-async def _query_llm_text(system_prompt: str, user_prompt: str, config: dict) -> str | None:
+async def _query_llm_text(client: httpx.AsyncClient, system_prompt: str, user_prompt: str, config: dict) -> str | None:
     sarvam_api_key = getattr(settings, "sarvam_api_key", None)
     if not sarvam_api_key or sarvam_api_key == "test":
         return None
-        
+
     url = config["endpoint"]
     headers = {
         "api-subscription-key": sarvam_api_key,
@@ -161,18 +164,17 @@ async def _query_llm_text(system_prompt: str, user_prompt: str, config: dict) ->
         "max_tokens": 150,
         "reasoning_effort": None
     }
-    
+
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(url, headers=headers, json=body, timeout=config["timeout"])
-            if resp.status_code == 200:
-                data = resp.json()
-                return data["choices"][0]["message"]["content"].strip()
+        resp = await client.post(url, headers=headers, json=body, timeout=config["timeout"])
+        if resp.status_code == 200:
+            data = resp.json()
+            return data["choices"][0]["message"]["content"].strip()
     except Exception as exc:
         logger.warning("LLM text generation failed: %s", exc)
     return None
 
-async def _query_sarvam(text: str, api_key: str, config: dict, retry: bool = True) -> dict | None:
+async def _query_sarvam(client: httpx.AsyncClient, text: str, api_key: str, config: dict, retry: bool = True) -> dict | None:
     url = config["endpoint"]
     headers = {
         "api-subscription-key": api_key,
@@ -188,25 +190,24 @@ async def _query_sarvam(text: str, api_key: str, config: dict, retry: bool = Tru
         "max_tokens": config["max_tokens"],
         "reasoning_effort": None
     }
-    
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(url, headers=headers, json=body, timeout=config["timeout"])
-        if resp.status_code != 200:
-            logger.warning("Sarvam API returned non-200 status code: %d", resp.status_code)
-            return None
-        
-        try:
-            data = resp.json()
-            content = data["choices"][0]["message"]["content"].strip()
-            return json.loads(content)
-        except (KeyError, ValueError, json.JSONDecodeError) as err:
-            logger.warning("Failed to parse Sarvam AI response as JSON: %s", err)
-            if retry:
-                logger.info("Retrying Sarvam AI call with JSON reminder...")
-                return await _query_sarvam_retry(text, api_key, config)
-            return None
 
-async def _query_sarvam_retry(text: str, api_key: str, config: dict) -> dict | None:
+    resp = await client.post(url, headers=headers, json=body, timeout=config["timeout"])
+    if resp.status_code != 200:
+        logger.warning("Sarvam API returned non-200 status code: %d", resp.status_code)
+        return None
+
+    try:
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"].strip()
+        return json.loads(content)
+    except (KeyError, ValueError, json.JSONDecodeError) as err:
+        logger.warning("Failed to parse Sarvam AI response as JSON: %s", err)
+        if retry:
+            logger.info("Retrying Sarvam AI call with JSON reminder...")
+            return await _query_sarvam_retry(client, text, api_key, config)
+        return None
+
+async def _query_sarvam_retry(client: httpx.AsyncClient, text: str, api_key: str, config: dict) -> dict | None:
     url = config["endpoint"]
     headers = {
         "api-subscription-key": api_key,
@@ -222,13 +223,12 @@ async def _query_sarvam_retry(text: str, api_key: str, config: dict) -> dict | N
         "max_tokens": config["max_tokens"],
         "reasoning_effort": None
     }
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(url, headers=headers, json=body, timeout=config["timeout"])
-        if resp.status_code == 200:
-            try:
-                data = resp.json()
-                content = data["choices"][0]["message"]["content"].strip()
-                return json.loads(content)
-            except Exception:
-                pass
-        return None
+    resp = await client.post(url, headers=headers, json=body, timeout=config["timeout"])
+    if resp.status_code == 200:
+        try:
+            data = resp.json()
+            content = data["choices"][0]["message"]["content"].strip()
+            return json.loads(content)
+        except Exception:
+            pass
+    return None

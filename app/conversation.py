@@ -151,7 +151,16 @@ async def handle_message(
     sender_name: str | None,
     input_type: str,
     input_value: str,
+    message_id: str | None = None,
 ) -> None:
+    if message_id:
+        try:
+            await whatsapp_client.send_typing_indicator(client, message_id)
+        except Exception:
+            # Best-effort UX polish — never let a typing-indicator failure block the
+            # actual reply the patient is waiting on.
+            logger.warning("Failed to send typing indicator for %s", message_id)
+
     state = await db.get_conversation_state(phone)
     current_step = state["current_step"] if state else None
     context = state["context"] if state else {}
@@ -170,7 +179,7 @@ async def handle_message(
     if input_type == "text" and input_value.strip() and has_lang_init and lang:
         try:
             # 1. Classify message using the new NLU client
-            raw_nlu_result = await nlu_client.classify_message(input_value)
+            raw_nlu_result = await nlu_client.classify_message(client, input_value)
             logger.info("NLU Result: %s", raw_nlu_result)
             
             # Log the raw interaction to the database
@@ -194,7 +203,7 @@ async def handle_message(
                 )
             
             # 2. Route intent using intent_router (slot filling, session merge, duplicate booking check)
-            routed = await intent_router.route_intent(phone, raw_nlu_result, input_value)
+            routed = await intent_router.route_intent(phone, raw_nlu_result, input_value, lang)
             logger.info("NLU Router Result: %s", routed)
             
             if routed.action == "ask_followup":
@@ -385,7 +394,7 @@ async def handle_message(
             if not has_entities:
                 if current_step not in ("awaiting_symptom", "awaiting_doctor_name", "awaiting_patient_details"):
                     try:
-                        dynamic_reply = await nlu_client.generate_conversational_response("general_chat", context, input_value)
+                        dynamic_reply = await nlu_client.generate_conversational_response(client, "general_chat", context, input_value)
                         if dynamic_reply:
                             await whatsapp_client.send_text(client, phone, dynamic_reply)
                         else:

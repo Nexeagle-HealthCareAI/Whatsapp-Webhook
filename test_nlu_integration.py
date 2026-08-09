@@ -4,6 +4,8 @@ import sys
 import types
 from unittest.mock import AsyncMock, patch
 
+import httpx
+
 # Stub ODBC database before importing app modules
 _fake = types.ModuleType("aioodbc")
 _fake.Pool = object
@@ -90,7 +92,10 @@ db_mock = MockDB()
 def test_classify_message_wrapper():
     print("\n--- Running classify_message Wrapper Tests ---")
     # Verify classify_message successfully returns validated dictionary
-    res = asyncio.run(nlu_client.classify_message("hello"))
+    async def _run():
+        async with httpx.AsyncClient() as client:
+            return await nlu_client.classify_message(client, "hello")
+    res = asyncio.run(_run())
     check(res["intent"] == "greeting", "classify hello should return greeting")
     check(res["_validated"] is True, "classify output must have _validated = True")
 
@@ -151,7 +156,10 @@ def test_gemini_fallback_simulation():
     try:
         # If Sarvam fails, it should seamlessly fallback to Gemini (if set up) or hard fallback
         # Let's verify it returns successfully and falls back
-        res = asyncio.run(nlu_client.classify_message("hello"))
+        async def _run():
+            async with httpx.AsyncClient() as client:
+                return await nlu_client.classify_message(client, "hello")
+        res = asyncio.run(_run())
         check(res["intent"] in ("greeting", "out_of_scope"), "Fallback classification should return valid response")
     finally:
         settings.sarvam_api_key = original_api_key

@@ -907,7 +907,7 @@ def test_wit_nlu_integration():
     
     # Mock NLU results
     mock_nlu_val = {"intent": "unknown", "confidence": "low", "entities": {}}
-    async def mock_classify(text):
+    async def mock_classify(client, text):
         return mock_nlu_val
         
     conversation.nlu_client.classify_message = mock_classify
