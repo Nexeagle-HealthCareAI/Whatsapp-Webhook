@@ -190,6 +190,45 @@ def test_live_time_of_day_extraction():
     res = asyncio.run(_run("is Dr. Sen available tomorrow evening?"))
     check(res["entities"].get("time_of_day") == "Evening", f"'tomorrow evening' should extract time_of_day=Evening, got {res}")
 
+def test_stale_session_discarded_on_step_mismatch():
+    print("\n--- Running Stale Session Discard Tests (dual-memory desync fix) ---")
+    # Reproduces the concrete bug: a follow-up question gets saved under one SQL step, then
+    # the SQL step machine moves on WITHOUT going through route_intent again (e.g. a button
+    # tap, which bypasses NLU entirely — see the hot-swap-style desync analysis). The stale
+    # session must not resurface and hijack a later, unrelated turn just because its
+    # 15-minute TTL hasn't expired yet.
+    db_mock.has_active_appt = False
+    wa_id = "user_stale_1"
+
+    incomplete = {"intent": "book_appointment", "confidence": "high", "entities": {"datetime": "kal"}}
+    routed1 = asyncio.run(intent_router.route_intent(wa_id, incomplete, "kal appointment chahiye", "en", "choosing_search_mode"))
+    check(routed1.action == "ask_followup", "incomplete booking should ask a follow-up")
+
+    # SQL step has since moved on (e.g. to "confirming") to a DIFFERENT step than the one
+    # the session was saved under — an unrelated, low-confidence message arrives there.
+    unrelated = {"intent": "out_of_scope", "confidence": "low", "entities": {}}
+    routed2 = asyncio.run(intent_router.route_intent(wa_id, unrelated, "haan sahi hai", "en", "confirming"))
+    check(routed2.intent != "book_appointment", f"stale session from a different step must not hijack this turn, got intent={routed2.intent!r}")
+    check("datetime" not in routed2.entities, "stale datetime from the abandoned session must not leak into this turn")
+
+def test_legitimate_multi_turn_still_merges_with_matching_step():
+    print("\n--- Running Legitimate Same-Step Multi-Turn Test ---")
+    # The fix must not break the real case: slot-filling across turns where the SQL step
+    # genuinely hasn't moved (the patient is just answering the router's own question).
+    db_mock.has_active_appt = False
+    wa_id = "user_stale_2"
+    step = "choosing_search_mode"
+
+    incomplete = {"intent": "book_appointment", "confidence": "high", "entities": {"datetime": "kal"}}
+    routed1 = asyncio.run(intent_router.route_intent(wa_id, incomplete, "kal appointment chahiye", "en", step))
+    check(routed1.action == "ask_followup", "turn 1 should ask for the missing doctor/specialty")
+
+    answer = {"intent": "check_availability", "confidence": "low", "entities": {"specialty": "gyno"}}
+    routed2 = asyncio.run(intent_router.route_intent(wa_id, answer, "gyno", "en", step))
+    check(routed2.action == "proceed_to_business_logic", "same-step follow-up answer should complete the booking")
+    check(routed2.entities.get("datetime") == "kal", "datetime from turn 1 must be preserved when the step hasn't moved")
+    check(routed2.entities.get("specialty") == "gyno", "specialty from turn 2 must be merged in")
+
 def test_gemini_fallback_simulation():
     print("\n--- Running Gemini Fallback Simulation Tests ---")
     original_api_key = settings.sarvam_api_key
@@ -216,6 +255,8 @@ if __name__ == "__main__":
     test_multi_turn_slot_filling()
     test_booking_vs_reschedule_ambiguity()
     test_confidence_gate_on_zero_slot_intents()
+    test_stale_session_discarded_on_step_mismatch()
+    test_legitimate_multi_turn_still_merges_with_matching_step()
     test_live_time_of_day_extraction()
     test_gemini_fallback_simulation()
 

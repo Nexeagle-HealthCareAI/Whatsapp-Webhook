@@ -121,10 +121,13 @@ def get_followup_prompt(intent: str, missing_slot, lang: str | None = None) -> s
     return _pick(_GENERIC_SLOT_PROMPT, lang).format(slot=missing_slot)
 
 
-async def route_intent(wa_id: str, validated_nlu_result: dict, raw_text: str = "", lang: str | None = None) -> RoutedResult:
+async def route_intent(
+    wa_id: str, validated_nlu_result: dict, raw_text: str = "", lang: str | None = None,
+    current_step: str | None = None,
+) -> RoutedResult:
     redis = get_redis()
     redis_key = f"nlu:session:{wa_id}"
-    
+
     # 1. Load existing session state
     stored_state = None
     stored_str = await redis.get(redis_key)
@@ -133,6 +136,26 @@ async def route_intent(wa_id: str, validated_nlu_result: dict, raw_text: str = "
             stored_state = json.loads(stored_str)
         except Exception as e:
             logger.error("Failed to parse NLU session state: %s", e)
+
+    # This Redis session and the SQL conversation_state (app/db.py) are two independent
+    # stores of "what's going on" — nothing keeps them in sync. A follow-up question saved
+    # here doesn't move conversation_state, so a button/list tap (which never reaches this
+    # function at all — classify_message only runs on input_type=="text") can let the SQL
+    # step machine move on to a completely different step while this session sits untouched
+    # until its 15-minute TTL. A LATER unrelated low-confidence message can then merge with
+    # that stale entry and hijack a turn meant for whatever step the user has since reached
+    # (see the phase-3-fix-4 discussion — this bug was traced concretely, not assumed).
+    #
+    # step_at_save is this session's fingerprint of the SQL step it was created under. If
+    # the step has since moved on without this function's involvement, the session no
+    # longer describes "what's going on" and must not be merged into this turn.
+    if stored_state and stored_state.get("step_at_save") != current_step:
+        logger.info(
+            "Discarding stale NLU session for %s: saved under step=%r, now at step=%r",
+            wa_id, stored_state.get("step_at_save"), current_step,
+        )
+        stored_state = None
+        await redis.delete(redis_key)
 
     new_intent = validated_nlu_result.get("intent", "out_of_scope")
     new_confidence = validated_nlu_result.get("confidence", "low")
@@ -204,6 +227,7 @@ async def route_intent(wa_id: str, validated_nlu_result: dict, raw_text: str = "
             "intent": current_intent,
             "entities": current_entities,
             "awaiting_clarification": False,
+            "step_at_save": current_step,
             "updated_at": time.time()
         }
         await redis.set(redis_key, json.dumps(state_to_save), ex=900)  # 15 minutes TTL
@@ -244,6 +268,7 @@ async def route_intent(wa_id: str, validated_nlu_result: dict, raw_text: str = "
                 "entities": current_entities,
                 "awaiting_clarification": True,
                 "active_appt_date": active_date_str,
+                "step_at_save": current_step,
                 "updated_at": time.time()
             }
             await redis.set(redis_key, json.dumps(state_to_save), ex=900)

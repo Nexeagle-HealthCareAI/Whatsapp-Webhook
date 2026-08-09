@@ -306,7 +306,7 @@ async def handle_message(
                 )
             
             # 2. Route intent using intent_router (slot filling, session merge, duplicate booking check)
-            routed = await intent_router.route_intent(phone, raw_nlu_result, input_value, lang)
+            routed = await intent_router.route_intent(phone, raw_nlu_result, input_value, lang, current_step)
             logger.info("NLU Router Result: %s", routed)
             
             if routed.action == "ask_followup":
