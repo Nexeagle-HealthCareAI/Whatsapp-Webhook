@@ -1187,6 +1187,86 @@ def test_previously_dropped_intents_now_handled():
         conversation.city_index.get_index = original_get_index
 
 
+def test_failed_hot_swap_clears_stale_doctor_and_reprompts():
+    """A patient at choosing_slot (an existing doctor already selected) names a DIFFERENT
+    doctor who resolves to zero matches. Before this fix: search_doctor_query and the old
+    doctor's id/name/fee/hospital fields stayed stale in context forever, and the patient
+    got a dead-end "not found" message with no prompt for what to do next — caught during
+    shadow-mode testing (_shadow_clipboard's search_doctor_query handling), fixed to mirror
+    _handle_awaiting_doctor_name's own "not found" branch, which already cleaned up and
+    re-prompted."""
+    import asyncio
+    mock_client = object()
+
+    class MockDB:
+        def __init__(self):
+            self.state = {}
+        async def get_conversation_state(self, phone):
+            return self.state.get(phone)
+        async def save_conversation_state(self, phone, step, context):
+            self.state[phone] = {"current_step": step, "context": context}
+        async def clear_conversation_state(self, phone):
+            self.state[phone] = None
+        async def log_nlu_interaction(self, *args, **kwargs):
+            pass
+        async def update_last_nlu_log_correctness(self, *args, **kwargs):
+            pass
+
+    db_mock = MockDB()
+    original_db = conversation.db
+    conversation.db = db_mock
+
+    sent_texts = []
+    sent_buttons = []
+    original_send_text = conversation.whatsapp_client.send_text
+    original_send_buttons = conversation.whatsapp_client.send_buttons
+    async def mock_send_text(client, to, text):
+        sent_texts.append(text)
+    async def mock_send_buttons(client, to, text, buttons):
+        sent_buttons.append((text, buttons))
+    conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_buttons = mock_send_buttons
+
+    # datetime included so intent_router's REQUIRED_ENTITIES check for book_appointment
+    # (doctor_name/specialty AND datetime) is satisfied and reaches proceed_to_business_logic
+    # — otherwise it stops at ask_followup before handle_message's hot-swap check ever runs.
+    mock_nlu_val = {"intent": "book_appointment", "confidence": "high", "entities": {"doctor_name": "Nobody Matching", "datetime": "2026-08-11"}}
+    async def mock_classify(client, text):
+        return mock_nlu_val
+    original_classify = conversation.nlu_client.classify_message
+    conversation.nlu_client.classify_message = mock_classify
+
+    # No doctor in the pool matches "Nobody Matching" -> resolves to zero.
+    original_get_all_doctors = conversation.city_index.get_all_doctors
+    async def mock_get_all_doctors(force_refresh=False):
+        return [{"doctorId": "old_id", "fullName": "Dr. Old Doctor", "city": "Kishanganj"}]
+    conversation.city_index.get_all_doctors = mock_get_all_doctors
+
+    try:
+        asyncio.run(db_mock.save_conversation_state("hs1", "choosing_slot", {
+            "lang": "en", "city": "Kishanganj",
+            "doctor_id": "old_id", "doctor_name": "Dr. Old Doctor", "doctor_fee": 300,
+            "hospital_name": "Old Hospital", "hospital_address": "Somewhere",
+            "hospital_city": "Kishanganj", "hospital_lat": 26.1, "hospital_lng": 87.9,
+        }))
+        asyncio.run(conversation.handle_message(mock_client, "hs1", "User", "text", "nahi Nobody Matching se dikhao"))
+
+        check(any("not" in t.lower() or "nahi" in t.lower() for t in sent_texts), "should tell the patient the new name wasn't found")
+        check(len(sent_buttons) == 1, "should re-prompt with search-mode options, not leave a dead end")
+
+        state = asyncio.run(db_mock.get_conversation_state("hs1"))
+        check(state["current_step"] == "choosing_search_mode", f"should land on choosing_search_mode, got {state['current_step']!r}")
+        ctx = state["context"]
+        for stale_key in ("doctor_id", "doctor_name", "doctor_fee", "hospital_name", "hospital_address", "hospital_city", "hospital_lat", "hospital_lng", "search_doctor_query"):
+            check(stale_key not in ctx, f"{stale_key} should be cleared after a failed hot-swap, still present: {ctx.get(stale_key)!r}")
+    finally:
+        conversation.db = original_db
+        conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_buttons = original_send_buttons
+        conversation.nlu_client.classify_message = original_classify
+        conversation.city_index.get_all_doctors = original_get_all_doctors
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:

@@ -341,6 +341,19 @@ async def handle_message(
                 return
             else:
                 await whatsapp_client.send_text(client, phone, t("search_doctor_not_found", context.get("lang"), query=doc_name))
+                # Mirrors _handle_awaiting_doctor_name's own "not found" branch below, which
+                # already does this. This branch didn't: a failed hot-swap left
+                # search_doctor_query AND the previously chosen doctor's id/name/fee/
+                # hospital fields stale in context (caught during shadow-mode testing —
+                # see _shadow_clipboard's search_doctor_query handling), and the patient
+                # got a dead-end "not found" message with no prompt for what to do next.
+                context.pop("search_doctor_query", None)
+                for stale_key in (
+                    "doctor_id", "doctor_name", "doctor_fee",
+                    "hospital_name", "hospital_address", "hospital_city", "hospital_lat", "hospital_lng",
+                ):
+                    context.pop(stale_key, None)
+                await _send_search_mode_prompt(client, phone, context)
                 return
 
     # Prioritize NLU global intents / shortcuts if confidence is high
