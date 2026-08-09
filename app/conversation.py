@@ -192,15 +192,22 @@ def _shadow_clipboard(context: dict) -> dict:
     elif context.get("city"):
         booking_slots.fill(slots, "location", context["city"], raw=context.get("location_text"), source="legacy")
 
-    if context.get("doctor_id"):
+    if context.get("doctor_options"):
+        booking_slots.mark_ambiguous(
+            slots, "doctor", context["doctor_options"], raw=context.get("search_doctor_query")
+        )
+    elif context.get("search_doctor_query"):
+        # An unresolved search is in flight — leave "doctor" blank rather than trust
+        # doctor_id. The legacy hot-swap path (see handle_message) doesn't reliably
+        # clear a stale doctor_id when a re-search comes up empty, unlike
+        # _handle_awaiting_doctor_name's equivalent failure path, which does. Trusting
+        # doctor_id here would silently paper over that gap instead of surfacing it.
+        pass
+    elif context.get("doctor_id"):
         booking_slots.fill(
             slots, "doctor",
             {"id": context["doctor_id"], "fullName": context.get("doctor_name")},
-            raw=context.get("search_doctor_query"), source="legacy",
-        )
-    elif context.get("doctor_options"):
-        booking_slots.mark_ambiguous(
-            slots, "doctor", context["doctor_options"], raw=context.get("search_doctor_query")
+            source="legacy",
         )
 
     if context.get("preferred_date"):
