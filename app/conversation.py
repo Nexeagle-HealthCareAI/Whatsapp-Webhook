@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from app import city_index, db, hms_client, i18n, symptom_client, whatsapp_client
+from app import booking_slots, city_index, db, hms_client, i18n, symptom_client, whatsapp_client
 from app.config import settings
 from app.geo import haversine_km
 from app.hms_client import HmsApiError
@@ -145,6 +145,99 @@ def _detect_language(text: str) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------------------
+# SHADOW MODE — temporary, remove together with the current_step dispatch below.
+#
+# Builds a booking_slots clipboard from the live conversation context and logs what it
+# WOULD have asked for next, alongside what the step machine actually did. Nothing here
+# affects a reply: it is a read of context that already exists, so the two can be compared
+# on real traffic before the clipboard is given control.
+# ---------------------------------------------------------------------------------------
+
+# Which current_step values are an acceptable realisation of a given clipboard action.
+# Sets, not single values, because the existing flow spreads one decision over several
+# steps: six different steps all exist to narrow down to a doctor, and the slot picker
+# asks for date and shift together in one message.
+_SHADOW_EXPECTED_STEPS = {
+    ("ask", "lang"): {"choosing_language", None},
+    ("disambiguate", "lang"): {"confirming_language"},
+    ("ask", "location"): {"choosing_location"},
+    ("disambiguate", "location"): {"choosing_location"},
+    ("ask", "doctor"): {
+        "choosing_search_mode", "awaiting_symptom", "awaiting_doctor_name",
+        "choosing_specialty_group", "choosing_specialty", "choosing_sort",
+        "confirming_wider_search", "choosing_doctor",
+    },
+    ("disambiguate", "doctor"): {"choosing_doctor"},
+    ("ask", "date"): {"choosing_slot"},
+    ("ask", "shift"): {"choosing_slot"},
+    ("ask", "patient"): {"awaiting_patient_details"},
+    ("confirm", None): {"confirming"},
+}
+
+
+def _shadow_clipboard(context: dict) -> dict:
+    """Legacy context dict -> booking_slots clipboard. Read-only; never mutates context."""
+    slots = booking_slots.empty()
+
+    if context.get("lang"):
+        booking_slots.fill(slots, "lang", context["lang"], source="legacy")
+
+    if context.get("patient_lat") is not None and context.get("patient_lng") is not None:
+        booking_slots.fill(
+            slots, "location",
+            {"lat": context["patient_lat"], "lng": context["patient_lng"], "city": context.get("city")},
+            raw=context.get("location_text"), source="legacy",
+        )
+    elif context.get("city"):
+        booking_slots.fill(slots, "location", context["city"], raw=context.get("location_text"), source="legacy")
+
+    if context.get("doctor_id"):
+        booking_slots.fill(
+            slots, "doctor",
+            {"id": context["doctor_id"], "fullName": context.get("doctor_name")},
+            raw=context.get("search_doctor_query"), source="legacy",
+        )
+    elif context.get("doctor_options"):
+        booking_slots.mark_ambiguous(
+            slots, "doctor", context["doctor_options"], raw=context.get("search_doctor_query")
+        )
+
+    if context.get("preferred_date"):
+        booking_slots.fill(slots, "date", context["preferred_date"], source="legacy")
+    if context.get("shift_label"):
+        booking_slots.fill(slots, "shift", context["shift_label"], source="legacy")
+
+    if context.get("patient_display_name"):
+        booking_slots.fill(
+            slots, "patient",
+            {
+                "name": context["patient_display_name"],
+                "age": context.get("patient_age"),
+                "gender": context.get("patient_gender"),
+                "guardian": context.get("patient_guardian"),
+            },
+            source="legacy",
+        )
+
+    return slots
+
+
+def _log_shadow(phone: str, current_step: str | None, context: dict) -> None:
+    """Never raises — a shadow-comparison bug must not break a live conversation."""
+    try:
+        slots = _shadow_clipboard(context)
+        action = booking_slots.next_action(slots)
+        expected = _SHADOW_EXPECTED_STEPS.get(action, set())
+        agrees = current_step in expected
+        logger.info(
+            "SHADOW phone=%s step=%s clipboard=%s known=%s agrees=%s",
+            phone, current_step, action, sorted(booking_slots.known_summary(slots)), agrees,
+        )
+    except Exception:
+        logger.exception("SHADOW comparison failed for %s (ignored)", phone)
+
+
 async def handle_message(
     client: httpx.AsyncClient,
     phone: str,
@@ -164,6 +257,7 @@ async def handle_message(
     state = await db.get_conversation_state(phone)
     current_step = state["current_step"] if state else None
     context = state["context"] if state else {}
+    _log_shadow(phone, current_step, context)  # SHADOW MODE — remove in phase 3
     lang = context.get("lang")
     has_lang_init = lang is not None
     if input_type == "text" and input_value.strip() and has_lang_init:
