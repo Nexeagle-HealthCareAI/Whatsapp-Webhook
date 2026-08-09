@@ -1259,6 +1259,30 @@ def test_failed_hot_swap_clears_stale_doctor_and_reprompts():
         ctx = state["context"]
         for stale_key in ("doctor_id", "doctor_name", "doctor_fee", "hospital_name", "hospital_address", "hospital_city", "hospital_lat", "hospital_lng", "search_doctor_query"):
             check(stale_key not in ctx, f"{stale_key} should be cleared after a failed hot-swap, still present: {ctx.get(stale_key)!r}")
+
+        # Same miss, reached via change_selection instead of the hot-swap branch — this
+        # path had the identical bug and now shares _handle_doctor_search_miss.
+        sent_texts.clear()
+        sent_buttons.clear()
+        mock_nlu_val.update({"intent": "change_selection", "entities": {"new_doctor_name": "Nobody Matching"}})
+        asyncio.run(db_mock.save_conversation_state("hs2", "choosing_doctor", {
+            "lang": "en", "city": "Kishanganj",
+            "doctor_id": "old_id", "doctor_name": "Dr. Old Doctor", "doctor_fee": 300,
+        }))
+        asyncio.run(conversation.handle_message(mock_client, "hs2", "User", "text", "Old nahi, Nobody Matching dikhao"))
+        state = asyncio.run(db_mock.get_conversation_state("hs2"))
+        check(state["current_step"] == "choosing_search_mode", f"change_selection miss should also re-prompt, got {state['current_step']!r}")
+        check("doctor_id" not in state["context"], "change_selection miss should also clear the stale doctor")
+
+        # And via a plain book_appointment naming an unfindable doctor from an earlier step.
+        sent_texts.clear()
+        sent_buttons.clear()
+        mock_nlu_val.update({"intent": "book_appointment", "entities": {"doctor_name": "Nobody Matching", "datetime": "2026-08-11"}})
+        asyncio.run(db_mock.save_conversation_state("hs3", "choosing_search_mode", {"lang": "en", "city": "Kishanganj"}))
+        asyncio.run(conversation.handle_message(mock_client, "hs3", "User", "text", "Nobody Matching se kal appointment"))
+        state = asyncio.run(db_mock.get_conversation_state("hs3"))
+        check(state["current_step"] == "choosing_search_mode", f"book_appointment miss should re-prompt, got {state['current_step']!r}")
+        check("search_doctor_query" not in state["context"], "book_appointment miss should clear the abandoned query")
     finally:
         conversation.db = original_db
         conversation.whatsapp_client.send_text = original_send_text

@@ -339,22 +339,8 @@ async def handle_message(
             await _transition_to(phone, "awaiting_doctor_name", context, current_step)
             if await _search_doctors_flow(client, phone, context, "awaiting_doctor_name"):
                 return
-            else:
-                await whatsapp_client.send_text(client, phone, t("search_doctor_not_found", context.get("lang"), query=doc_name))
-                # Mirrors _handle_awaiting_doctor_name's own "not found" branch below, which
-                # already does this. This branch didn't: a failed hot-swap left
-                # search_doctor_query AND the previously chosen doctor's id/name/fee/
-                # hospital fields stale in context (caught during shadow-mode testing —
-                # see _shadow_clipboard's search_doctor_query handling), and the patient
-                # got a dead-end "not found" message with no prompt for what to do next.
-                context.pop("search_doctor_query", None)
-                for stale_key in (
-                    "doctor_id", "doctor_name", "doctor_fee",
-                    "hospital_name", "hospital_address", "hospital_city", "hospital_lat", "hospital_lng",
-                ):
-                    context.pop(stale_key, None)
-                await _send_search_mode_prompt(client, phone, context)
-                return
+            await _handle_doctor_search_miss(client, phone, context, doc_name)
+            return
 
     # Prioritize NLU global intents / shortcuts if confidence is high
     if nlu_result and nlu_result.get("confidence", 0.0) >= 0.7:
@@ -415,9 +401,8 @@ async def handle_message(
                     await _transition_to(phone, "awaiting_doctor_name", new_context, current_step)
                     if await _search_doctors_flow(client, phone, new_context, "awaiting_doctor_name"):
                         return
-                    else:
-                        await whatsapp_client.send_text(client, phone, t("search_doctor_not_found", new_context.get("lang"), query=doc_name))
-                        return
+                    await _handle_doctor_search_miss(client, phone, new_context, doc_name)
+                    return
                 else:
                     if not new_context.get("lang"):
                         await _start(client, phone, new_context)
@@ -537,9 +522,8 @@ async def handle_message(
                 await _transition_to(phone, "awaiting_doctor_name", context, current_step)
                 if await _search_doctors_flow(client, phone, context, "awaiting_doctor_name"):
                     return
-                else:
-                    await whatsapp_client.send_text(client, phone, t("search_doctor_not_found", context.get("lang"), query=doc_name))
-                    return
+                await _handle_doctor_search_miss(client, phone, context, doc_name)
+                return
             elif current_step in ("choosing_doctor", "choosing_slot", "awaiting_doctor_name"):
                 await _transition_to(phone, "awaiting_doctor_name", context, current_step)
                 await whatsapp_client.send_text(client, phone, t("doctor_name_ask", context.get("lang")))
@@ -842,6 +826,37 @@ async def _send_search_mode_prompt(client: httpx.AsyncClient, phone: str, contex
         ],
     )
     await _transition_to(phone, "choosing_search_mode", context, "choosing_location")
+
+
+# Fields _handle_choosing_doctor / _render_doctor_list write when a doctor is selected.
+# All of them describe ONE doctor, so they have to be cleared together — leaving any behind
+# after a failed re-search means context describes a doctor the patient is no longer
+# choosing.
+_DOCTOR_SELECTION_KEYS = (
+    "doctor_id", "doctor_name", "doctor_fee",
+    "hospital_name", "hospital_address", "hospital_city", "hospital_lat", "hospital_lng",
+)
+
+
+async def _handle_doctor_search_miss(
+    client: httpx.AsyncClient, phone: str, context: dict, query: str
+) -> None:
+    """A doctor-name search found nothing: say so, drop the query and any previously
+    selected doctor, and offer a way forward.
+
+    Without the cleanup, an abandoned search leaves search_doctor_query and the old
+    doctor's details stale in context indefinitely (caught in shadow-mode testing — see
+    _shadow_clipboard's search_doctor_query handling). Without the re-prompt, the patient
+    is left at a dead end with no next step. _handle_awaiting_doctor_name's own miss branch
+    already did both; the NLU-driven paths in handle_message each did neither, in three
+    separate places."""
+    await whatsapp_client.send_text(
+        client, phone, t("search_doctor_not_found", context.get("lang"), query=query)
+    )
+    context.pop("search_doctor_query", None)
+    for key in _DOCTOR_SELECTION_KEYS:
+        context.pop(key, None)
+    await _send_search_mode_prompt(client, phone, context)
 
 
 async def _handle_choosing_search_mode(client, phone, input_type, input_value, context) -> None:
@@ -1900,9 +1915,4 @@ async def _handle_awaiting_doctor_name(client, phone, input_type, input_value, c
     context = {**context, "search_doctor_query": input_value.strip()}
     if await _search_doctors_flow(client, phone, context, "awaiting_doctor_name"):
         return
-    else:
-        await whatsapp_client.send_text(
-            client, phone, t("search_doctor_not_found", lang, query=input_value)
-        )
-        context.pop("search_doctor_query", None)
-        await _send_search_mode_prompt(client, phone, context)
+    await _handle_doctor_search_miss(client, phone, context, input_value)
