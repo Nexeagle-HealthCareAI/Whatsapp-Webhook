@@ -323,7 +323,8 @@ async def handle_message(
                 "doctor_name": routed.entities.get("doctor_name") or routed.entities.get("new_doctor_name"),
                 "specialty": routed.entities.get("specialty"),
                 "symptom": routed.entities.get("symptom"),
-                "formatted_date": routed.entities.get("datetime")
+                "formatted_date": routed.entities.get("datetime"),
+                "time_of_day": routed.entities.get("time_of_day"),
             }
         except Exception as exc:
             logger.warning("NLU client parsing or routing failed: %s", exc)
@@ -374,11 +375,17 @@ async def handle_message(
             spec_name = nlu_result.get("specialty")
             sym_name = nlu_result.get("symptom")
             pref_date = nlu_result.get("formatted_date")
-            
+            time_of_day = nlu_result.get("time_of_day")
+
             new_context = {**context}
             if pref_date:
                 new_context["preferred_date"] = pref_date
-                
+            if time_of_day:
+                # Consumed once by _send_slot_options as an auto-select hint, then dropped —
+                # see _pick_matching_slot below. Only useful alongside a date the offered-
+                # slots fetch actually covers (today/tomorrow); harmless no-op otherwise.
+                new_context["time_of_day_hint"] = time_of_day
+
             if doc_name:
                 new_context["search_doctor_query"] = doc_name
                 new_context.pop("pending_specialty", None)
@@ -1369,6 +1376,43 @@ async def _get_offered_slots(doctor_id: str, lang: str | None) -> list[dict]:
     return slots[:3]
 
 
+def _pick_matching_slot(slots: list[dict], preferred_date: str | None, time_of_day: str | None) -> dict | None:
+    """Auto-select a slot already implied by what the patient said (e.g. "kal subah") so
+    they aren't asked to re-pick a shift they already named. Deliberately conservative:
+    with no time_of_day there's nothing to match on, and any ambiguity (more than one
+    surviving candidate) falls through to the normal button prompt rather than guessing —
+    this only fires when there's exactly one slot consistent with what was said."""
+    if not time_of_day:
+        return None
+    candidates = [s for s in slots if s["shift_name"] == time_of_day]
+    if preferred_date:
+        candidates = [s for s in candidates if s["date"].isoformat() == preferred_date]
+    return candidates[0] if len(candidates) == 1 else None
+
+
+async def _finalize_slot_selection(client: httpx.AsyncClient, phone: str, context: dict, selected_slot: dict) -> None:
+    lang = context.get("lang")
+    date_label = t("date_today", lang) if selected_slot["is_today"] else t("date_tomorrow", lang)
+    # selected_slot["date"] is a real date object when this comes straight from
+    # _get_offered_slots (the auto-match path in _send_slot_options), but an ISO string
+    # when it comes from context["offered_slots"] (the manual-tap path in
+    # _handle_choosing_slot, where it was already serialised for context_json). context
+    # itself must only ever hold JSON-safe values, so normalise to a string here rather
+    # than at each call site.
+    raw_date = selected_slot["date"]
+    preferred_date = raw_date.isoformat() if hasattr(raw_date, "isoformat") else raw_date
+    context = {
+        **context,
+        "preferred_date": preferred_date,
+        "date_label": date_label,
+        "shift_label": selected_slot["shift_name"],
+    }
+    context.pop("offered_slots", None)
+    context.pop("time_of_day_hint", None)
+
+    await _send_patient_details_flow(client, phone, context)
+
+
 async def _send_slot_options(client: httpx.AsyncClient, phone: str, context: dict) -> None:
     lang = context.get("lang")
     doctor_id = context["doctor_id"]
@@ -1380,6 +1424,12 @@ async def _send_slot_options(client: httpx.AsyncClient, phone: str, context: dic
             [("change_doctor", t("change_doctor_btn", lang))],
         )
         await _transition_to(phone, "choosing_slot", context, "choosing_doctor")
+        return
+
+    time_of_day_hint = context.get("time_of_day_hint")
+    matched = _pick_matching_slot(slots, context.get("preferred_date"), time_of_day_hint)
+    if matched:
+        await _finalize_slot_selection(client, phone, context, matched)
         return
 
     buttons = [(s["button_id"], s["label"]) for s in slots]
@@ -1400,14 +1450,11 @@ async def _send_slot_options(client: httpx.AsyncClient, phone: str, context: dic
         buttons,
     )
 
-    await _transition_to(
-        phone, "choosing_slot",
-        {
-            **context,
-            "offered_slots": offered_slots_data,
-        },
-        "choosing_doctor"
-    )
+    next_context = {**context, "offered_slots": offered_slots_data}
+    # A hint that didn't produce a unique match (ambiguous, or no offered slot matched it)
+    # shouldn't linger and silently auto-pick on some later, unrelated re-render.
+    next_context.pop("time_of_day_hint", None)
+    await _transition_to(phone, "choosing_slot", next_context, "choosing_doctor")
 
 
 async def _handle_choosing_slot(client, phone, input_type, input_value, context) -> None:
@@ -1451,16 +1498,7 @@ async def _handle_choosing_slot(client, phone, input_type, input_value, context)
         )
         return
 
-    date_label = t("date_today", lang) if selected_slot["is_today"] else t("date_tomorrow", lang)
-    context = {
-        **context,
-        "preferred_date": selected_slot["date"],
-        "date_label": date_label,
-        "shift_label": selected_slot["shift_name"],
-    }
-    context.pop("offered_slots", None)
-
-    await _send_patient_details_flow(client, phone, context)
+    await _finalize_slot_selection(client, phone, context, selected_slot)
 
 
 def _clinic_line(context: dict, lang: str | None) -> str:

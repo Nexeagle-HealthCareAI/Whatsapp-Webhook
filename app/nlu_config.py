@@ -29,6 +29,7 @@ VALID_ENTITIES = [
     "location",
     "symptom",
     "datetime",
+    "time_of_day",
 ]
 
 SYSTEM_PROMPT = """You are the NLU (natural language understanding) layer for a medical appointment booking WhatsApp bot. Users write in Hindi (Devanagari), Bengali script, Hinglish, Benglish, and English — often mixing languages within a single message.
@@ -40,8 +41,8 @@ Read the user's message and return ONLY a valid JSON object — no markdown, no 
 ## Intents
 
 - greeting — user is saying hello/hi/namaste
-- book_appointment — wants to book a new appointment. Entities: doctor_name, datetime
-- check_availability — asking if a doctor/specialty is available, or about doctors in a location. Entities: doctor_name, specialty, location, datetime
+- book_appointment — wants to book a new appointment. Entities: doctor_name, datetime, time_of_day
+- check_availability — asking if a doctor/specialty is available, or about doctors in a location. Entities: doctor_name, specialty, location, datetime, time_of_day
 - cancel_appointment — wants to cancel an existing appointment. Entities: datetime
 - ask_pricing — asking about cost/fees. Entities: doctor_name, specialty
 - change_selection — wants to switch from one doctor to another (e.g. "not X, show me Y"). Entities: old_doctor_name, new_doctor_name
@@ -56,7 +57,8 @@ Read the user's message and return ONLY a valid JSON object — no markdown, no 
 - specialty — a medical specialty (e.g. gyno, orthopedic, dentist)
 - location — a place name (city, area, pincode)
 - symptom — a described symptom or complaint, in the user's own words
-- datetime — any date/time reference (today, kal, parso, Friday, etc.) — extract exactly as the user wrote it, don't normalize
+- datetime — any date reference (today, kal, parso, Friday, etc.) — extract exactly as the user wrote it, don't normalize
+- time_of_day — a shift qualifier for when in the day (subah, dopahar, shaam, raat, morning, afternoon, evening, night) — ONLY when the user actually said one. Extract it as a SEPARATE key from datetime, never merged into the datetime string — "kal subah" is {"datetime": "kal", "time_of_day": "subah"}, not {"datetime": "kal subah"}
 
 ## Scope
 This bot ONLY handles medical appointment booking with doctors — booking, checking availability, cancelling, rescheduling, pricing, and symptom intake for that purpose. It does not handle anything else: movie tickets, restaurant/table bookings, flight/train/bus bookings, cab bookings, general knowledge questions, weather, small talk beyond a greeting, or any other domain. If the message asks for or discusses something outside doctor-appointment booking, classify it as "out_of_scope" — do not try to be helpful about the other domain, do not answer the question, do not apologize or explain within this JSON output.
@@ -78,6 +80,12 @@ User: "namaskar"
 
 User: "mujhe kal appointment chahiye"
 {"intent": "book_appointment", "entities": {"datetime": "kal"}, "confidence": "high"}
+
+User: "kal subah appointment chahiye"
+{"intent": "book_appointment", "entities": {"datetime": "kal", "time_of_day": "subah"}, "confidence": "high"}
+
+User: "is Dr. Sen available tomorrow evening?"
+{"intent": "check_availability", "entities": {"doctor_name": "Sen", "datetime": "tomorrow", "time_of_day": "evening"}, "confidence": "high"}
 
 User: "book an appointment with Dr. Amit Sharma"
 {"intent": "book_appointment", "entities": {"doctor_name": "Amit Sharma"}, "confidence": "high"}

@@ -173,6 +173,23 @@ def test_confidence_gate_on_zero_slot_intents():
     check(routed.action == "proceed_to_business_logic", "slot-filled book_appointment proceeds")
     check(routed.confidence >= 0.7, "slot-filling safety net overrides a low per-message confidence")
 
+def test_live_time_of_day_extraction():
+    print("\n--- Running Live time_of_day Extraction Tests (real Sarvam call) ---")
+    # "kal subah" losing "subah" was the original bug: normalize_datetime_to_date collapsed
+    # the whole string to a bare ISO date. Verifies the fix against the real model, not just
+    # the local normalization logic — nlu_config.py's prompt has to actually get Sarvam to
+    # emit time_of_day as a separate key for this to work end to end.
+    async def _run(text):
+        async with httpx.AsyncClient() as client:
+            return await nlu_client.classify_message(client, text)
+
+    res = asyncio.run(_run("kal subah Dr Sharma se appointment chahiye"))
+    check(res["entities"].get("time_of_day") == "Morning", f"'kal subah' should extract time_of_day=Morning, got {res}")
+    check(res["entities"].get("datetime"), "datetime should still be present alongside time_of_day")
+
+    res = asyncio.run(_run("is Dr. Sen available tomorrow evening?"))
+    check(res["entities"].get("time_of_day") == "Evening", f"'tomorrow evening' should extract time_of_day=Evening, got {res}")
+
 def test_gemini_fallback_simulation():
     print("\n--- Running Gemini Fallback Simulation Tests ---")
     original_api_key = settings.sarvam_api_key
@@ -199,6 +216,7 @@ if __name__ == "__main__":
     test_multi_turn_slot_filling()
     test_booking_vs_reschedule_ambiguity()
     test_confidence_gate_on_zero_slot_intents()
+    test_live_time_of_day_extraction()
     test_gemini_fallback_simulation()
 
     intent_router.db = original_db

@@ -82,6 +82,27 @@ def normalize_datetime_to_date(text: str) -> str | None:
             
     return None
 
+# Canonical values match app/conversation.py's _SHIFT_FALLBACK and the shift_name values
+# hms_client actually returns ("Morning"/"Afternoon"/"Evening") — so a normalized
+# time_of_day can be matched directly against an offered slot's shift_name with no further
+# translation at the call site.
+_TIME_OF_DAY_MAP = {
+    "subah": "Morning", "savere": "Morning", "morning": "Morning", "sunrise": "Morning",
+    "dopahar": "Afternoon", "dopeher": "Afternoon", "afternoon": "Afternoon", "noon": "Afternoon",
+    "shaam": "Evening", "sham": "Evening", "evening": "Evening",
+    "raat": "Evening", "night": "Evening",
+}
+
+
+def normalize_time_of_day(text: str) -> str | None:
+    if not text:
+        return None
+    normalized = text.strip().lower()
+    for keyword, canonical in _TIME_OF_DAY_MAP.items():
+        if keyword in normalized:
+            return canonical
+    return None
+
 async def classify_message(client: httpx.AsyncClient, text: str) -> dict:
     """Classifies incoming text messages using configured Primary NLU, with optional configured Fallback NLU.
 
@@ -97,11 +118,29 @@ async def classify_message(client: httpx.AsyncClient, text: str) -> dict:
         try:
             logger.info("Attempting NLU classification using %s for utterance: %r", PRIMARY_NLU["model"], text)
             result = await _query_sarvam(client, text, sarvam_api_key, PRIMARY_NLU)
-            if result:
-                if "entities" in result and "datetime" in result["entities"]:
-                    normalized = normalize_datetime_to_date(result["entities"]["datetime"])
-                    if normalized:
-                        result["entities"]["datetime"] = normalized
+            if result and "entities" in result:
+                entities = result["entities"]
+                if "datetime" in entities:
+                    raw_datetime = entities["datetime"]
+                    # Sarvam may still fuse a shift qualifier into the datetime string
+                    # despite the prompt asking for it separately (e.g. "kal subah" as one
+                    # value) — recover it here before normalize_datetime_to_date collapses
+                    # the string to a bare ISO date and throws the qualifier away.
+                    if "time_of_day" not in entities:
+                        fused_shift = normalize_time_of_day(raw_datetime)
+                        if fused_shift:
+                            entities["time_of_day"] = fused_shift
+                    normalized_date = normalize_datetime_to_date(raw_datetime)
+                    if normalized_date:
+                        entities["datetime"] = normalized_date
+                if "time_of_day" in entities:
+                    normalized_shift = normalize_time_of_day(entities["time_of_day"])
+                    if normalized_shift:
+                        entities["time_of_day"] = normalized_shift
+                    else:
+                        # Couldn't map to a canonical shift — drop rather than pass raw
+                        # text through to code that expects Morning/Afternoon/Evening.
+                        del entities["time_of_day"]
                 validated = validate_nlu_response(result, raw_text=text, model_name=PRIMARY_NLU["model"])
                 logger.info("Primary NLU classification successful: %s", validated)
                 return validated

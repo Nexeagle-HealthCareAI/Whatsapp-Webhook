@@ -60,7 +60,9 @@ os.environ.setdefault("WHATSAPP_APP_SECRET", "test")
 os.environ.setdefault("SQLSERVER_CONN_STRING", "test")
 os.environ.setdefault("INTERNAL_EVENTS_TOKEN", "test")
 
-from app import city_index, conversation, i18n  # noqa: E402
+from datetime import date, timedelta  # noqa: E402
+
+from app import city_index, conversation, i18n, nlu_client  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.whatsapp_client import (  # noqa: E402
     _MAX_BUTTON_TITLE,
@@ -513,6 +515,75 @@ def test_shift_choice_is_limited_to_what_was_offered():
         conversation._match_choice("button_reply", "evening", lowered) == "evening",
         "tapping the button must keep working",
     )
+
+
+def test_time_of_day_normalization():
+    """"kal subah" must not lose "subah" — normalize_time_of_day maps the shift qualifier
+    onto the same canonical names (Morning/Afternoon/Evening) _get_offered_slots already
+    uses, so it can be matched against a real offered slot without a second translation."""
+    check(nlu_client.normalize_time_of_day("subah") == "Morning", "subah -> Morning")
+    check(nlu_client.normalize_time_of_day("kal subah") == "Morning", "fused 'kal subah' still recovers Morning")
+    check(nlu_client.normalize_time_of_day("evening") == "Evening", "evening -> Evening")
+    check(nlu_client.normalize_time_of_day("dopahar") == "Afternoon", "dopahar -> Afternoon")
+    check(nlu_client.normalize_time_of_day("raat") == "Evening", "raat -> Evening")
+    check(nlu_client.normalize_time_of_day("purple") is None, "unrecognized text maps to nothing")
+    check(nlu_client.normalize_time_of_day("") is None, "empty text maps to nothing")
+
+
+def test_pick_matching_slot_auto_selects_unambiguous_shift():
+    """The auto-select path in _send_slot_options: a patient who already said "kal subah"
+    should skip straight past the button prompt when exactly one offered slot matches —
+    but never guess when it's ambiguous."""
+    today = date(2026, 8, 9)
+    tomorrow = today + timedelta(days=1)
+    slots = [
+        {"date": today, "is_today": True, "shift_name": "Evening", "button_id": "slot_today_evening", "label": "Evening (Today)"},
+        {"date": tomorrow, "is_today": False, "shift_name": "Morning", "button_id": "slot_tomorrow_morning", "label": "Morning (Tomorrow)"},
+    ]
+
+    check(conversation._pick_matching_slot(slots, None, None) is None, "no time_of_day hint -> no auto-match")
+
+    matched = conversation._pick_matching_slot(slots, None, "Morning")
+    check(matched is not None and matched["button_id"] == "slot_tomorrow_morning", "unique shift -> auto-matches")
+
+    matched = conversation._pick_matching_slot(slots, tomorrow.isoformat(), "Morning")
+    check(matched is not None and matched["button_id"] == "slot_tomorrow_morning", "shift + matching date -> auto-matches")
+
+    check(conversation._pick_matching_slot(slots, today.isoformat(), "Morning") is None, "shift exists but not on that date -> no match")
+
+    ambiguous_slots = slots + [
+        {"date": today, "is_today": True, "shift_name": "Morning", "button_id": "slot_today_morning", "label": "Morning (Today)"},
+    ]
+    check(conversation._pick_matching_slot(ambiguous_slots, None, "Morning") is None, "shift offered on two dates -> ambiguous, no guess")
+
+
+def test_finalize_slot_selection_always_stores_a_date_string():
+    """context is serialised straight to JSON (db.save_conversation_state) — a real date
+    object surviving into it would crash json.dumps on the very next save. The auto-match
+    path hands _finalize_slot_selection a slot straight from _get_offered_slots (a real
+    date object); the manual-tap path hands it one already deserialised from context_json
+    (already a string). Both must come out as a string."""
+    import asyncio
+    today = date(2026, 8, 9)
+    sent = {}
+
+    async def mock_send_patient_details_flow(client, phone, context):
+        sent["context"] = context
+
+    original = conversation._send_patient_details_flow
+    conversation._send_patient_details_flow = mock_send_patient_details_flow
+    mock_client = object()
+    try:
+        slot_with_real_date_object = {"date": today, "is_today": True, "shift_name": "Evening"}
+        asyncio.run(conversation._finalize_slot_selection(mock_client, "123", {"lang": "en"}, slot_with_real_date_object))
+        check(isinstance(sent["context"]["preferred_date"], str), "a real date object must be normalised to a string")
+        check(sent["context"]["preferred_date"] == today.isoformat(), "normalised string matches the selected date")
+
+        slot_with_string_date = {"date": today.isoformat(), "is_today": True, "shift_name": "Evening"}
+        asyncio.run(conversation._finalize_slot_selection(mock_client, "123", {"lang": "en"}, slot_with_string_date))
+        check(isinstance(sent["context"]["preferred_date"], str), "an already-string date is left as a string")
+    finally:
+        conversation._send_patient_details_flow = original
 
 
 def test_confirm_shows_clinic_and_distance():
