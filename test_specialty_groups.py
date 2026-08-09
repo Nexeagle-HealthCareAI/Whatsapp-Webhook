@@ -830,36 +830,19 @@ def test_language_confirmation_flow():
         asyncio.run(conversation.handle_message(mock_client, "123", "User", "text", "mujhe doctor chahiye"))
         state = asyncio.run(db_mock.get_conversation_state("123"))
         check(state is not None, "conversation state should be created")
-        check(state["current_step"] == "confirming_language", "should transition to confirming_language")
-        check(state["context"].get("guess_lang") == "hg", "should guess Hinglish")
-        check(len(sent_buttons) == 1, "should send 1 button message")
-        check("Hinglish" in sent_buttons[0][0], "should ask Hinglish confirmation")
+        check(state["current_step"] == "choosing_location", "should transition directly to choosing_location")
+        check(state["context"].get("lang") == "hg", "should set language directly to Hinglish")
+        check(len(sent_locations) == 1, "should send location request directly")
 
-        # 2. Confirm language yes
-        asyncio.run(conversation.handle_message(mock_client, "123", "User", "button_reply", "lang_confirm_yes"))
-        state = asyncio.run(db_mock.get_conversation_state("123"))
-        check(state["current_step"] == "choosing_location", "should transition to choosing_location")
-        check(state["context"].get("lang") == "hg", "should set real language to Hinglish")
-        check(len(sent_locations) == 1, "should send location request")
-
-        # 3. Reset and test change language path
+        # 2. Reset and test fallback when language is not auto-detected (e.g. hello greeting)
         asyncio.run(db_mock.clear_conversation_state("123"))
-        asyncio.run(conversation.handle_message(mock_client, "123", "User", "text", "mujhe doctor chahiye"))
-        asyncio.run(conversation.handle_message(mock_client, "123", "User", "button_reply", "lang_confirm_change"))
+        sent_lists.clear()
+        asyncio.run(conversation.handle_message(mock_client, "123", "User", "text", "hello"))
         state = asyncio.run(db_mock.get_conversation_state("123"))
-        check(state["current_step"] == "choosing_language", "should transition to choosing_language start over")
-        check(len(sent_lists) == 1, "should send 1 list message")
+        check(state is not None, "state should be created for generic greeting")
+        check(state["current_step"] == "choosing_language", "should transition to choosing_language for open choice")
+        check(len(sent_lists) == 1, "should send language selection list")
         check(len(sent_lists[0][2]) == 4, "list message must contain all 4 languages")
-
-        # 4. Reset and test colloquial text "yes" confirm
-        asyncio.run(db_mock.clear_conversation_state("123"))
-        asyncio.run(conversation.handle_message(mock_client, "123", "User", "text", "mujhe doctor chahiye"))
-        sent_locations.clear()
-        asyncio.run(conversation.handle_message(mock_client, "123", "User", "text", "haan"))
-        state = asyncio.run(db_mock.get_conversation_state("123"))
-        check(state["current_step"] == "choosing_location", "colloquial haan should transition to choosing_location")
-        check(state["context"].get("lang") == "hg", "colloquial haan should confirm Hinglish")
-        check(len(sent_locations) == 1, "colloquial haan should trigger location request")
         
     finally:
         conversation.db = original_db

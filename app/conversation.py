@@ -156,9 +156,18 @@ async def handle_message(
     current_step = state["current_step"] if state else None
     context = state["context"] if state else {}
     lang = context.get("lang")
+    has_lang_init = lang is not None
+    if input_type == "text" and input_value.strip() and has_lang_init:
+        detected_lang = _detect_language(input_value)
+        if detected_lang and detected_lang != lang:
+            logger.info("Auto-swapping language from %s to %s for user %s", lang, detected_lang, phone)
+            lang = detected_lang
+            context["lang"] = lang
+            if current_step:
+                await db.save_conversation_state(phone, current_step, context)
 
     nlu_result = None
-    if input_type == "text" and input_value.strip() and lang:
+    if input_type == "text" and input_value.strip() and has_lang_init and lang:
         try:
             # 1. Classify message using the new NLU client
             raw_nlu_result = await nlu_client.classify_message(input_value)
@@ -429,20 +438,13 @@ async def handle_message(
 
             if detected_lang:
                 confirm_context = {
-                    "guess_lang": detected_lang,
+                    "lang": detected_lang,
                 }
                 if _is_doctor_search_query(input_value):
                     confirm_context["search_doctor_query"] = input_value
                 
-                welcome = t("welcome_banner", detected_lang)
-                prompt = t("confirm_lang_prompt", detected_lang)
-                combined_prompt = f"{welcome}\n\n{prompt}"
-                buttons = [
-                    ("lang_confirm_yes", t("confirm_yes", detected_lang)),
-                    ("lang_confirm_change", t("confirm_change", detected_lang))
-                ]
-                await whatsapp_client.send_buttons(client, phone, combined_prompt, buttons)
-                await _transition_to(phone, "confirming_language", confirm_context, None)
+                await whatsapp_client.send_text(client, phone, t("welcome_banner", detected_lang))
+                await _send_location_request(client, phone, confirm_context)
             else:
                 init_context = {}
                 if input_type == "text" and _is_doctor_search_query(input_value):
