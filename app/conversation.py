@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app import booking_slots, city_index, db, hms_client, i18n, symptom_client, whatsapp_client
+from app.resolver import match_doctor_by_query as _match_doctor_by_query
 from app.config import settings
 from app.geo import haversine_km
 from app.hms_client import HmsApiError
@@ -1650,45 +1651,6 @@ def _is_doctor_search_query(text: str) -> bool:
     if re.search(r'\b(dr|doctor)\b', normalized):
         return True
     return False
-
-
-def _match_doctor_by_query(query: str, doctors: list[dict]) -> list[dict]:
-    normalized = query.lower()
-    normalized = re.sub(r'[^a-z0-9\s]', ' ', normalized)
-
-    for greeting in ["hi", "hello", "hey", "hlo"]:
-        normalized = re.sub(r'\b' + greeting + r'\b', ' ', normalized)
-
-    for prefix in [
-        "book appointment at", "book appointment with", "appointment at", "appointment with",
-        "book appointment", "appointment", "want to book", "book", "dr", "doctor"
-    ]:
-        normalized = normalized.replace(prefix, " ")
-
-    normalized = re.sub(r'\s+', ' ', normalized).strip()
-    if not normalized:
-        return []
-
-    matches = []
-    for doc in doctors:
-        name = (doc.get("fullName") or "").lower()
-        name_clean = re.sub(r'[^a-z0-9\s]', ' ', name)
-        name_clean = re.sub(r'\s+', ' ', name_clean).strip()
-
-        if normalized in name_clean or name_clean in normalized:
-            matches.append(doc)
-            continue
-
-        name_parts = name_clean.split()
-        query_parts = normalized.split()
-        matched_parts = 0
-        for qp in query_parts:
-            if len(qp) >= 3 and any(qp in np for np in name_parts):
-                matched_parts += 1
-        if matched_parts > 0:
-            matches.append(doc)
-
-    return matches
 
 
 async def _search_doctors_flow(client: httpx.AsyncClient, phone: str, context: dict, current_step: str) -> bool:
