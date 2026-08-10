@@ -144,41 +144,14 @@ def _detect_language(text: str) -> str | None:
     else:
         return None
 
-    return None
-
-
 # ---------------------------------------------------------------------------------------
-# SHADOW MODE — temporary, remove together with the current_step dispatch below.
+# Clipboard Initialization from Legacy Context
 #
-# Builds a booking_slots clipboard from the live conversation context and logs what it
-# WOULD have asked for next, alongside what the step machine actually did. Nothing here
-# affects a reply: it is a read of context that already exists, so the two can be compared
-# on real traffic before the clipboard is given control.
+# Helper function to initialize the new clipboard data structure from existing legacy
+# session parameters for backwards compatibility.
 # ---------------------------------------------------------------------------------------
 
-# Which current_step values are an acceptable realisation of a given clipboard action.
-# Sets, not single values, because the existing flow spreads one decision over several
-# steps: six different steps all exist to narrow down to a doctor, and the slot picker
-# asks for date and shift together in one message.
-_SHADOW_EXPECTED_STEPS = {
-    ("ask", "lang"): {"choosing_language", None},
-    ("disambiguate", "lang"): {"confirming_language"},
-    ("ask", "location"): {"choosing_location"},
-    ("disambiguate", "location"): {"choosing_location"},
-    ("ask", "doctor"): {
-        "choosing_search_mode", "awaiting_symptom", "awaiting_doctor_name",
-        "choosing_specialty_group", "choosing_specialty", "choosing_sort",
-        "confirming_wider_search", "choosing_doctor",
-    },
-    ("disambiguate", "doctor"): {"choosing_doctor"},
-    ("ask", "date"): {"choosing_slot"},
-    ("ask", "shift"): {"choosing_slot"},
-    ("ask", "patient"): {"awaiting_patient_details"},
-    ("confirm", None): {"confirming"},
-}
-
-
-def _shadow_clipboard(context: dict) -> dict:
+def _init_clipboard_from_legacy(context: dict) -> dict:
     """Legacy context dict -> booking_slots clipboard. Read-only; never mutates context."""
     slots = booking_slots.empty()
 
@@ -199,11 +172,6 @@ def _shadow_clipboard(context: dict) -> dict:
             slots, "doctor", context["doctor_options"], raw=context.get("search_doctor_query")
         )
     elif context.get("search_doctor_query"):
-        # An unresolved search is in flight — leave "doctor" blank rather than trust
-        # doctor_id. The legacy hot-swap path (see handle_message) doesn't reliably
-        # clear a stale doctor_id when a re-search comes up empty, unlike
-        # _handle_awaiting_doctor_name's equivalent failure path, which does. Trusting
-        # doctor_id here would silently paper over that gap instead of surfacing it.
         pass
     elif context.get("doctor_id"):
         booking_slots.fill(
@@ -232,25 +200,10 @@ def _shadow_clipboard(context: dict) -> dict:
     return slots
 
 
-def _log_shadow(phone: str, current_step: str | None, context: dict) -> None:
-    """Never raises — a shadow-comparison bug must not break a live conversation."""
-    try:
-        slots = _shadow_clipboard(context)
-        action = booking_slots.next_action(slots)
-        expected = _SHADOW_EXPECTED_STEPS.get(action, set())
-        agrees = current_step in expected
-        logger.info(
-            "SHADOW phone=%s step=%s clipboard=%s known=%s agrees=%s",
-            phone, current_step, action, sorted(booking_slots.known_summary(slots)), agrees,
-        )
-    except Exception:
-        logger.exception("SHADOW comparison failed for %s (ignored)", phone)
-
-
 def _get_or_create_clipboard(context: dict) -> dict:
     if "booking" in context and isinstance(context["booking"], dict):
         return context["booking"]
-    slots = _shadow_clipboard(context)
+    slots = _init_clipboard_from_legacy(context)
     context["booking"] = slots
     return slots
 
@@ -316,7 +269,6 @@ async def handle_message(
     current_step = state["current_step"] if state else None
     context = state["context"] if state else {}
     booking = _get_or_create_clipboard(context)
-    _log_shadow(phone, current_step, context)  # SHADOW MODE — remove in phase 3
     lang = context.get("lang")
     has_lang_init = lang is not None
     if input_type == "text" and input_value.strip() and has_lang_init:
@@ -896,7 +848,8 @@ async def _phrase(
     lang = context.get("lang")
     fallback = t(fallback_key, lang, **fallback_kwargs)
     try:
-        known = booking_slots.known_summary(_shadow_clipboard(context))
+        booking = _get_or_create_clipboard(context)
+        known = booking_slots.known_summary(booking)
         phrased = await nlu_client.generate_step_prompt(client, step, lang, known)
     except Exception:
         logger.warning("Step-prompt phrasing failed for %s, using template", step, exc_info=True)
