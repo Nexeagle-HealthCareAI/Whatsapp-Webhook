@@ -1756,6 +1756,12 @@ async def _send_patient_details_flow(client: httpx.AsyncClient, phone: str, cont
         await _transition_to(phone, "choosing_doctor", context, context.get("current_step"))
         return
 
+    # Reorder slots if a matching slot is resolved by time_of_day_hint
+    time_of_day_hint = context.get("time_of_day_hint")
+    matched = _pick_matching_slot(slots, context.get("preferred_date"), time_of_day_hint)
+    if matched:
+        slots = [matched] + [s for s in slots if s["button_id"] != matched["button_id"]]
+
     initial_data = {}
     choices = [
         {"id": s["button_id"], "title": s["label"]}

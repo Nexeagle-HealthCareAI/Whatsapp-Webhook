@@ -896,7 +896,13 @@ def test_unified_date_time_flow():
     
     original_availability = conversation.hms_client.get_doctor_availability
     async def mock_availability(doctor_id, date):
-        return {"isAvailable": True, "shifts": [{"shiftName": "Morning", "startTime": "09:00", "endTime": "12:00"}]}
+        return {
+            "isAvailable": True,
+            "shifts": [
+                {"shiftName": "Afternoon", "startTime": "13:00", "endTime": "17:00"},
+                {"shiftName": "Morning", "startTime": "09:00", "endTime": "12:00"}
+            ]
+        }
     conversation.hms_client.get_doctor_availability = mock_availability
     
     class MockDB:
@@ -934,22 +940,34 @@ def test_unified_date_time_flow():
             conversation.booking_slots.fill(booking, "location", "Kishanganj")
             conversation.booking_slots.fill(booking, "doctor", {"id": "d1", "fullName": "Dr. Sen"})
             
+        # Test 1: Run with time_of_day_hint = "Morning"
         asyncio.run(conversation._advance_booking_flow(mock_client, "123", {
-            "lang": "en", "city": "Kishanganj", "doctor_id": "d1", "booking": booking, "current_step": "choosing_doctor"
+            "lang": "en", "city": "Kishanganj", "doctor_id": "d1", "booking": booking,
+            "current_step": "choosing_doctor", "time_of_day_hint": "Morning"
         }, booking))
-        
         check(len(sent_flows) == 1, "should trigger Flow form send")
-        init_data = sent_flows[0][1]
-        check(init_data is not None and "slots" in init_data, "initial_data must contain available slots choices")
-        check(len(init_data["slots"]) > 0, "must offer at least one slot")
-        check(init_data["slots"][0]["id"] == "slot_today_morning", "id must match morning slot ID")
-        
+        init_data_morning = sent_flows[0][1]
+        check(init_data_morning is not None and "slots" in init_data_morning, "initial_data must contain slots")
+        check(init_data_morning["slots"][0]["id"].endswith("morning"), f"Morning slot must be first, got {init_data_morning['slots'][0]['id']}")
+
+        # Test 2: Run with time_of_day_hint = "Afternoon"
+        sent_flows.clear()
+        asyncio.run(conversation._advance_booking_flow(mock_client, "123", {
+            "lang": "en", "city": "Kishanganj", "doctor_id": "d1", "booking": booking,
+            "current_step": "choosing_doctor", "time_of_day_hint": "Afternoon"
+        }, booking))
+        check(len(sent_flows) == 1, "should trigger Flow form send again")
+        init_data_afternoon = sent_flows[0][1]
+        check(init_data_afternoon["slots"][0]["id"].endswith("afternoon"), f"Afternoon slot must be first, got {init_data_afternoon['slots'][0]['id']}")
+
+        # Simulate submission using first slot from Morning run
+        selected_slot_id = init_data_morning["slots"][0]["id"]
         submit_data = {
             "name": "Riya",
             "age": "20",
             "gender": "Female",
             "guardian": "Self",
-            "slot_id": "slot_today_morning"
+            "slot_id": selected_slot_id
         }
         
         asyncio.run(conversation.handle_message(
