@@ -872,6 +872,106 @@ def test_safety_triage_interception():
         conversation.db = original_db
 
 
+def test_unified_date_time_flow():
+    import asyncio
+    import json
+    class MockClient:
+        pass
+    mock_client = MockClient()
+    
+    sent_flows = []
+    async def mock_send_flow(client, to, body_text, flow_id, flow_cta, screen_id, flow_token, initial_data=None):
+        sent_flows.append((to, initial_data))
+        return True
+        
+    sent_buttons = []
+    async def mock_send_buttons(client, phone, text, buttons):
+        sent_buttons.append((phone, text, buttons))
+        
+    original_send_flow = conversation.whatsapp_client.send_flow
+    conversation.whatsapp_client.send_flow = mock_send_flow
+    
+    original_send_buttons = conversation.whatsapp_client.send_buttons
+    conversation.whatsapp_client.send_buttons = mock_send_buttons
+    
+    original_availability = conversation.hms_client.get_doctor_availability
+    async def mock_availability(doctor_id, date):
+        return {"isAvailable": True, "shifts": [{"shiftName": "Morning", "startTime": "09:00", "endTime": "12:00"}]}
+    conversation.hms_client.get_doctor_availability = mock_availability
+    
+    class MockDB:
+        def __init__(self):
+            self.state = {}
+        async def get_conversation_state(self, phone):
+            if phone in self.state:
+                step, context = self.state[phone]
+                return {"current_step": step, "context": context}
+            booking = conversation.booking_slots.empty()
+            conversation.booking_slots.fill(booking, "lang", "en")
+            conversation.booking_slots.fill(booking, "location", "Kishanganj")
+            conversation.booking_slots.fill(booking, "doctor", {"id": "d1", "fullName": "Dr. Sen"})
+            return {
+                "current_step": "choosing_doctor",
+                "context": {
+                    "lang": "en",
+                    "city": "Kishanganj",
+                    "doctor_id": "d1",
+                    "booking": booking
+                }
+            }
+        async def save_conversation_state(self, phone, step, context):
+            self.state[phone] = (step, context)
+            
+    original_db = conversation.db
+    db_mock = MockDB()
+    conversation.db = db_mock
+    
+    try:
+        booking = db_mock.state.get("123", {}).get("context", {}).get("booking")
+        if not booking:
+            booking = conversation.booking_slots.empty()
+            conversation.booking_slots.fill(booking, "lang", "en")
+            conversation.booking_slots.fill(booking, "location", "Kishanganj")
+            conversation.booking_slots.fill(booking, "doctor", {"id": "d1", "fullName": "Dr. Sen"})
+            
+        asyncio.run(conversation._advance_booking_flow(mock_client, "123", {
+            "lang": "en", "city": "Kishanganj", "doctor_id": "d1", "booking": booking, "current_step": "choosing_doctor"
+        }, booking))
+        
+        check(len(sent_flows) == 1, "should trigger Flow form send")
+        init_data = sent_flows[0][1]
+        check(init_data is not None and "slots" in init_data, "initial_data must contain available slots choices")
+        check(len(init_data["slots"]) > 0, "must offer at least one slot")
+        check(init_data["slots"][0]["value"] == "slot_today_morning", "value must match morning slot ID")
+        
+        submit_data = {
+            "name": "Riya",
+            "age": "20",
+            "gender": "Female",
+            "guardian": "Self",
+            "slot_id": "slot_today_morning"
+        }
+        
+        asyncio.run(conversation.handle_message(
+            mock_client, "123", "User", "nfm_reply", json.dumps(submit_data)
+        ))
+        
+        final_state = db_mock.state["123"]
+        final_ctx = final_state[1]
+        final_booking = final_ctx["booking"]
+        
+        check(final_booking["date"]["status"] == "filled", "date slot must be filled after Flow submit")
+        check(final_booking["shift"]["status"] == "filled", "shift slot must be filled after Flow submit")
+        check(final_booking["patient"]["status"] == "filled", "patient slot must be filled after Flow submit")
+        check(final_state[0] == "confirming", "must advance straight to confirming step")
+        
+    finally:
+        conversation.whatsapp_client.send_flow = original_send_flow
+        conversation.whatsapp_client.send_buttons = original_send_buttons
+        conversation.hms_client.get_doctor_availability = original_availability
+        conversation.db = original_db
+
+
 def test_cancel_quit_and_back_logic():
     class MockDB:
         def __init__(self):

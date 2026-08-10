@@ -229,7 +229,7 @@ def _step_for_action(action: str, slot_name: str | None, context: dict) -> str:
     elif action == "disambiguate" and slot_name == "doctor":
         return "choosing_doctor"
     elif action in ("ask", "retry") and slot_name in ("date", "shift"):
-        return "choosing_slot"
+        return "awaiting_patient_details"
     elif action == "ask" and slot_name == "patient":
         return "awaiting_patient_details"
     elif action == "confirm":
@@ -1685,6 +1685,42 @@ async def _send_patient_details_flow(client: httpx.AsyncClient, phone: str, cont
     lang = context.get("lang")
     flow_id = settings.whatsapp_flow_id
     success = False
+
+    doctor_id = context.get("doctor_id")
+    slots = []
+    if doctor_id:
+        try:
+            slots = await _get_offered_slots(doctor_id, lang)
+        except Exception as exc:
+            logger.error("Failed to load offered slots for Flow: %s", exc)
+
+    if not slots:
+        await whatsapp_client.send_buttons(
+            client, phone, t("today_shifts_over", lang),
+            [("change_doctor", t("change_doctor_btn", lang))],
+        )
+        await _transition_to(phone, "choosing_doctor", context, context.get("current_step"))
+        return
+
+    initial_data = {}
+    choices = [
+        {"value": s["button_id"], "title": s["label"]}
+        for s in slots
+    ]
+    initial_data = {"slots": choices}
+
+    offered_slots_data = [
+        {
+            "button_id": s["button_id"],
+            "shift_name": s["shift_name"],
+            "date": s["date"].isoformat() if hasattr(s["date"], "isoformat") else s["date"],
+            "is_today": s["is_today"],
+            "label": s["label"]
+        }
+        for s in slots
+    ]
+    context["offered_slots"] = offered_slots_data
+
     if flow_id:
         success = await whatsapp_client.send_flow(
             client,
@@ -1694,15 +1730,17 @@ async def _send_patient_details_flow(client: httpx.AsyncClient, phone: str, cont
             flow_cta=t("patient_details_flow_cta", lang),
             screen_id=settings.whatsapp_flow_screen_id,
             flow_token=f"token-{phone}",
+            initial_data=initial_data,
         )
     if not success:
         await whatsapp_client.send_text(client, phone, t("patient_details_prompt_text", lang))
-    await _transition_to(phone, "awaiting_patient_details", context, "choosing_slot")
+    await _transition_to(phone, "awaiting_patient_details", context, context.get("current_step"))
 
 
 async def _handle_awaiting_patient_details(client, phone, input_type, input_value, context) -> None:
     lang = context.get("lang")
     name, age, gender, guardian = None, None, None, None
+    selected_slot = None
 
     if input_type == "nfm_reply":
         try:
@@ -1711,6 +1749,11 @@ async def _handle_awaiting_patient_details(client, phone, input_type, input_valu
             age = str(data.get("age") or "").strip()
             gender = (data.get("gender") or "").strip()
             guardian = (data.get("guardian") or "").strip()
+
+            slot_id = data.get("slot_id") or data.get("slot")
+            if slot_id:
+                offered_slots = context.get("offered_slots") or []
+                selected_slot = next((s for s in offered_slots if s["button_id"] == slot_id), None)
         except Exception:
             pass
     elif input_type == "text":
@@ -1740,6 +1783,15 @@ async def _handle_awaiting_patient_details(client, phone, input_type, input_valu
         "gender": gender,
         "guardian": guardian
     }, source="user")
+
+    if selected_slot:
+        preferred_date = selected_slot["date"]
+        date_label = t("date_today", lang) if selected_slot["is_today"] else t("date_tomorrow", lang)
+        context["preferred_date"] = preferred_date
+        context["date_label"] = date_label
+        context["shift_label"] = selected_slot["shift_name"]
+        booking_slots.fill(booking, "date", preferred_date, raw=date_label, source="user")
+        booking_slots.fill(booking, "shift", selected_slot["shift_name"], raw=selected_slot["shift_name"], source="user")
 
     await _advance_booking_flow(client, phone, context, booking)
 
