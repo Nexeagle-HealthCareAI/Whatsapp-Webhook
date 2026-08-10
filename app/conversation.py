@@ -832,7 +832,12 @@ async def _resolve_city(context: dict) -> dict:
         city = city_index.match_typed_city(index, typed)
         if city:
             logger.info("Matched typed location %r to city %s", typed, city)
-            return {**context, "city": city}
+            new_ctx = {**context, "city": city}
+            lat_lng = index[city][0] if index.get(city) else [None, None]
+            if lat_lng[0] is not None:
+                new_ctx["patient_lat"] = lat_lng[0]
+                new_ctx["patient_lng"] = lat_lng[1]
+            return new_ctx
         logger.info("Typed location %r matches no known city, searching unfiltered", typed)
     return context
 
@@ -1264,10 +1269,16 @@ def _doctor_row_description(doctor: dict, context: dict) -> str:
     spec_cleaned = _clean_specialty(spec)
     if spec_cleaned:
         parts.append(spec_cleaned)
+    distance = _doctor_distance_km(doctor, context.get("patient_lat"), context.get("patient_lng"))
     hosp = doctor.get("hospitalName") or doctor.get("city")
     hosp_cleaned = _clean_hospital(hosp)
     if hosp_cleaned:
+        if distance != float("inf"):
+            hosp_cleaned = f"{hosp_cleaned} ({distance:.0f}km)"
         parts.append(hosp_cleaned)
+    elif distance != float("inf"):
+        parts.append(f"{distance:.0f}km")
+
     if doctor.get("rating") is not None:
         parts.append(f"⭐{doctor['rating']}")
     fee = _doctor_fee(doctor)
@@ -1275,9 +1286,6 @@ def _doctor_row_description(doctor: dict, context: dict) -> str:
         parts.append(f"₹{fee:.0f}")
     if doctor.get("experienceYears") is not None:
         parts.append(f"{doctor['experienceYears']}yrs")
-    distance = _doctor_distance_km(doctor, context.get("patient_lat"), context.get("patient_lng"))
-    if distance != float("inf"):
-        parts.append(f"{distance:.0f}km")
     desc = " · ".join(parts)
     if len(desc) > 72:
         desc = desc[:69] + "..."
@@ -1878,8 +1886,13 @@ async def _search_doctors_flow(client: httpx.AsyncClient, phone: str, context: d
     if extracted_city:
         logger.info("Extracted city %r from doctor query %r. Clean query: %r", extracted_city, query, clean_query)
         context["city"] = extracted_city
-        context.pop("patient_lat", None)
-        context.pop("patient_lng", None)
+        lat_lng = index[extracted_city][0] if index.get(extracted_city) else [None, None]
+        if lat_lng[0] is not None:
+            context["patient_lat"] = lat_lng[0]
+            context["patient_lng"] = lat_lng[1]
+        else:
+            context.pop("patient_lat", None)
+            context.pop("patient_lng", None)
         booking = _get_or_create_clipboard(context)
         booking_slots.fill(booking, "location", extracted_city, raw=extracted_city, source="user")
         query = clean_query
