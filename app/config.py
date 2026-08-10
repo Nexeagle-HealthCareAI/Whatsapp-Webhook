@@ -80,7 +80,7 @@ class Settings(BaseSettings):
     internal_events_token: str
     sarvam_api_key: str | None = None
     gemini_api_key: str | None = None
-
+    nlu_confidence_threshold: float = 0.75
 
 
 settings = Settings()

@@ -173,6 +173,14 @@ def test_confidence_gate_on_zero_slot_intents():
     check(routed.action == "proceed_to_business_logic", "slot-filled book_appointment proceeds")
     check(routed.confidence >= 0.7, "slot-filling safety net overrides a low per-message confidence")
 
+def test_nlu_confidence_gate_rejection():
+    print("\n--- Running NLU Confidence Gate Rejection Tests ---")
+    low_conf_incomplete = {"intent": "book_appointment", "confidence": "low", "entities": {"specialty": "gyno"}}
+    routed = asyncio.run(intent_router.route_intent("user_conf_4", low_conf_incomplete, "gyno"))
+    
+    check(routed.intent == "out_of_scope", "low-confidence incomplete intent must be overridden to out_of_scope")
+    check(routed.entities == {}, "low-confidence incomplete intent must have its entities cleared")
+
 def test_live_time_of_day_extraction():
     print("\n--- Running Live time_of_day Extraction Tests (real Sarvam call) ---")
     # "kal subah" losing "subah" was the original bug: normalize_datetime_to_date collapsed
@@ -255,6 +263,7 @@ if __name__ == "__main__":
     test_multi_turn_slot_filling()
     test_booking_vs_reschedule_ambiguity()
     test_confidence_gate_on_zero_slot_intents()
+    test_nlu_confidence_gate_rejection()
     test_stale_session_discarded_on_step_mismatch()
     test_legitimate_multi_turn_still_merges_with_matching_step()
     test_live_time_of_day_extraction()

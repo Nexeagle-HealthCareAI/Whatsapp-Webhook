@@ -4,6 +4,7 @@ import time
 import re
 from app.redis_client import get_redis
 from app import db
+from app.config import settings
 
 logger = logging.getLogger("intent_router")
 
@@ -160,6 +161,34 @@ async def route_intent(
     new_intent = validated_nlu_result.get("intent", "out_of_scope")
     new_confidence = validated_nlu_result.get("confidence", "low")
     new_entities = validated_nlu_result.get("entities", {}) or {}
+
+    score = _CONFIDENCE_SCORE.get(new_confidence, 0.3)
+    if score < settings.nlu_confidence_threshold:
+        intent_to_check = new_intent
+        if stored_state and (not new_intent or new_intent == "out_of_scope"):
+            intent_to_check = stored_state.get("intent")
+        
+        merged_entities = {**(stored_state.get("entities", {}) if stored_state else {}), **new_entities}
+        requirements = REQUIRED_ENTITIES.get(intent_to_check, [])
+        slots_filled = True
+        for req in requirements:
+            if isinstance(req, (tuple, list)):
+                if not any(merged_entities.get(opt) for opt in req):
+                    slots_filled = False
+                    break
+            else:
+                if not merged_entities.get(req):
+                    slots_filled = False
+                    break
+                    
+        if not slots_filled:
+            logger.info(
+                "NLU result confidence %s (%s) is below threshold %s and slots are not fully filled. Rejecting entities %r to prevent slot pollution.",
+                new_confidence, score, settings.nlu_confidence_threshold, new_entities
+            )
+            new_entities = {}
+            if new_intent not in _NO_SLOT_SAFETY_NET:
+                new_intent = "out_of_scope"
 
     current_intent = new_intent
     current_entities = new_entities

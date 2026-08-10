@@ -394,7 +394,7 @@ async def handle_message(
             return
 
     # Prioritize NLU global intents / shortcuts if confidence is high
-    if nlu_result and nlu_result.get("confidence", 0.0) >= 0.7:
+    if nlu_result and nlu_result.get("confidence", 0.0) >= settings.nlu_confidence_threshold:
         intent = nlu_result["intent"]
         
         if intent == "cancel_appointment":
@@ -617,7 +617,7 @@ async def handle_message(
     # 1.5 Handle off-topic / out-of-scope casual conversation dynamically via LLM
     if input_type == "text" and input_value.strip() and lang:
         has_entities = nlu_result and any(nlu_result.get(k) for k in ("doctor_name", "specialty", "symptom"))
-        if not nlu_result or nlu_result.get("intent") == "out_of_scope" or nlu_result.get("confidence", 0.0) < 0.7:
+        if not nlu_result or nlu_result.get("intent") == "out_of_scope" or nlu_result.get("confidence", 0.0) < settings.nlu_confidence_threshold:
             if not has_entities:
                 if current_step not in ("awaiting_symptom", "awaiting_doctor_name", "awaiting_patient_details"):
                     try:
