@@ -834,6 +834,44 @@ def test_extract_location_from_query():
     check(cleaned == "doctor Avinash without city", "should return same query")
 
 
+def test_safety_triage_interception():
+    import asyncio
+    class MockClient:
+        pass
+    mock_client = MockClient()
+    
+    sent_messages = []
+    async def mock_send_text(client, phone, text):
+        sent_messages.append((phone, text))
+    
+    original_send_text = conversation.whatsapp_client.send_text
+    conversation.whatsapp_client.send_text = mock_send_text
+    
+    class MockDB:
+        def __init__(self):
+            self.state = {}
+        async def get_conversation_state(self, phone):
+            return {"current_step": "awaiting_symptom", "context": {"lang": "en", "city": "Kishanganj"}}
+        async def save_conversation_state(self, phone, step, context):
+            self.state[phone] = (step, context)
+            
+    original_db = conversation.db
+    conversation.db = MockDB()
+    
+    try:
+        asyncio.run(conversation.handle_message(mock_client, "999", "User", "text", "Help, I have severe chest pain and breathlessness!"))
+        check(len(sent_messages) == 1, "should send safety warning")
+        check("EMERGENCY WARNING" in sent_messages[0][1], "should contain English warning text")
+        
+        sent_messages.clear()
+        asyncio.run(conversation.handle_message(mock_client, "999", "User", "text", "mere papa behosh ho gaye hain aur saans lene me taklif hai"))
+        check(len(sent_messages) == 1, "should send safety warning in Hinglish")
+        check("Emergency Warning: Agar aapko" in sent_messages[0][1], "should contain Hinglish warning text")
+    finally:
+        conversation.whatsapp_client.send_text = original_send_text
+        conversation.db = original_db
+
+
 def test_cancel_quit_and_back_logic():
     class MockDB:
         def __init__(self):

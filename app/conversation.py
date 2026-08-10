@@ -13,7 +13,7 @@ from app.resolver import resolve_doctor, extract_location_from_query
 from app.config import settings
 from app.geo import haversine_km
 from app.hms_client import HmsApiError
-from app import nlu_client, intent_router
+from app import nlu_client, intent_router, safety
 from app.model_config import PRIMARY_NLU
 from app.i18n import LANGUAGE_LABELS, LANG_PROMPT, t
 
@@ -328,6 +328,13 @@ async def handle_message(
             booking_slots.fill(booking, "lang", lang, source="user")
             if current_step:
                 await db.save_conversation_state(phone, current_step, context)
+
+    # Run safety interceptor triage immediately before any NLU or slot filling
+    if input_type == "text" and input_value.strip():
+        safety_alert = safety.check_safety_triage(input_value, lang or "en")
+        if safety_alert and safety_alert.get("is_emergency"):
+            await whatsapp_client.send_text(client, phone, safety_alert["alert_message"])
+            return
 
     nlu_result = None
     if input_type == "text" and input_value.strip() and has_lang_init and lang:
