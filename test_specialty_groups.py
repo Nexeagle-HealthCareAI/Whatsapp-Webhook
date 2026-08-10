@@ -980,6 +980,85 @@ def test_is_doctor_search_query_whitelist():
     check(conversation._is_doctor_search_query("doctor btao") == False, "doctor btao must be False")
 
 
+def test_first_message_nlu_symptom_routing():
+    import asyncio
+    class MockDB:
+        def __init__(self):
+            self.state = {}
+        async def get_conversation_state(self, phone):
+            val = self.state.get(phone)
+            if not val:
+                return None
+            return {"current_step": val[0], "context": val[1]}
+        async def save_conversation_state(self, phone, step, context):
+            self.state[phone] = (step, context)
+        async def clear_conversation_state(self, phone):
+            self.state.pop(phone, None)
+        async def log_nlu_interaction(self, *a, **k):
+            pass
+
+    db_mock = MockDB()
+    original_db = conversation.db
+    conversation.db = db_mock
+
+    # Mock NLU client classification to return describe_symptom with symptom "pet me bahut dard ho raha hai"
+    mock_nlu_val = {
+        "intent": "describe_symptom",
+        "confidence": "high",
+        "entities": {"symptom": "pet me bahut dard ho raha hai"}
+    }
+    async def mock_classify(client, text):
+        return mock_nlu_val
+    original_classify = conversation.nlu_client.classify_message
+    conversation.nlu_client.classify_message = mock_classify
+
+    # Mock symptom routing and category listing
+    original_route_symptom = conversation.symptom_client.route_symptom
+    async def mock_route_symptom(text):
+        return ["Gynaecologist"]
+    conversation.symptom_client.route_symptom = mock_route_symptom
+
+    original_list_specialties = conversation.hms_client.list_specialties
+    async def mock_list_specialties():
+        return [{"category": "Gynaecologist"}]
+    conversation.hms_client.list_specialties = mock_list_specialties
+
+    sent_texts = []
+    sent_buttons = []
+    
+    async def mock_send_text(client, phone, text):
+        sent_texts.append(text)
+    async def mock_send_buttons(client, phone, text, buttons):
+        sent_buttons.append((text, buttons))
+
+    original_send_text = conversation.whatsapp_client.send_text
+    original_send_buttons = conversation.whatsapp_client.send_buttons
+    conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_buttons = mock_send_buttons
+
+    try:
+        # Fresh user sends "pet me bahut dard ho raha hai"
+        asyncio.run(conversation.handle_message(
+            None, "user_fresh_nlu", "Patient", "text", "pet me bahut dard ho raha hai"
+        ))
+
+        # Assertions
+        state = db_mock.state.get("user_fresh_nlu")
+        check(state is not None, "fresh user session state must be created")
+        check(state[0] == "confirming_language", f"should transition to confirming_language, got {state[0]!r}")
+        check(state[1].get("pending_specialty") == "Gynaecologist", f"should save matched specialty, got {state[1].get('pending_specialty')!r}")
+        check(state[1].get("guess_lang") == "hg", f"should guess language (Hinglish), got {state[1].get('guess_lang')!r}")
+        check(len(sent_buttons) == 1, "should send language confirmation buttons")
+
+    finally:
+        conversation.db = original_db
+        conversation.nlu_client.classify_message = original_classify
+        conversation.symptom_client.route_symptom = original_route_symptom
+        conversation.hms_client.list_specialties = original_list_specialties
+        conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_buttons = original_send_buttons
+
+
 def test_cancel_quit_and_back_logic():
     class MockDB:
         def __init__(self):

@@ -289,11 +289,52 @@ async def handle_message(
             return
 
     nlu_result = None
-    if input_type == "text" and input_value.strip() and has_lang_init and lang:
+    if input_type == "text" and input_value.strip():
         try:
             # 1. Classify message using the new NLU client
             raw_nlu_result = await nlu_client.classify_message(client, input_value)
             logger.info("NLU Result: %s", raw_nlu_result)
+
+            if not has_lang_init and raw_nlu_result and raw_nlu_result.get("intent") in (
+                "book_appointment", "check_availability", "describe_symptom", "ask_pricing",
+                "cancel_appointment", "reschedule_appointment", "change_selection"
+            ):
+                entities = raw_nlu_result.get("entities", {}) or {}
+                doc_name = entities.get("doctor_name")
+                spec_name = entities.get("specialty")
+                sym_name = entities.get("symptom")
+                pref_date = entities.get("datetime")
+                time_of_day = entities.get("time_of_day")
+
+                new_context = {**context}
+                if pref_date:
+                    new_context["preferred_date"] = pref_date
+                if time_of_day:
+                    new_context["time_of_day_hint"] = time_of_day
+
+                if doc_name:
+                    new_context["search_doctor_query"] = doc_name
+                
+                if spec_name:
+                    categories = await hms_client.list_specialties()
+                    category_list = [c["category"] for c in categories]
+                    matched = symptom_client.match_category(spec_name, category_list)
+                    if matched:
+                        new_context["pending_specialty"] = matched
+                        
+                elif sym_name:
+                    labels = await symptom_client.route_symptom(sym_name)
+                    categories = await hms_client.list_specialties()
+                    category_list = [c["category"] for c in categories]
+                    matched = next(
+                        (m for m in (symptom_client.match_category(label, category_list) for label in labels) if m),
+                        None
+                    )
+                    if matched:
+                        new_context["pending_specialty"] = matched
+
+                await _confirm_or_start_language(client, phone, new_context, input_value)
+                return
             
             # Log the raw interaction to the database
             if hasattr(db, "log_nlu_interaction"):
@@ -659,6 +700,19 @@ async def handle_message(
 # the greeting now comes as part of _handle_choosing_language's reply, once we know which
 # language to greet in).
 # ---------------------------------------------------------------------------------------
+
+
+async def _confirm_or_start_language(client: httpx.AsyncClient, phone: str, context: dict, input_value: str) -> None:
+    detected_lang = _detect_language(input_value) if input_value else None
+    if detected_lang:
+        confirm_context = {
+            **context,
+            "guess_lang": detected_lang,
+        }
+        await _transition_to(phone, "confirming_language", confirm_context, None)
+        await _trigger_step_prompt(client, phone, "confirming_language", confirm_context)
+    else:
+        await _start(client, phone, context)
 
 
 async def _start(client: httpx.AsyncClient, phone: str, init_context: dict | None = None) -> None:
