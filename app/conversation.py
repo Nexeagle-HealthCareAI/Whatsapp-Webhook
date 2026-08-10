@@ -1872,9 +1872,16 @@ async def _handle_confirming(client, phone, sender_name, input_type, input_value
 
 def _is_doctor_search_query(text: str) -> bool:
     normalized = text.strip().lower()
-    if re.search(r'\b(dr|doctor)\b', normalized):
-        cleaned = re.sub(r'\b(dr|doctor|btao|chahiye|dikhao|dikhayein|list|search|find|appointment|book|bok|apointment|apointmint)\b', '', normalized).strip()
-        if len(cleaned) > 1:
+    match = re.search(r'\b(?:dr\.?|doctor)[.,\s]*\s*([a-zA-Z]+)', normalized)
+    if match:
+        next_word = match.group(1)
+        forbidden = {
+            "btao", "chahiye", "dikhao", "dikhayein", "hai", "ho", "kr", "raha", "se", "milna",
+            "ko", "me", "ka", "ki", "ke", "kya", "kuch", "appoint", "appointment", "book",
+            "booking", "list", "search", "find", "with", "for", "an", "to", "please", "pls",
+            "help", "consult", "hai", "tha", "thi", "hu", "hua", "gaya", "gayi", "liye"
+        }
+        if next_word not in forbidden:
             return True
     return False
 

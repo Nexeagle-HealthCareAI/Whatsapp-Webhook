@@ -972,6 +972,14 @@ def test_unified_date_time_flow():
         conversation.db = original_db
 
 
+def test_is_doctor_search_query_whitelist():
+    check(conversation._is_doctor_search_query("Sir dard kr raha hai doctor btao") == False, "Sir dard sentence must be False")
+    check(conversation._is_doctor_search_query("Dr. Sharma se milna hai") == True, "Dr. Sharma must be True")
+    check(conversation._is_doctor_search_query("Dr Sharma se milna hai") == True, "Dr Sharma must be True")
+    check(conversation._is_doctor_search_query("doctor Verma se milna hai") == True, "doctor Verma must be True")
+    check(conversation._is_doctor_search_query("doctor btao") == False, "doctor btao must be False")
+
+
 def test_cancel_quit_and_back_logic():
     class MockDB:
         def __init__(self):
