@@ -1026,6 +1026,12 @@ def test_first_message_nlu_symptom_routing():
         "entities": {"symptom": "pet me bahut dard ho raha hai"}
     }
     async def mock_classify(client, text):
+        if "Kishanganj" in text:
+            return {
+                "intent": "provide_location",
+                "confidence": "high",
+                "entities": {"location": "Kishanganj"}
+            }
         return mock_nlu_val
     original_classify = conversation.nlu_client.classify_message
     conversation.nlu_client.classify_message = mock_classify
@@ -1043,21 +1049,36 @@ def test_first_message_nlu_symptom_routing():
 
     sent_texts = []
     sent_buttons = []
+    sent_lists = []
     
     async def mock_send_text(client, phone, text):
         sent_texts.append(text)
     async def mock_send_buttons(client, phone, text, buttons):
         sent_buttons.append((text, buttons))
+    async def mock_send_list(client, phone, text, button_label, rows, section_title):
+        sent_lists.append((text, rows))
 
     original_send_text = conversation.whatsapp_client.send_text
     original_send_buttons = conversation.whatsapp_client.send_buttons
+    original_send_list = conversation.whatsapp_client.send_list
+    original_send_loc = conversation.whatsapp_client.send_location_request
+    
+    async def mock_send_location_request(client, phone, text):
+        pass
+        
     conversation.whatsapp_client.send_text = mock_send_text
     conversation.whatsapp_client.send_buttons = mock_send_buttons
+    conversation.whatsapp_client.send_list = mock_send_list
+    conversation.whatsapp_client.send_location_request = mock_send_location_request
 
     try:
+        class MockClientObj:
+            pass
+        mock_client_obj = MockClientObj()
+        
         # Fresh user sends "pet me bahut dard ho raha hai"
         asyncio.run(conversation.handle_message(
-            None, "user_fresh_nlu", "Patient", "text", "pet me bahut dard ho raha hai"
+            mock_client_obj, "user_fresh_nlu", "Patient", "text", "pet me bahut dard ho raha hai"
         ))
 
         # Assertions
@@ -1068,6 +1089,24 @@ def test_first_message_nlu_symptom_routing():
         check(state[1].get("guess_lang") == "hg", f"should guess language (Hinglish), got {state[1].get('guess_lang')!r}")
         check(len(sent_buttons) == 1, "should send language confirmation buttons")
 
+        # Simulate confirming language (Yes)
+        asyncio.run(conversation.handle_message(
+            mock_client_obj, "user_fresh_nlu", "Patient", "button_reply", "lang_confirm_yes"
+        ))
+
+        state = db_mock.state.get("user_fresh_nlu")
+        check(state[0] == "choosing_location", f"should transition to choosing_location, got {state[0]!r}")
+
+        # Simulate sharing location by typing city
+        asyncio.run(conversation.handle_message(
+            mock_client_obj, "user_fresh_nlu", "Patient", "text", "Kishanganj"
+        ))
+
+        state = db_mock.state.get("user_fresh_nlu")
+        check(state[0] == "choosing_sort", f"should transition to choosing_sort, got {state[0]!r}")
+        check(state[1].get("specialty_category") == "Gynaecologist", f"specialty_category must be set to Gynaecologist, got {state[1].get('specialty_category')!r}")
+        check(len(sent_lists) == 1, "should send specialty sort options list")
+
     finally:
         conversation.db = original_db
         conversation.nlu_client.classify_message = original_classify
@@ -1075,6 +1114,8 @@ def test_first_message_nlu_symptom_routing():
         conversation.hms_client.list_specialties = original_list_specialties
         conversation.whatsapp_client.send_text = original_send_text
         conversation.whatsapp_client.send_buttons = original_send_buttons
+        conversation.whatsapp_client.send_list = original_send_list
+        conversation.whatsapp_client.send_location_request = original_send_loc
 
 
 def test_cancel_quit_and_back_logic():

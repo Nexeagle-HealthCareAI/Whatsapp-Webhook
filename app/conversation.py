@@ -239,9 +239,18 @@ def _step_for_action(action: str, slot_name: str | None, context: dict) -> str:
 
 async def _advance_booking_flow(client: httpx.AsyncClient, phone: str, context: dict, booking: dict) -> None:
     action, slot_name = booking_slots.next_action(booking)
-    if slot_name == "doctor" and context.get("search_doctor_query") and booking["doctor"]["status"] == "blank":
-        if await _search_doctors_flow(client, phone, context, context.get("current_step")):
+    if slot_name == "doctor" and booking["doctor"]["status"] == "blank":
+        if context.get("search_doctor_query"):
+            if await _search_doctors_flow(client, phone, context, context.get("current_step")):
+                return
+        elif context.get("pending_specialty"):
+            specialty = context["pending_specialty"]
+            # Clear pending_specialty from context to avoid double-processing,
+            # _send_sort_prompt saves it in context["specialty_category"]
+            context.pop("pending_specialty", None)
+            await _send_sort_prompt(client, phone, context, specialty, context.get("current_step"))
             return
+            
     next_step = _step_for_action(action, slot_name, context)
     current_step = context.get("current_step")
     context["booking"] = booking
@@ -507,6 +516,18 @@ async def handle_message(
             if location_text:
                 new_context = {**context, "location_text": location_text}
                 new_context = await _resolve_city(new_context)
+                if "booking" in new_context:
+                    booking = _get_or_create_clipboard(new_context)
+                    if new_context.get("city"):
+                        location_val = new_context["city"]
+                        if new_context.get("patient_lat") is not None:
+                            location_val = {"lat": new_context["patient_lat"], "lng": new_context["patient_lng"], "city": new_context.get("city")}
+                        booking_slots.fill(booking, "location", location_val, raw=location_text, source="user")
+                    else:
+                        booking_slots.mark_notfound(booking, "location", raw=location_text)
+                    await _advance_booking_flow(client, phone, new_context, booking)
+                    return
+
                 if new_context.get("search_doctor_query"):
                     if await _search_doctors_flow(client, phone, new_context, current_step):
                         return
