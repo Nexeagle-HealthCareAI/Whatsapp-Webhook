@@ -813,6 +813,27 @@ def test_doctor_search_matching_and_formatting():
         conversation._render_doctor_list = original_render_doctor_list
 
 
+def test_extract_location_from_query():
+    from app.resolver import extract_location_from_query
+    index = {"Kishanganj": [], "Purnea": [], "Delhi NCR": []}
+    
+    city, cleaned = extract_location_from_query("doctor Sharma in Kishanganj", index)
+    check(city == "Kishanganj", "should extract Kishanganj")
+    check(cleaned == "doctor sharma", "should clean query to doctor sharma")
+    
+    city, cleaned = extract_location_from_query("dentist near Purnea", index)
+    check(city == "Purnea", "should extract Purnea")
+    check(cleaned == "dentist", "should clean query to dentist")
+    
+    city, cleaned = extract_location_from_query("doctor Avinash in Delhi NCR", index)
+    check(city == "Delhi NCR", "should extract Delhi NCR (longest match first)")
+    check(cleaned == "doctor avinash", "should clean Delhi NCR")
+    
+    city, cleaned = extract_location_from_query("doctor Avinash without city", index)
+    check(city is None, "should return None city if not found")
+    check(cleaned == "doctor Avinash without city", "should return same query")
+
+
 def test_cancel_quit_and_back_logic():
     class MockDB:
         def __init__(self):

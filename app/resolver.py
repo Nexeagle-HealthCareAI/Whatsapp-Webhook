@@ -160,3 +160,25 @@ def resolve_location_from_text(index: dict, text: str) -> Resolution:
         return Resolution(status="zero", candidates=[])
     value = {"city": city}
     return Resolution(status="one", value=value, candidates=[value])
+
+
+def extract_location_from_query(query: str, index: dict) -> tuple[str | None, str]:
+    """Scans the query for any known city names from the index.
+    If found, returns (city_name, cleaned_query_without_city).
+    Otherwise, returns (None, query)."""
+    typed = (query or "").strip().lower()
+    if not typed:
+        return None, query
+
+    for city in sorted(index.keys(), key=len, reverse=True):
+        city_lower = city.lower()
+        if re.search(rf'\b{re.escape(city_lower)}\b', typed):
+            cleaned = re.sub(
+                rf'\b(in|at|of|near|from)?\s*{re.escape(city_lower)}\b',
+                '',
+                typed
+            ).strip()
+            cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+            return city, cleaned
+            
+    return None, query

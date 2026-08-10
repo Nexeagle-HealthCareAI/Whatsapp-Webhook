@@ -9,7 +9,7 @@ import httpx
 
 from app import booking_slots, city_index, db, hms_client, i18n, symptom_client, whatsapp_client
 from app.resolver import match_doctor_by_query as _match_doctor_by_query
-from app.resolver import resolve_doctor
+from app.resolver import resolve_doctor, extract_location_from_query
 from app.config import settings
 from app.geo import haversine_km
 from app.hms_client import HmsApiError
@@ -1869,9 +1869,20 @@ async def _search_doctors_flow(client: httpx.AsyncClient, phone: str, context: d
     lang = context.get("lang")
     try:
         all_docs = await city_index.get_all_doctors()
+        index = await city_index.get_index()
     except Exception as exc:
-        logger.error("Failed to fetch all doctors for search: %s", exc)
+        logger.error("Failed to fetch data for search: %s", exc)
         return False
+
+    extracted_city, clean_query = extract_location_from_query(query, index)
+    if extracted_city:
+        logger.info("Extracted city %r from doctor query %r. Clean query: %r", extracted_city, query, clean_query)
+        context["city"] = extracted_city
+        context.pop("patient_lat", None)
+        context.pop("patient_lng", None)
+        booking = _get_or_create_clipboard(context)
+        booking_slots.fill(booking, "location", extracted_city, raw=extracted_city, source="user")
+        query = clean_query
 
     lat, lng = context.get("patient_lat"), context.get("patient_lng")
     city = context.get("city")
