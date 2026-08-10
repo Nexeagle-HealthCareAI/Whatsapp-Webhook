@@ -335,6 +335,12 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Ya phir apne city/area ka naam type kar dijiye.",
         "bn": "অথবা এর পরিবর্তে শুধু আপনার শহর/এলাকার নাম টাইপ করুন।",
     },
+    "location_not_found": {
+        "en": "We couldn't find a city matching '{query}'. Please share location or type a valid city name.",
+        "hi": "हमें '{query}' नाम से कोई शहर नहीं मिला। कृपया लोकेशन शेयर करें या सही शहर का नाम टाइप करें।",
+        "hg": "Hamein '{query}' naam se koi city nahi mili. Kripya location share karein ya sahi city ka naam type karein.",
+        "bn": "আমরা '{query}' নামের কোনো शहर খুঁজে পাইনি। অনুগ্রহ করে অবস্থান শেয়ার করুন বা সঠিক শহরের নাম টাইপ করুন।",
+    },
     "search_mode_prompt": {
         "en": "How would you like to find a doctor?",
         "hi": "आप डॉक्टर कैसे खोजना चाहेंगे?",

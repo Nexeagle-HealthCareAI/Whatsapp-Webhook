@@ -567,11 +567,34 @@ def test_finalize_slot_selection_always_stores_a_date_string():
     today = date(2026, 8, 9)
     sent = {}
 
+    class MockDB:
+        async def save_conversation_state(self, phone, step, context):
+            sent["context"] = context
+        async def get_conversation_state(self, phone):
+            return None
+        async def clear_conversation_state(self, phone):
+            pass
+
     async def mock_send_patient_details_flow(client, phone, context):
         sent["context"] = context
 
     original = conversation._send_patient_details_flow
     conversation._send_patient_details_flow = mock_send_patient_details_flow
+    original_db = conversation.db
+    conversation.db = MockDB()
+    
+    original_send_text = conversation.whatsapp_client.send_text
+    original_send_buttons = conversation.whatsapp_client.send_buttons
+    original_send_location = conversation.whatsapp_client.send_location_request
+    original_send_list = conversation.whatsapp_client.send_list
+    
+    async def mock_nop(*args, **kwargs):
+        pass
+    conversation.whatsapp_client.send_text = mock_nop
+    conversation.whatsapp_client.send_buttons = mock_nop
+    conversation.whatsapp_client.send_location_request = mock_nop
+    conversation.whatsapp_client.send_list = mock_nop
+    
     mock_client = object()
     try:
         slot_with_real_date_object = {"date": today, "is_today": True, "shift_name": "Evening"}
@@ -584,6 +607,11 @@ def test_finalize_slot_selection_always_stores_a_date_string():
         check(isinstance(sent["context"]["preferred_date"], str), "an already-string date is left as a string")
     finally:
         conversation._send_patient_details_flow = original
+        conversation.db = original_db
+        conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_buttons = original_send_buttons
+        conversation.whatsapp_client.send_location_request = original_send_location
+        conversation.whatsapp_client.send_list = original_send_list
 
 
 def test_confirm_shows_clinic_and_distance():

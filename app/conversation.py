@@ -247,6 +247,55 @@ def _log_shadow(phone: str, current_step: str | None, context: dict) -> None:
         logger.exception("SHADOW comparison failed for %s (ignored)", phone)
 
 
+def _get_or_create_clipboard(context: dict) -> dict:
+    if "booking" in context and isinstance(context["booking"], dict):
+        return context["booking"]
+    slots = _shadow_clipboard(context)
+    context["booking"] = slots
+    return slots
+
+
+def _step_for_action(action: str, slot_name: str | None, context: dict) -> str:
+    if action == "ask" and slot_name == "lang":
+        return "choosing_language"
+    elif action == "disambiguate" and slot_name == "lang":
+        return "confirming_language"
+    elif action == "ask" and slot_name == "location":
+        return "choosing_location"
+    elif action == "disambiguate" and slot_name == "location":
+        return "choosing_location"
+    elif action == "ask" and slot_name == "doctor":
+        current_step = context.get("current_step")
+        if current_step in {
+            "choosing_search_mode", "awaiting_symptom", "awaiting_doctor_name",
+            "choosing_specialty_group", "choosing_specialty", "choosing_sort",
+            "confirming_wider_search", "choosing_doctor"
+        }:
+            return current_step
+        return "choosing_search_mode"
+    elif action == "disambiguate" and slot_name == "doctor":
+        return "choosing_doctor"
+    elif action in ("ask", "retry") and slot_name in ("date", "shift"):
+        return "choosing_slot"
+    elif action == "ask" and slot_name == "patient":
+        return "awaiting_patient_details"
+    elif action == "confirm":
+        return "confirming"
+    return "choosing_search_mode"
+
+
+async def _advance_booking_flow(client: httpx.AsyncClient, phone: str, context: dict, booking: dict) -> None:
+    action, slot_name = booking_slots.next_action(booking)
+    if slot_name == "doctor" and context.get("search_doctor_query") and booking["doctor"]["status"] == "blank":
+        if await _search_doctors_flow(client, phone, context, context.get("current_step")):
+            return
+    next_step = _step_for_action(action, slot_name, context)
+    current_step = context.get("current_step")
+    context["booking"] = booking
+    await _transition_to(phone, next_step, context, current_step)
+    await _trigger_step_prompt(client, phone, next_step, context)
+
+
 async def handle_message(
     client: httpx.AsyncClient,
     phone: str,
@@ -266,6 +315,7 @@ async def handle_message(
     state = await db.get_conversation_state(phone)
     current_step = state["current_step"] if state else None
     context = state["context"] if state else {}
+    booking = _get_or_create_clipboard(context)
     _log_shadow(phone, current_step, context)  # SHADOW MODE — remove in phase 3
     lang = context.get("lang")
     has_lang_init = lang is not None
@@ -275,6 +325,7 @@ async def handle_message(
             logger.info("Auto-swapping language from %s to %s for user %s", lang, detected_lang, phone)
             lang = detected_lang
             context["lang"] = lang
+            booking_slots.fill(booking, "lang", lang, source="user")
             if current_step:
                 await db.save_conversation_state(phone, current_step, context)
 
@@ -671,9 +722,11 @@ async def _handle_choosing_language(client, phone, input_type, input_value, cont
         # that's exactly what's being asked.
         await whatsapp_client.send_text(client, phone, "Please tap one of the language options above.")
         return
-    context = {**context, "lang": lang}
+    context["lang"] = lang
+    booking = _get_or_create_clipboard(context)
+    booking_slots.fill(booking, "lang", lang, source="user")
     await whatsapp_client.send_text(client, phone, t("greeting", lang))
-    await _send_location_request(client, phone, context)
+    await _advance_booking_flow(client, phone, context, booking)
 
 
 async def _handle_confirming_language(client, phone, input_type, input_value, context) -> None:
@@ -708,16 +761,16 @@ async def _handle_confirming_language(client, phone, input_type, input_value, co
             
     if choice == "lang_confirm_yes":
         lang = guess_lang
-        new_context = {"lang": lang}
-        if "search_doctor_query" in context:
-            new_context["search_doctor_query"] = context["search_doctor_query"]
-        
-        await _send_location_request(client, phone, new_context)
+        context["lang"] = lang
+        booking = _get_or_create_clipboard(context)
+        booking_slots.fill(booking, "lang", lang, source="user")
+        await _advance_booking_flow(client, phone, context, booking)
     elif choice == "lang_confirm_change":
         init_context = {}
         if "search_doctor_query" in context:
             init_context["search_doctor_query"] = context["search_doctor_query"]
         await db.clear_conversation_state(phone)
+        init_context.pop("booking", None)
         await _start(client, phone, init_context)
     else:
         # Prompt them again
@@ -788,25 +841,25 @@ async def _handle_choosing_location(client, phone, input_type, input_value, cont
     lang = context.get("lang")
     if input_type == "location":
         lat_str, lng_str = input_value.split(",")
-        context = {**context, "patient_lat": float(lat_str), "patient_lng": float(lng_str)}
+        context["patient_lat"] = float(lat_str)
+        context["patient_lng"] = float(lng_str)
     elif input_type == "text" and input_value.strip():
-        context = {**context, "location_text": input_value.strip()}
+        context["location_text"] = input_value.strip()
     else:
         await whatsapp_client.send_text(client, phone, t("location_prompt", lang))
         return
     context = await _resolve_city(context)
 
-    if context.get("search_doctor_query"):
-        if await _search_doctors_flow(client, phone, context, "choosing_location"):
-            return
-        else:
-            query = context.get("search_doctor_query")
-            await whatsapp_client.send_text(
-                client, phone, t("search_doctor_not_found", lang, query=query)
-            )
-            context.pop("search_doctor_query", None)
+    booking = _get_or_create_clipboard(context)
+    if context.get("city"):
+        location_val = context["city"]
+        if context.get("patient_lat") is not None:
+            location_val = {"lat": context["patient_lat"], "lng": context["patient_lng"], "city": context.get("city")}
+        booking_slots.fill(booking, "location", location_val, raw=context.get("location_text"), source="user")
+    else:
+        booking_slots.mark_notfound(booking, "location", raw=context.get("location_text"))
 
-    await _send_search_mode_prompt(client, phone, context)
+    await _advance_booking_flow(client, phone, context, booking)
 
 
 # ---------------------------------------------------------------------------------------
@@ -868,15 +921,6 @@ _DOCTOR_SELECTION_KEYS = (
 async def _handle_doctor_search_miss(
     client: httpx.AsyncClient, phone: str, context: dict, query: str
 ) -> None:
-    """A doctor-name search found nothing: say so, drop the query and any previously
-    selected doctor, and offer a way forward.
-
-    Without the cleanup, an abandoned search leaves search_doctor_query and the old
-    doctor's details stale in context indefinitely (caught in shadow-mode testing — see
-    _shadow_clipboard's search_doctor_query handling). Without the re-prompt, the patient
-    is left at a dead end with no next step. _handle_awaiting_doctor_name's own miss branch
-    already did both; the NLU-driven paths in handle_message each did neither, in three
-    separate places."""
     await whatsapp_client.send_text(
         client, phone,
         await _phrase(client, "search_doctor_miss", context, "search_doctor_not_found", query=query),
@@ -884,7 +928,11 @@ async def _handle_doctor_search_miss(
     context.pop("search_doctor_query", None)
     for key in _DOCTOR_SELECTION_KEYS:
         context.pop(key, None)
-    await _send_search_mode_prompt(client, phone, context)
+
+    booking = _get_or_create_clipboard(context)
+    booking_slots.mark_notfound(booking, "doctor", raw=query)
+
+    await _advance_booking_flow(client, phone, context, booking)
 
 
 async def _handle_choosing_search_mode(client, phone, input_type, input_value, context) -> None:
@@ -1347,20 +1395,18 @@ async def _render_doctor_list(
     the opted-in wider search so both present results identically."""
     lang = context.get("lang")
     sorted_doctors = _sort_doctors(doctors, context)[:10]
+    booking = _get_or_create_clipboard(context)
     
     if len(sorted_doctors) == 1:
         d = sorted_doctors[0]
-        context = {
-            **context,
-            "doctor_id": d["doctorId"],
-            "doctor_name": d.get("fullName") or "Doctor",
-            "doctor_fee": _doctor_fee(d),
-            "hospital_name": d.get("hospitalName") or "",
-            "hospital_address": d.get("address") or "",
-            "hospital_city": d.get("city") or "",
-            "hospital_lat": d.get("latitude"),
-            "hospital_lng": d.get("longitude"),
-        }
+        context["doctor_id"] = d["doctorId"]
+        context["doctor_name"] = d.get("fullName") or "Doctor"
+        context["doctor_fee"] = _doctor_fee(d)
+        context["hospital_name"] = d.get("hospitalName") or ""
+        context["hospital_address"] = d.get("address") or ""
+        context["hospital_city"] = d.get("city") or ""
+        context["hospital_lat"] = d.get("latitude")
+        context["hospital_lng"] = d.get("longitude")
         context.pop("doctor_options", None)
         
         info_msg = f"Found matching doctor: {context['doctor_name']} ({context['hospital_name']})."
@@ -1372,7 +1418,8 @@ async def _render_doctor_list(
             info_msg = f"আপনার জন্য ডাক্তার পাওয়া গেছে: {context['doctor_name']} ({context['hospital_name']})."
             
         await whatsapp_client.send_text(client, phone, info_msg)
-        await _send_slot_options(client, phone, context)
+        booking_slots.fill(booking, "doctor", {"id": d["doctorId"], "fullName": context["doctor_name"]}, raw=context["doctor_name"], source="user")
+        await _advance_booking_flow(client, phone, context, booking)
         return
 
     rows = [
@@ -1382,10 +1429,10 @@ async def _render_doctor_list(
     await whatsapp_client.send_list(
         client, phone, t("doctor_list_prompt", lang), t("doctor_list_button", lang), rows, "Doctors"
     )
-    # Full doctor dicts (not just IDs) are stashed in context so the next step can pull out
-    # fee/hospital name/address/lat-long without a second API round trip — see
-    # _handle_choosing_doctor below. Small enough (<=10 doctors) to live in context_json.
-    context = {**context, "doctor_options": {d["doctorId"]: d for d in sorted_doctors}}
+    context["doctor_options"] = {d["doctorId"]: d for d in sorted_doctors}
+    booking_slots.mark_ambiguous(booking, "doctor", [d["doctorId"] for d in sorted_doctors], raw=context.get("search_doctor_query"))
+    context["booking"] = booking
+    
     if current_step:
         await _transition_to(phone, "choosing_doctor", context, current_step)
     else:
@@ -1428,20 +1475,20 @@ async def _handle_choosing_doctor(client, phone, input_type, input_value, contex
         await whatsapp_client.send_text(client, phone, t("doctor_choose_hint", lang))
         return
 
-    context = {
-        **context,
-        "doctor_id": doctor_id,
-        "doctor_name": doctor.get("fullName") or "Doctor",
-        "doctor_fee": _doctor_fee(doctor),
-        "hospital_name": doctor.get("hospitalName") or "",
-        "hospital_address": doctor.get("address") or "",
-        "hospital_city": doctor.get("city") or "",
-        "hospital_lat": doctor.get("latitude"),
-        "hospital_lng": doctor.get("longitude"),
-    }
+    context["doctor_id"] = doctor_id
+    context["doctor_name"] = doctor.get("fullName") or "Doctor"
+    context["doctor_fee"] = _doctor_fee(doctor)
+    context["hospital_name"] = doctor.get("hospitalName") or ""
+    context["hospital_address"] = doctor.get("address") or ""
+    context["hospital_city"] = doctor.get("city") or ""
+    context["hospital_lat"] = doctor.get("latitude")
+    context["hospital_lng"] = doctor.get("longitude")
     context.pop("doctor_options", None)  # no longer needed, keep context_json lean
 
-    await _send_slot_options(client, phone, context)
+    booking = _get_or_create_clipboard(context)
+    booking_slots.fill(booking, "doctor", {"id": doctor_id, "fullName": context["doctor_name"]}, raw=context["doctor_name"], source="user")
+
+    await _advance_booking_flow(client, phone, context, booking)
 
 
 # ---------------------------------------------------------------------------------------
@@ -1531,16 +1578,17 @@ async def _finalize_slot_selection(client: httpx.AsyncClient, phone: str, contex
     # than at each call site.
     raw_date = selected_slot["date"]
     preferred_date = raw_date.isoformat() if hasattr(raw_date, "isoformat") else raw_date
-    context = {
-        **context,
-        "preferred_date": preferred_date,
-        "date_label": date_label,
-        "shift_label": selected_slot["shift_name"],
-    }
+    context["preferred_date"] = preferred_date
+    context["date_label"] = date_label
+    context["shift_label"] = selected_slot["shift_name"]
     context.pop("offered_slots", None)
     context.pop("time_of_day_hint", None)
 
-    await _send_patient_details_flow(client, phone, context)
+    booking = _get_or_create_clipboard(context)
+    booking_slots.fill(booking, "date", preferred_date, raw=date_label, source="user")
+    booking_slots.fill(booking, "shift", selected_slot["shift_name"], raw=selected_slot["shift_name"], source="user")
+
+    await _advance_booking_flow(client, phone, context, booking)
 
 
 async def _send_slot_options(client: httpx.AsyncClient, phone: str, context: dict) -> None:
@@ -1712,32 +1760,20 @@ async def _handle_awaiting_patient_details(client, phone, input_type, input_valu
         await _send_patient_details_flow(client, phone, context)
         return
 
-    context = {
-        **context,
-        "patient_display_name": name,
-        "patient_age": age,
-        "patient_gender": gender,
-        "patient_guardian": guardian,
-    }
+    context["patient_display_name"] = name
+    context["patient_age"] = age
+    context["patient_gender"] = gender
+    context["patient_guardian"] = guardian
 
-    fee = context.get("doctor_fee")
-    await whatsapp_client.send_buttons(
-        client, phone,
-        t(
-            "confirm_prompt", lang,
-            patient=_patient_line(context, lang),
-            doctor=context.get("doctor_name", "-"),
-            where=_clinic_line(context, lang),
-            when=f"{context.get('date_label', '')}, {context.get('shift_label', '')}",
-            fee=f"{fee:.0f}" if fee is not None else "-",
-        ),
-        [
-            ("confirm", t("confirm_btn", lang)),
-            ("update_details", t("update_details_btn", lang)),
-            ("cancel", t("cancel_btn", lang)),
-        ],
-    )
-    await _transition_to(phone, "confirming", context, "awaiting_patient_details")
+    booking = _get_or_create_clipboard(context)
+    booking_slots.fill(booking, "patient", {
+        "name": name,
+        "age": age,
+        "gender": gender,
+        "guardian": guardian
+    }, source="user")
+
+    await _advance_booking_flow(client, phone, context, booking)
 
 
 async def _handle_confirming(client, phone, sender_name, input_type, input_value, context) -> None:
@@ -1817,7 +1853,9 @@ async def _handle_confirming(client, phone, sender_name, input_type, input_value
 def _is_doctor_search_query(text: str) -> bool:
     normalized = text.strip().lower()
     if re.search(r'\b(dr|doctor)\b', normalized):
-        return True
+        cleaned = re.sub(r'\b(dr|doctor|btao|chahiye|dikhao|dikhayein|list|search|find|appointment|book|bok|apointment|apointmint)\b', '', normalized).strip()
+        if len(cleaned) > 1:
+            return True
     return False
 
 
@@ -1835,32 +1873,14 @@ async def _search_doctors_flow(client: httpx.AsyncClient, phone: str, context: d
         logger.error("Failed to fetch all doctors for search: %s", exc)
         return False
 
-    matches = _match_doctor_by_query(query, all_docs)
-    if not matches:
-        return False
-
-    # Filter matches by location first (GPS radius or city name)
-    local_matches = []
     lat, lng = context.get("patient_lat"), context.get("patient_lng")
     city = context.get("city")
 
-    if lat is not None and lng is not None:
-        max_radius = settings.doctor_search_radii_km[-1]
-        local_matches = [
-            d for d in matches
-            if _doctor_distance_km(d, lat, lng) <= max_radius
-        ]
-    elif city:
-        city_clean = city.strip().lower()
-        local_matches = [
-            d for d in matches
-            if (d.get("city") or "").strip().lower() == city_clean
-        ]
+    resolution = resolve_doctor(query, all_docs, city=city, patient_lat=lat, patient_lng=lng)
+    if resolution.status == "zero":
+        return False
 
-    if local_matches:
-        matches = local_matches
-
-    await _render_doctor_list(client, phone, context, matches, current_step)
+    await _render_doctor_list(client, phone, context, resolution.candidates, current_step)
     return True
 
 
@@ -1888,6 +1908,10 @@ async def _trigger_step_prompt(client: httpx.AsyncClient, phone: str, step: str,
         ]
         await whatsapp_client.send_buttons(client, phone, prompt, buttons)
     elif step == "choosing_location":
+        booking = _get_or_create_clipboard(context)
+        if booking["location"]["status"] == "notfound":
+            query = booking["location"]["raw"] or ""
+            await whatsapp_client.send_text(client, phone, t("location_not_found", lang, query=query))
         await _send_location_request(client, phone, context)
     elif step == "choosing_search_mode":
         await _send_search_mode_prompt(client, phone, context)
