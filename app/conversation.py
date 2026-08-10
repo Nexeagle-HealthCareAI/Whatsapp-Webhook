@@ -1704,7 +1704,7 @@ async def _send_patient_details_flow(client: httpx.AsyncClient, phone: str, cont
 
     initial_data = {}
     choices = [
-        {"value": s["button_id"], "title": s["label"]}
+        {"id": s["button_id"], "title": s["label"]}
         for s in slots
     ]
     initial_data = {"slots": choices}

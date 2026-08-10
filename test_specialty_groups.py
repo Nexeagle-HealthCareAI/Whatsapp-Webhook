@@ -942,7 +942,7 @@ def test_unified_date_time_flow():
         init_data = sent_flows[0][1]
         check(init_data is not None and "slots" in init_data, "initial_data must contain available slots choices")
         check(len(init_data["slots"]) > 0, "must offer at least one slot")
-        check(init_data["slots"][0]["value"] == "slot_today_morning", "value must match morning slot ID")
+        check(init_data["slots"][0]["id"] == "slot_today_morning", "id must match morning slot ID")
         
         submit_data = {
             "name": "Riya",
