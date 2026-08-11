@@ -242,12 +242,37 @@ def _step_for_action(action: str, slot_name: str | None, context: dict) -> str:
 
 
 async def _advance_booking_flow(client: httpx.AsyncClient, phone: str, context: dict, booking: dict) -> None:
+    # A pending doctor-name search takes priority over whatever next_action()'s own slot
+    # order would ask for next. SLOT_ORDER puts location before doctor, so waiting for
+    # next_action() to say "doctor" (i.e. waiting for location to already be filled) means a
+    # patient who named a doctor on their very first message — before location was ever
+    # known — gets asked for location first with no mention of the doctor they named.
+    # _search_doctors_flow (via _render_doctor_list) already asks for location ITSELF, and
+    # only when actually needed to narrow a 10+ match — see Task 3. A pending specialty is
+    # different: the symptom/specialty design always needs location before searching (Tasks
+    # 4/5), so that still waits its turn in next_action()'s order below.
+    if booking["doctor"]["status"] == "blank" and context.get("search_doctor_query"):
+        if await _search_doctors_flow(client, phone, context, context.get("current_step")):
+            return
+        # Zero matches nationwide — say so and clear the abandoned query, same handling
+        # the regular (non-first-message) hot-swap path already uses on a miss.
+        await _handle_doctor_search_miss(client, phone, context, context["search_doctor_query"])
+        return
+
+    # Once a doctor is resolved, location no longer matters for anything downstream (slot
+    # picking, patient details, confirm) — either it was already needed and filled to FIND
+    # the doctor (the specialty/symptom path), or a name search resolved without it (the
+    # branch above). SLOT_ORDER still lists location before doctor though, so without this,
+    # next_action() would ask for it purely because of list position, on a name search that
+    # never needed it. Set directly rather than via booking_slots.fill(), which would
+    # cascade-invalidate the doctor just resolved — location "becoming known" is not really
+    # what's happening here, it's becoming moot.
+    if booking["doctor"]["status"] == "filled" and booking["location"]["status"] == "blank":
+        booking["location"] = {"value": None, "raw": None, "candidates": [], "status": "filled", "source": "inferred"}
+
     action, slot_name = booking_slots.next_action(booking)
     if slot_name == "doctor" and booking["doctor"]["status"] == "blank":
-        if context.get("search_doctor_query"):
-            if await _search_doctors_flow(client, phone, context, context.get("current_step")):
-                return
-        elif context.get("pending_specialty"):
+        if context.get("pending_specialty"):
             specialty = context["pending_specialty"]
             # Clear pending_specialty from context to avoid double-processing,
             # _send_sort_prompt saves it in context["specialty_category"]

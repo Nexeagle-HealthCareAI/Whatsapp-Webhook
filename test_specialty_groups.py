@@ -2028,6 +2028,127 @@ def test_radius_auto_widens_without_confirm_tap():
         conversation.hms_client.list_doctors = original_list_doctors
 
 
+def test_first_message_doctor_name_resolves_without_waiting_for_location():
+    """Reported live bug: a fresh user's first message naming a doctor ("Dr Avinash k sath
+    appointment book krna hai") showed the personalized single-match reply nowhere — after
+    confirming the (low-confidence, romanized) detected language, the bot asked for location
+    with no mention of the doctor at all.
+
+    Root cause: _advance_booking_flow only looked at search_doctor_query once next_action()
+    said "doctor" — which, per booking_slots.SLOT_ORDER (lang, location, doctor, ...), only
+    happens after location is already filled. A name search that resolves without needing
+    location (0/1/few matches) never got the chance to run first.
+
+    Fix: search_doctor_query is checked before next_action() at all, and once a doctor
+    resolves without location being known, location is marked satisfied directly (not via
+    booking_slots.fill(), which would cascade-invalidate the doctor just resolved) so the
+    flow doesn't then ask for location purely because of slot position."""
+    import asyncio
+
+    class MockDB:
+        def __init__(self):
+            self.state = {}
+
+        async def get_conversation_state(self, phone):
+            if phone in self.state:
+                step, ctx = self.state[phone]
+                return {"current_step": step, "context": ctx}
+            return None
+
+        async def save_conversation_state(self, phone, step, context):
+            self.state[phone] = (step, context)
+
+        async def clear_conversation_state(self, phone):
+            self.state.pop(phone, None)
+
+        async def log_nlu_interaction(self, **kw):
+            pass
+
+    db_mock = MockDB()
+    original_db = conversation.db
+    original_router_db = conversation.intent_router.db
+    conversation.db = db_mock
+    conversation.intent_router.db = db_mock
+
+    sent_texts, sent_buttons, sent_flows = [], [], []
+
+    async def mock_send_text(client, to, text):
+        sent_texts.append(text)
+
+    async def mock_send_buttons(client, to, text, buttons):
+        sent_buttons.append((text, buttons))
+
+    async def mock_send_flow(client, to, body_text, flow_id, flow_cta, screen_id, flow_token, initial_data=None):
+        sent_flows.append(body_text)
+        return True
+
+    async def mock_send_location_request(client, to, text):
+        raise AssertionError(f"location must not be requested for a single resolved match, got: {text!r}")
+
+    original_send_text = conversation.whatsapp_client.send_text
+    original_send_buttons = conversation.whatsapp_client.send_buttons
+    original_send_flow = conversation.whatsapp_client.send_flow
+    original_send_loc_req = conversation.whatsapp_client.send_location_request
+    conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_buttons = mock_send_buttons
+    conversation.whatsapp_client.send_flow = mock_send_flow
+    conversation.whatsapp_client.send_location_request = mock_send_location_request
+
+    mock_nlu = {"intent": "book_appointment", "confidence": "high", "entities": {"doctor_name": "Avinash"}}
+
+    async def mock_classify(client, text):
+        return mock_nlu
+
+    original_classify = conversation.nlu_client.classify_message
+    conversation.nlu_client.classify_message = mock_classify
+
+    async def mock_get_all_doctors(force_refresh=False):
+        return [{
+            "doctorId": "d1", "fullName": "Dr. Avinash Kumar", "hospitalName": "Purnea General Hospital",
+            "city": "Kishanganj", "primaryMedicalSpecialityPatientFacingName": "General Physician",
+            "rating": 4.5, "discountedFee": 400,
+        }]
+
+    original_get_all_doctors = conversation.city_index.get_all_doctors
+    conversation.city_index.get_all_doctors = mock_get_all_doctors
+
+    async def mock_get_offered_slots(doctor_id, lang):
+        from datetime import date
+        return [{"date": date(2026, 8, 12), "is_today": True, "shift_name": "Morning", "button_id": "slot_today_morning", "label": "Morning (Today)"}]
+
+    original_get_offered_slots = conversation._get_offered_slots
+    conversation._get_offered_slots = mock_get_offered_slots
+
+    mock_client = object()
+    try:
+        # Turn 1: fresh user, first message, romanized text -> low-confidence detection,
+        # confirmation shown (this part is correct and expected).
+        asyncio.run(conversation.handle_message(mock_client, "fb1", "User", "text", "Dr Avinash k sath appointment book krna hai"))
+        check(len(sent_buttons) == 1, "first message with low-confidence detection should show the confirm buttons")
+
+        # Turn 2: patient taps Proceed.
+        asyncio.run(conversation.handle_message(mock_client, "fb1", "User", "button_reply", "lang_confirm_yes"))
+        step, ctx = db_mock.state.get("fb1", (None, {}))
+
+        check(ctx.get("doctor_id") == "d1", f"doctor should resolve to the single match, got doctor_id={ctx.get('doctor_id')!r}")
+        check(
+            any("Avinash" in t for t in sent_texts),
+            f"a message naming the resolved doctor should have been sent, got {sent_texts!r}",
+        )
+        check(len(sent_flows) == 1, "should proceed straight to the patient details Flow")
+        check(step == "awaiting_patient_details", f"should land on awaiting_patient_details, got {step!r}")
+    finally:
+        conversation.db = original_db
+        conversation.intent_router.db = original_router_db
+        conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_buttons = original_send_buttons
+        conversation.whatsapp_client.send_flow = original_send_flow
+        conversation.whatsapp_client.send_location_request = original_send_loc_req
+        conversation.nlu_client.classify_message = original_classify
+        conversation.city_index.get_all_doctors = original_get_all_doctors
+        conversation._get_offered_slots = original_get_offered_slots
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:
