@@ -106,6 +106,47 @@ async def visit_summary_qr_redirect(appointment_id: str):
     return await _document_qr_redirect("RXV", appointment_id, hms_client.get_visit_summary_url)
 
 
+@router.get("/doc/{doctor_id}")
+async def doctor_booking_qr_redirect(doctor_id: str):
+    """Per-doctor QR target (Doctor Dekho profile pages) -- validates the doctor server-side
+    before ever opening WhatsApp, same posture as checkin_qr_redirect above. Scanning it lands
+    the patient directly into a booking flow for THIS exact doctor -- see conversation.py's
+    DRBOOK trigger, which skips specialty/name search entirely."""
+    if not settings.whatsapp_display_number:
+        logger.warning("GET /doc/%s hit but WHATSAPP_DISPLAY_NUMBER isn't configured yet", doctor_id)
+        return Response(
+            content="Booking via WhatsApp isn't set up yet. Please book on the website instead.",
+            media_type="text/plain",
+            status_code=503,
+        )
+
+    try:
+        await hms_client.get_doctor_by_id(doctor_id)
+    except HmsApiError:
+        return Response(
+            content="This doctor's booking link isn't valid.",
+            media_type="text/plain",
+            status_code=404,
+        )
+
+    wa_text = quote(f"DRBOOK {doctor_id}")
+    return RedirectResponse(f"https://wa.me/{settings.whatsapp_display_number}?text={wa_text}")
+
+
+@router.get("/start")
+async def generic_whatsapp_redirect():
+    """Generic 'chat with us' QR target -- e.g. the Doctor Dekho homepage's WhatsApp CTA. No
+    code to resolve here, unlike every other route in this file -- just opens a fresh
+    conversation, same as a patient messaging the bot number directly."""
+    if not settings.whatsapp_display_number:
+        return Response(
+            content="WhatsApp chat isn't set up yet. Please call the hospital directly.",
+            media_type="text/plain",
+            status_code=503,
+        )
+    return RedirectResponse(f"https://wa.me/{settings.whatsapp_display_number}")
+
+
 def _verify_signature(raw_body: bytes, signature_header: str | None) -> bool:
     if not signature_header or not signature_header.startswith("sha256="):
         return False

@@ -42,6 +42,13 @@ _DISCHARGE_TRIGGER_PATTERN = re.compile(r"^discharge\s+(\S+)$", re.IGNORECASE)
 _PRESCRIPTION_TRIGGER_PATTERN = re.compile(r"^rx\s+(\S+)$", re.IGNORECASE)
 _VISIT_SUMMARY_TRIGGER_PATTERN = re.compile(r"^rxv\s+(\S+)$", re.IGNORECASE)
 
+# Doctor Dekho per-doctor QR (GET /doc/{doctorId} in webhook.py) -- deliberately NOT
+# "DOCTOR <id>"/"BOOK <id>": both are plausible things a patient types organically ("doctor
+# sharma", "book appointment"), which this interceptor would then wrongly hijack before NLU
+# ever sees it. "DRBOOK" reads as a machine code, same as CHECKIN/DISCHARGE/RX/RXV, with no
+# realistic organic-message collision. See _handle_doctor_booking_trigger below.
+_DOCTOR_BOOKING_TRIGGER_PATTERN = re.compile(r"^drbook\s+(\S+)$", re.IGNORECASE)
+
 # (pattern, resolver attribute name, filename, "not available" i18n key, "delivered" caption
 # i18n key) — the resolver is looked up on hms_client by name at call time (see
 # _handle_document_trigger), not bound to the function object here, so it stays patchable
@@ -370,17 +377,22 @@ async def handle_message(
     state = await db.get_conversation_state(phone)
     current_step = state["current_step"] if state else None
     context = state["context"] if state else {}
-    # OPD QR check-in / discharge-summary & prescription QR pull: deterministic commands from
-    # a QR scan (GET /c, /d, /rx, /rxv in webhook.py), not natural language — intercepted
-    # before language detection/NLU/the clipboard even initialize, same priority as
-    # "cancel"/"back" below but earlier, so it never burns an NLU call or risks the
-    # casual-chat fallback swallowing it. Existing conversation state (e.g. a booking in
-    # progress) is intentionally left untouched unless the code is valid.
+    # OPD QR check-in / discharge-summary & prescription QR pull / per-doctor booking QR:
+    # deterministic commands from a QR scan (GET /c, /d, /rx, /rxv, /doc in webhook.py), not
+    # natural language — intercepted before language detection/NLU/the clipboard even
+    # initialize, same priority as "cancel"/"back" below but earlier, so it never burns an
+    # NLU call or risks the casual-chat fallback swallowing it. Existing conversation state
+    # (e.g. a booking in progress) is intentionally left untouched unless the code is valid.
     if input_type == "text" and input_value.strip():
         stripped_input = input_value.strip()
         checkin_match = _CHECKIN_TRIGGER_PATTERN.match(stripped_input)
         if checkin_match:
             await _handle_checkin_trigger(client, phone, checkin_match.group(1), context, current_step)
+            return
+
+        doctor_booking_match = _DOCTOR_BOOKING_TRIGGER_PATTERN.match(stripped_input)
+        if doctor_booking_match:
+            await _handle_doctor_booking_trigger(client, phone, doctor_booking_match.group(1), context)
             return
 
         for pattern, resolver_name, filename, not_available_key, delivered_key in _DOCUMENT_TRIGGERS:
@@ -2337,6 +2349,69 @@ async def _handle_document_trigger(
         # generic retry message is more accurate here than "not available", which would
         # wrongly imply nothing was ever uploaded.
         await whatsapp_client.send_text(client, phone, t("error_hms", lang))
+
+
+# ---------------------------------------------------------------------------------------
+# Doctor Dekho per-doctor QR -- deterministically starts a NEW booking flow anchored to one
+# already-known doctor (no specialty/name search at all), then hands off to the exact same
+# machinery the free-text doctor-name-search path already uses (_advance_booking_flow's
+# "doctor filled -> location auto-inferred -> ask date" cascade). Unlike the document-pull
+# triggers above, this doesn't resolve-and-reply in one shot -- it kicks off a multi-step
+# conversation, same shape as a patient typing a doctor's name from scratch.
+# ---------------------------------------------------------------------------------------
+
+
+async def _handle_doctor_booking_trigger(client: httpx.AsyncClient, phone: str, doctor_id: str, context: dict) -> None:
+    # Re-resolves independently of GET /doc/{doctorId}'s own validation (app/webhook.py) --
+    # same "redirect is a UX nicety, never the authoritative check" reasoning as
+    # _handle_checkin_trigger below.
+    lang = context.get("lang")
+    try:
+        doctor = await hms_client.get_doctor_by_id(doctor_id)
+    except HmsApiError:
+        await whatsapp_client.send_text(client, phone, t("doctor_not_available", lang))
+        return
+
+    # Fresh clipboard, discarding whatever the patient was doing before -- scanning a
+    # specific doctor's QR is unambiguously "start a new booking with THIS doctor", same
+    # "start fresh" choice _handle_checkin_trigger below makes for check-in. Value shape
+    # ({id, fullName}) matches exactly what the free-text doctor-name-search path fills this
+    # slot with (see the two booking_slots.fill(booking, "doctor", ...) call sites above) --
+    # everything downstream (location auto-infer, date/shift asks, final booking submission)
+    # is shared code that doesn't know or care how the doctor slot got filled. Both existing
+    # call sites ALSO set these three plain context keys alongside the slot fill (not derived
+    # from booking["doctor"]["value"] anywhere downstream) -- _send_patient_details_flow reads
+    # context["doctor_id"] directly to fetch offered slots, and the final booking-submission
+    # step (line ~2086) reads it again to actually call hms_client.book_appointment. Missing
+    # this was caught by test_doctor_booking_qr.py: without it, _send_patient_details_flow
+    # sees no doctor_id, finds no slots, and silently falls back to "choosing_doctor" instead
+    # of ever asking for a date.
+    booking = booking_slots.empty()
+    booking_slots.fill(
+        booking, "doctor",
+        {"id": doctor["doctorId"], "fullName": doctor["fullName"]},
+        raw=doctor.get("fullName"), source="qr",
+    )
+    doctor_context_fields = {
+        "doctor_id": doctor["doctorId"],
+        "doctor_name": doctor.get("fullName") or "Doctor",
+        "doctor_fee": _doctor_fee(doctor),
+    }
+
+    if lang:
+        # Language already known from earlier this conversation -- skip straight to the
+        # welcome + booking cascade, same branch _confirm_or_start_language takes on a
+        # confident language detection.
+        new_context = {"lang": lang, "booking": booking, **doctor_context_fields}
+        booking_slots.fill(booking, "lang", lang, source="user")
+        await whatsapp_client.send_text(client, phone, t("welcome_banner", lang))
+        await _advance_booking_flow(client, phone, new_context, booking)
+    else:
+        # First-ever contact (or language forgotten) -- ask, same as any other fresh booking
+        # entry point. _start preserves whatever extra context keys are already set (see its
+        # own `ctx = init_context or {}`), so the pre-filled doctor slot survives into
+        # _handle_choosing_language's own _advance_booking_flow call once the patient picks one.
+        await _start(client, phone, {"booking": booking, **doctor_context_fields})
 
 
 # ---------------------------------------------------------------------------------------

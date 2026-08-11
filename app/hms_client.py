@@ -174,6 +174,25 @@ async def get_visit_summary_url(appointment_id: str) -> str:
 
 
 @_retry_network_errors
+async def get_doctor_by_id(doctor_id: str) -> dict[str, Any]:
+    """Resolves a scanned doctor QR code (DRBOOK <doctorId> -- see conversation.py) to that
+    exact doctor -- deterministic, no fuzzy name matching involved, unlike the free-text
+    doctor-name search path (resolver.py). Returns the same {doctorId, fullName, ...} shape
+    as list_doctors' entries (both come from the same /public/doctors data). Raises
+    HmsApiError if the id doesn't resolve (deleted, delisted, or never existed) -- callers
+    should treat that as "this doctor isn't bookable right now"."""
+    async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=10) as client:
+        response = await client.get(f"/public/doctors/{doctor_id}", headers=_headers())
+    if response.status_code == 404:
+        raise HmsApiError("Doctor not found")
+    response.raise_for_status()
+    data = response.json()
+    if not data.get("success") or not data.get("doctor"):
+        raise HmsApiError(data.get("message") or "Doctor not found")
+    return data["doctor"]
+
+
+@_retry_network_errors
 async def resolve_checkin(
     hospital_id: str, mobile: str, latitude: float, longitude: float
 ) -> dict[str, Any]:

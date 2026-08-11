@@ -829,6 +829,12 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Yeh raha aapka prescription. 📄",
         "bn": "এই যে আপনার প্রেসক্রিপশন। 📄",
     },
+    "doctor_not_available": {
+        "en": "This doctor isn't available for booking right now. Please try again later.",
+        "hi": "यह डॉक्टर अभी बुकिंग के लिए उपलब्ध नहीं हैं। कृपया बाद में फिर कोशिश करें।",
+        "hg": "Yeh doctor abhi booking ke liye available nahi hain. Kripya baad mein phir try karein.",
+        "bn": "এই ডাক্তার এখন বুকিংয়ের জন্য উপলব্ধ নেই। অনুগ্রহ করে পরে আবার চেষ্টা করুন।",
+    },
 }
 
 
