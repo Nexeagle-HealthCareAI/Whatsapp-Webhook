@@ -65,17 +65,18 @@ class Settings(BaseSettings):
     # concerned. Everything patient-facing about days and times must use this zone.
     clinic_timezone: str = "Asia/Kolkata"
 
-    # Doctor search radius bands, in km. Look close first, widen only if that comes up
-    # empty, and never go past the last band on the patient's behalf — beyond this we ask
-    # before showing anything, because a patient in a Tier 2/3 town has no use for a doctor
-    # several hundred km away unless they've said they're willing to travel.
+    # Doctor search radius bands, in km — progressively wider, nearest band first, only
+    # trying the next if the current one comes up empty. Past the last band (50km), the
+    # search auto-widens to unrestricted rather than asking the patient first — a product
+    # decision (see the design flowchart's "auto-widen" branch): a patient in a Tier 2/3
+    # town would rather see a doctor several hundred km away than a dead end.
     #
     # Distance is measured from the patient's shared coordinates to each doctor's own
     # coordinates, NOT by city name. That matters: the same town name can exist in more than
     # one place, and 1HMS's data currently has records labelled "Kishanganj" sitting at Delhi
     # coordinates. Ranking on real distance means those simply fall outside the band instead
     # of needing a special case.
-    doctor_search_radii_km: list[float] = [10.0, 75.0]
+    doctor_search_radii_km: list[float] = [10.0, 25.0, 50.0]
     # How many index cities to pull doctors from when covering a radius. A guard against a
     # dense metro producing dozens of API calls; nearest cities are used first.
     doctor_search_max_cities: int = 8

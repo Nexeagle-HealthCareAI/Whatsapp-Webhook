@@ -1420,8 +1420,7 @@ async def _send_doctor_list(client: httpx.AsyncClient, phone: str, context: dict
     if context.get("patient_lat") is not None:
         index = await _safe_city_index()
         fetch_cache: dict[str, list[dict]] = {}
-        # Nearest band first, widening only when it comes up empty. Deliberately stops at the
-        # last configured radius instead of quietly searching the whole country.
+        # Progressively wider bands, nearest first, stopping at the first non-empty result.
         for radius in settings.doctor_search_radii_km:
             doctors = await _fetch_doctors_near(
                 specialty_category, context, radius, index, fetch_cache
@@ -1431,16 +1430,18 @@ async def _send_doctor_list(client: httpx.AsyncClient, phone: str, context: dict
                 break
 
         if not doctors:
-            # Nothing within the furthest band. Ask before going further — travelling
-            # several hundred km is the patient's decision, not ours to assume.
+            # Nothing within the widest configured band (50km by default) — tell the patient
+            # and widen automatically to an unrestricted search, rather than asking
+            # permission first. Product decision, not a technical default: see the design
+            # flowchart's auto-widen branch, confirmed over the previous ask-first behaviour
+            # (which still exists as _handle_confirming_wider_search / confirming_wider_search
+            # but is no longer reachable from here).
             max_radius = settings.doctor_search_radii_km[-1]
-            await whatsapp_client.send_buttons(
+            await whatsapp_client.send_text(
                 client, phone,
-                t("no_doctors_in_radius", lang, radius=int(max_radius)),
-                [("search_wider", t("search_wider_yes", lang)), ("cancel", t("cancel_btn", lang))],
+                t("no_doctors_in_radius_widening", lang, specialty=specialty_category, radius=int(max_radius)),
             )
-            await _transition_to(phone, "confirming_wider_search", context, "choosing_sort")
-            return
+            doctors = await hms_client.list_doctors(specialty_category, page_size=50)
     else:
         # No coordinates (patient typed a place name) — radius filtering isn't possible, so
         # fall back to the city-name filter.

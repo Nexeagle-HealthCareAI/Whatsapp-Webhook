@@ -680,6 +680,12 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "{patient_name} ke liye appointment request submit ho gayi hai! Front desk jald hi exact time confirm karegi.",
         "bn": "{patient_name}-এর জন্য অ্যাপয়েন্টমেন্টের অনুরোধ জমা দেওয়া হয়েছে! আমাদের ফ্রন্ট ডেস্ক শীঘ্রই সঠিক সময় নিশ্চিত করবে।",
     },
+    "no_doctors_in_radius_widening": {
+        "en": "No {specialty} found within {radius}km — checking a wider area...",
+        "hi": "{radius}km के अंदर कोई {specialty} नहीं मिला — थोड़े बड़े क्षेत्र में देखते हैं...",
+        "hg": "{radius}km ke andar koi {specialty} nahi mila — thoda bada area check karte hain...",
+        "bn": "{radius}km এর মধ্যে কোনো {specialty} পাওয়া যায়নি — একটু বড় এলাকায় খুঁজছি...",
+    },
     "symptom_concern_and_location_ask": {
         "en": "That sounds concerning — best to get it checked soon. This looks like a case for a {specialty}.\n\nShare your location so I can find doctors near you:",
         "hi": "ये सुनकर थोड़ी चिंता हुई — जल्दी दिखवाना सही रहेगा। ये {specialty} के पास जाने वाला मामला लगता है।\n\nअपने पास के डॉक्टर ढूंढने के लिए कृपया अपनी लोकेशन शेयर करें:",
