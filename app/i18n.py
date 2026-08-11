@@ -586,6 +586,30 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Upar list mein se doctor choose kar lijiye.",
         "bn": "অনুগ্রহ করে উপরের তালিকা থেকে একজন ডাক্তার বেছে নিন।",
     },
+    "choose_hospital_prompt": {
+        "en": "A few hospitals match '{query}':",
+        "hi": "'{query}' से कुछ अस्पताल मेल खाते हैं:",
+        "hg": "'{query}' se kuch hospitals match karte hain:",
+        "bn": "'{query}' এর সাথে কয়েকটি হাসপাতাল মিলেছে:",
+    },
+    "choose_hospital_button": {
+        "en": "Choose hospital",
+        "hi": "अस्पताल चुनें",
+        "hg": "Hospital choose karein",
+        "bn": "হাসপাতাল বেছে নিন",
+    },
+    "choose_hospital_hint": {
+        "en": "Please choose a hospital from the list above.",
+        "hi": "कृपया ऊपर सूची में से एक अस्पताल चुनें।",
+        "hg": "Upar list mein se hospital choose kar lijiye.",
+        "bn": "অনুগ্রহ করে উপরের তালিকা থেকে একটি হাসপাতাল বেছে নিন।",
+    },
+    "hospital_no_doctors": {
+        "en": "Sorry, no doctors are currently listed at {hospital}. Please type 'hi' to start over.",
+        "hi": "क्षमा करें, अभी {hospital} में कोई doctor सूचीबद्ध नहीं है। दोबारा शुरू करने के लिए 'hi' टाइप करें।",
+        "hg": "Sorry, abhi {hospital} mein koi doctor listed nahi hai. Phir se shuru karne ke liye 'hi' type karein.",
+        "bn": "দুঃখিত, এই মুহূর্তে {hospital}-এ কোনো ডাক্তার তালিকাভুক্ত নেই। আবার শুরু করতে 'hi' টাইপ করুন।",
+    },
     "date_prompt": {
         "en": "When would you like to visit?",
         "hi": "आप कब आना चाहेंगे?",

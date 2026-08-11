@@ -104,6 +104,52 @@ def match_doctor_by_query(query: str, doctors: list[dict]) -> list[dict]:
     return matches
 
 
+def match_hospital_by_query(query: str, hospitals: list[dict]) -> list[dict]:
+    """Same style as match_doctor_by_query above (manual substring/token-containment matching,
+    not a fuzzy-matching library) -- but hospital-flavored filler words instead of "dr"/"doctor"/
+    booking phrases, since a patient typing a hospital's name uses different noise words
+    ("hospital", "clinic", "at", "near"). Returns every hospital whose name overlaps the
+    cleaned query, in no particular order."""
+    normalized = query.lower()
+    normalized = re.sub(r'[^a-z0-9\s]', ' ', normalized)
+
+    for greeting in ["hi", "hello", "hey", "hlo"]:
+        normalized = re.sub(r'\b' + greeting + r'\b', ' ', normalized)
+
+    for prefix in [
+        "book appointment at", "book appointment near", "appointment at", "appointment near",
+        "want to book at", "hospital near", "clinic near", "hospital", "clinic", "near", "at"
+    ]:
+        normalized = normalized.replace(prefix, " ")
+
+    normalized = re.sub(r'\s+', ' ', normalized).strip()
+    if not normalized:
+        return []
+
+    matches = []
+    for hospital in hospitals:
+        name = (hospital.get("name") or "").lower()
+        name_clean = re.sub(r'[^a-z0-9\s]', ' ', name)
+        name_clean = re.sub(r'\s+', ' ', name_clean).strip()
+        if not name_clean:
+            continue
+
+        if normalized in name_clean or name_clean in normalized:
+            matches.append(hospital)
+            continue
+
+        name_parts = name_clean.split()
+        query_parts = normalized.split()
+        matched_parts = 0
+        for qp in query_parts:
+            if len(qp) >= 3 and any(qp in np for np in name_parts):
+                matched_parts += 1
+        if matched_parts > 0:
+            matches.append(hospital)
+
+    return matches
+
+
 def resolve_doctor(
     raw_query: str,
     doctors_pool: list[dict],

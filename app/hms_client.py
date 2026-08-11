@@ -40,6 +40,20 @@ async def list_specialties() -> list[dict[str, Any]]:
 
 
 @_retry_network_errors
+async def list_hospitals() -> list[dict[str, Any]]:
+    """Platform-wide, publicly-listed hospitals -- resolver.match_hospital_by_query fuzzy-matches
+    a patient's free text against this list. There's no bulk hospital-listing endpoint elsewhere
+    in this file (get_hospital_by_code is a single exact-code lookup only)."""
+    async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=10) as client:
+        response = await client.get("/public/hospitals", headers=_headers())
+    response.raise_for_status()
+    data = response.json()
+    if not data.get("success", True):
+        raise HmsApiError(data.get("message") or "Failed to fetch hospitals")
+    return data.get("hospitals", [])
+
+
+@_retry_network_errors
 async def list_doctors(
     specialty_category: str, page_size: int = 10, city: str | None = None
 ) -> list[dict[str, Any]]:
@@ -52,6 +66,23 @@ async def list_doctors(
     params: dict[str, Any] = {"specialtyCategory": specialty_category, "pageSize": page_size}
     if city:
         params["city"] = city
+    async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=10) as client:
+        response = await client.get("/public/doctors", params=params, headers=_headers())
+    response.raise_for_status()
+    data = response.json()
+    if not data.get("success", True):
+        raise HmsApiError(data.get("message") or "Failed to fetch doctors")
+    return data.get("doctors", [])
+
+
+@_retry_network_errors
+async def list_doctors_at_hospital(hospital_id: str, page_size: int = 10) -> list[dict[str, Any]]:
+    """Doctors at one specific hospital, no specialty filter -- used by the hospital-name-search
+    flow (conversation.py's _search_hospitals_flow) once a hospital match resolves, to show what
+    a patient can book there. A separate function from list_doctors rather than making
+    specialty_category optional on it, so every existing list_doctors call site keeps its
+    current (required-specialty) contract unchanged."""
+    params: dict[str, Any] = {"hospitalId": hospital_id, "pageSize": page_size}
     async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=10) as client:
         response = await client.get("/public/doctors", params=params, headers=_headers())
     response.raise_for_status()
@@ -221,3 +252,34 @@ async def issue_queue_token(appointment_id: str, latitude: float, longitude: flo
     if response.status_code >= 500:
         response.raise_for_status()
     return response.json()
+
+
+async def record_lead(
+    *,
+    hospital_id: str,
+    doctor_id: str | None = None,
+    lead_type: str,
+    search_query: str | None = None,
+    mobile: str | None = None,
+    patient_name: str | None = None,
+) -> None:
+    """Best-effort hospital-scoped marketing-lead beacon for the Lead Generation page
+    (easyHMSWeb) -- see /public/leads (RecordLeadHandler). Deliberately the one function in
+    this module that does NOT propagate HmsApiError or retry on failure: every call site is a
+    side effect logged alongside an already-in-progress conversation flow (a doctor/hospital
+    search or booking), and a lead-logging hiccup must never interrupt that flow. Swallows and
+    logs everything internally instead."""
+    try:
+        body = {
+            "hospitalId": hospital_id,
+            "doctorId": doctor_id,
+            "source": "WhatsApp",
+            "leadType": lead_type,
+            "searchQuery": search_query,
+            "mobile": mobile,
+            "patientName": patient_name,
+        }
+        async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=10) as client:
+            await client.post("/public/leads", json=body, headers=_headers())
+    except Exception:
+        logger.warning("Failed to record lead (%s) for hospital %s", lead_type, hospital_id, exc_info=True)

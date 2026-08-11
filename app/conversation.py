@@ -9,7 +9,7 @@ import httpx
 
 from app import booking_slots, city_index, db, hms_client, i18n, symptom_client, whatsapp_client
 from app.resolver import match_doctor_by_query as _match_doctor_by_query
-from app.resolver import resolve_doctor, extract_location_from_query
+from app.resolver import resolve_doctor, extract_location_from_query, match_hospital_by_query
 from app.config import settings
 from app.geo import haversine_km
 from app.hms_client import HmsApiError
@@ -833,6 +833,8 @@ async def handle_message(
             await _handle_confirming_wider_search(client, phone, input_type, input_value, context)
         elif current_step == "choosing_doctor":
             await _handle_choosing_doctor(client, phone, input_type, input_value, context)
+        elif current_step == "choosing_hospital_from_search":
+            await _handle_choosing_hospital_from_search(client, phone, input_type, input_value, context)
         elif current_step == "choosing_slot":
             await _handle_choosing_slot(client, phone, input_type, input_value, context)
         elif current_step == "awaiting_patient_details":
@@ -1132,6 +1134,14 @@ _DOCTOR_SELECTION_KEYS = (
 async def _handle_doctor_search_miss(
     client: httpx.AsyncClient, phone: str, context: dict, query: str
 ) -> None:
+    # Before giving up: this same free-text field is also where a patient might have typed a
+    # HOSPITAL's name instead of a doctor's -- there's no separate "search by hospital" entry
+    # point in the menu (see the Lead Generation requirement this satisfies). Only tried on a
+    # doctor-search miss, never proactively on every message, so it can't second-guess an
+    # already-successful doctor match.
+    if await _search_hospitals_flow(client, phone, context, query, context.get("current_step")):
+        return
+
     await whatsapp_client.send_text(
         client, phone,
         await _phrase(client, "search_doctor_miss", context, "search_doctor_not_found", query=query),
@@ -2198,8 +2208,120 @@ async def _search_doctors_flow(client: httpx.AsyncClient, phone: str, context: d
     if resolution.status == "zero":
         return False
 
+    # Lead Generation (easyHMSWeb) -- a non-zero doctor-name-search result is a lead,
+    # attributed to the resolved doctor's hospital. Logged HERE (this function is the
+    # exclusive doctor-name-search entry point) rather than inside the shared
+    # _render_doctor_list below, which _search_hospitals_flow also calls (via
+    # _resolve_hospital_search_match) -- logging there would double/mis-attribute leads
+    # that actually originated from a hospital-name search, not a doctor-name one.
+    if resolution.status == "one":
+        d = resolution.value
+        if d.get("hospitalId"):
+            await hms_client.record_lead(
+                hospital_id=d["hospitalId"], doctor_id=d.get("doctorId"),
+                lead_type="DoctorNameSearch", search_query=query, mobile=phone,
+            )
+    else:
+        # Ambiguous match can span multiple hospitals (e.g. "Sharma" matching a Dr. Sharma at
+        # each of two hospitals) -- one lead per distinct hospital represented, capped at 5,
+        # same "don't flood on a broad query" reasoning as the NexEagleWebsite-side search lead.
+        seen_hospital_ids: set[str] = set()
+        for d in resolution.candidates:
+            hospital_id = d.get("hospitalId")
+            if not hospital_id or hospital_id in seen_hospital_ids:
+                continue
+            if len(seen_hospital_ids) >= 5:
+                break
+            seen_hospital_ids.add(hospital_id)
+            await hms_client.record_lead(
+                hospital_id=hospital_id, lead_type="DoctorNameSearch", search_query=query, mobile=phone,
+            )
+
     await _render_doctor_list(client, phone, context, resolution.candidates, current_step)
     return True
+
+
+async def _search_hospitals_flow(
+    client: httpx.AsyncClient, phone: str, context: dict, query: str, current_step: str | None
+) -> bool:
+    """Fallback for a doctor-name-search miss (see _handle_doctor_search_miss): tries the same
+    free text against hospital names instead -- there's no separate "search by hospital" menu
+    entry point, this is the only way a patient reaches it. Returns True if it handled the flow
+    (single match: records a lead and shows that hospital's doctors via the existing
+    _render_doctor_list; multiple matches: sends a disambiguation list), False if nothing
+    matched either (caller falls through to its own "not found" message)."""
+    try:
+        hospitals = await hms_client.list_hospitals()
+    except Exception as exc:
+        logger.error("Failed to fetch hospitals for search: %s", exc)
+        return False
+
+    matches = match_hospital_by_query(query, hospitals)
+    if not matches:
+        return False
+
+    if len(matches) == 1:
+        await _resolve_hospital_search_match(client, phone, context, matches[0], query, current_step)
+        return True
+
+    lang = context.get("lang")
+    hospital_rows = matches[:10]
+    context["hospital_options"] = {h["hospitalId"]: h for h in hospital_rows}
+    context["hospital_search_query"] = query
+    await _transition_to(phone, "choosing_hospital_from_search", context, current_step)
+    rows = [(h["hospitalId"], (h.get("name") or "Hospital")[:24], h.get("city") or "") for h in hospital_rows]
+    await whatsapp_client.send_list(
+        client, phone, t("choose_hospital_prompt", lang, query=query), t("choose_hospital_button", lang), rows,
+    )
+    return True
+
+
+async def _resolve_hospital_search_match(
+    client: httpx.AsyncClient, phone: str, context: dict, hospital: dict, query: str, current_step: str | None,
+) -> None:
+    """A hospital-name search has resolved to exactly one hospital (either directly, or after
+    disambiguation via _handle_choosing_hospital_from_search) -- record the lead, then show
+    that hospital's doctors through the same _render_doctor_list a doctor-name search uses, so
+    picking one continues into completely unchanged existing booking code."""
+    lang = context.get("lang")
+    hospital_id = hospital.get("hospitalId")
+    await hms_client.record_lead(
+        hospital_id=hospital_id, lead_type="HospitalNameSearch", search_query=query, mobile=phone,
+    )
+
+    try:
+        doctors = await hms_client.list_doctors_at_hospital(hospital_id)
+    except Exception as exc:
+        logger.error("Failed to fetch doctors for hospital %s: %s", hospital_id, exc)
+        await whatsapp_client.send_text(client, phone, t("search_doctor_not_found", lang, query=query))
+        return
+
+    if not doctors:
+        await whatsapp_client.send_text(
+            client, phone, t("hospital_no_doctors", lang, hospital=hospital.get("name") or "this hospital"),
+        )
+        return
+
+    await _render_doctor_list(client, phone, context, doctors, current_step)
+
+
+async def _handle_choosing_hospital_from_search(client, phone, input_type, input_value, context) -> None:
+    lang = context.get("lang")
+    if input_type != "list_reply":
+        await whatsapp_client.send_text(client, phone, t("choose_hospital_hint", lang))
+        return
+
+    hospital_id = input_value
+    hospital = context.get("hospital_options", {}).get(hospital_id)
+    if hospital is None:
+        # Stale list (e.g. patient tapped an old message) -- same "restart rather than book
+        # with data we can no longer vouch for" posture as _handle_choosing_doctor.
+        await whatsapp_client.send_text(client, phone, t("choose_hospital_hint", lang))
+        return
+
+    context.pop("hospital_options", None)
+    query = context.pop("hospital_search_query", "")
+    await _resolve_hospital_search_match(client, phone, context, hospital, query, "choosing_hospital_from_search")
 
 
 async def _transition_to(phone: str, next_step: str, context: dict, current_step: str | None) -> None:
