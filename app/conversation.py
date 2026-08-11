@@ -259,6 +259,27 @@ async def _advance_booking_flow(client: httpx.AsyncClient, phone: str, context: 
         await _handle_doctor_search_miss(client, phone, context, context["search_doctor_query"])
         return
 
+    # A pending specialty/symptom match (set on the first message -- see handle_message's
+    # NLU block) DOES need location before it can search, so it's correct for it to wait its
+    # turn. But once its turn comes, next_action() below only knows the slot name is
+    # "location" -- routing that through _step_for_action/_trigger_step_prompt would show the
+    # generic location prompt, silently dropping the specialty/symptom the patient just named.
+    # The has-lang-already version of this same flow (the spec_name/sym_name elif block in
+    # handle_message) avoids this by sending the combined concern/enthusiasm + location-ask
+    # message itself instead of a generic prompt -- do the same here before deferring to
+    # next_action()'s generic slot walk.
+    if booking["location"]["status"] == "blank" and context.get("pending_specialty"):
+        specialty = context["pending_specialty"]
+        template = (
+            "symptom_concern_and_location_ask" if context.get("pending_specialty_is_symptom")
+            else "specialty_enthusiasm_and_location_ask"
+        )
+        await _transition_to(phone, "choosing_location", context, context.get("current_step"))
+        await whatsapp_client.send_location_request(
+            client, phone, t(template, context.get("lang"), specialty=specialty),
+        )
+        return
+
     # Once a doctor is resolved, location no longer matters for anything downstream (slot
     # picking, patient details, confirm) — either it was already needed and filled to FIND
     # the doctor (the specialty/symptom path), or a name search resolved without it (the
@@ -372,7 +393,8 @@ async def handle_message(
                     matched = symptom_client.match_category(spec_name, category_list)
                     if matched:
                         new_context["pending_specialty"] = matched
-                        
+                        new_context["pending_specialty_is_symptom"] = False
+
                 elif sym_name:
                     labels = await symptom_client.route_symptom(sym_name)
                     categories = await hms_client.list_specialties()
@@ -383,6 +405,7 @@ async def handle_message(
                     )
                     if matched:
                         new_context["pending_specialty"] = matched
+                        new_context["pending_specialty_is_symptom"] = True
 
                 await _confirm_or_start_language(client, phone, new_context, input_value, nlu_hint=raw_nlu_result)
                 return
@@ -496,6 +519,7 @@ async def handle_message(
             if doc_name:
                 new_context["search_doctor_query"] = doc_name
                 new_context.pop("pending_specialty", None)
+                new_context.pop("pending_specialty_is_symptom", None)
                 new_context.pop("search_symptom", None)
                 
                 has_loc = new_context.get("city") or (new_context.get("patient_lat") is not None and new_context.get("patient_lng") is not None)
@@ -519,6 +543,7 @@ async def handle_message(
                 matched = symptom_client.match_category(spec_name, category_list)
                 if matched:
                     new_context["pending_specialty"] = matched
+                    new_context["pending_specialty_is_symptom"] = False
                     has_loc = new_context.get("city") or (new_context.get("patient_lat") is not None and new_context.get("patient_lng") is not None)
                     if new_context.get("lang") and has_loc:
                         await _send_sort_prompt(client, phone, new_context, matched, current_step)
@@ -547,6 +572,7 @@ async def handle_message(
                 )
                 if matched:
                     new_context["pending_specialty"] = matched
+                    new_context["pending_specialty_is_symptom"] = True
                     has_loc = new_context.get("city") or (new_context.get("patient_lat") is not None and new_context.get("patient_lng") is not None)
                     if new_context.get("lang") and has_loc:
                         await _send_sort_prompt(client, phone, new_context, matched, current_step)

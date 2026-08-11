@@ -2274,6 +2274,123 @@ def test_sarvam_language_confidence_upgrade_skips_confirm_step():
         conversation._get_offered_slots = original_get_offered_slots
 
 
+def test_first_message_symptom_resolves_to_combined_message_not_generic_location_prompt():
+    """Live-reported gap, same shape as the earlier "Dr Avinash" bug but for symptom/specialty
+    instead of doctor-name: a fresh user's very first message describing a symptom ("bahut tez
+    bukhar hai") got matched to a specialty correctly (the NLP route_symptom call did happen),
+    but once it was that pending specialty's turn in _advance_booking_flow's slot walk, the
+    code only knew the slot name was "location" -- so it fell through to the GENERIC location
+    prompt via _step_for_action/_trigger_step_prompt, silently dropping the specialty/concern
+    context, instead of the personalised Task 4 combined message
+    (symptom_concern_and_location_ask) the has-lang-already version of this same flow already
+    sent correctly (see test_symptom_and_specialty_open_with_one_combined_location_message,
+    which seeds lang up front and so never exercises this path).
+
+    Fix: _advance_booking_flow now checks for a pending specialty/symptom before deferring to
+    next_action()'s generic slot order, same as it already does for a pending doctor-name
+    search."""
+    import asyncio
+
+    class MockDB:
+        def __init__(self):
+            self.state = {}
+
+        async def get_conversation_state(self, phone):
+            if phone in self.state:
+                step, ctx = self.state[phone]
+                return {"current_step": step, "context": ctx}
+            return None
+
+        async def save_conversation_state(self, phone, step, context):
+            self.state[phone] = (step, context)
+
+        async def clear_conversation_state(self, phone):
+            self.state.pop(phone, None)
+
+        async def log_nlu_interaction(self, **kw):
+            pass
+
+    db_mock = MockDB()
+    original_db = conversation.db
+    original_router_db = conversation.intent_router.db
+    conversation.db = db_mock
+    conversation.intent_router.db = db_mock
+
+    sent_texts, sent_buttons, sent_loc_reqs = [], [], []
+
+    async def mock_send_text(client, to, text):
+        sent_texts.append(text)
+
+    async def mock_send_buttons(client, to, text, buttons):
+        sent_buttons.append((text, buttons))
+
+    async def mock_send_loc_req(client, to, text):
+        sent_loc_reqs.append(text)
+
+    original_send_text = conversation.whatsapp_client.send_text
+    original_send_buttons = conversation.whatsapp_client.send_buttons
+    original_send_loc = conversation.whatsapp_client.send_location_request
+    conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_buttons = mock_send_buttons
+    conversation.whatsapp_client.send_location_request = mock_send_loc_req
+
+    async def mock_list_specialties():
+        return [{"category": "General Physician"}, {"category": "Cardiologist (Heart)"}]
+
+    async def mock_route_symptom(q):
+        return ["General Physician"]
+
+    original_list_specialties = conversation.hms_client.list_specialties
+    original_route_symptom = conversation.symptom_client.route_symptom
+    conversation.hms_client.list_specialties = mock_list_specialties
+    conversation.symptom_client.route_symptom = mock_route_symptom
+
+    original_classify = conversation.nlu_client.classify_message
+    mock_client = object()
+
+    try:
+        # Sarvam confidently reports both the intent/symptom AND the language on this single
+        # first message, so this test isolates the specialty-first-message bug rather than
+        # also re-exercising the separate low-confidence confirm-buttons dance.
+        async def mock_classify_symptom(client, text):
+            return {
+                "intent": "describe_symptom", "confidence": "high",
+                "entities": {"symptom": "bahut tez bukhar hai"},
+                "detected_language": "hg", "language_confidence": "high",
+            }
+        conversation.nlu_client.classify_message = mock_classify_symptom
+
+        asyncio.run(conversation.handle_message(mock_client, "fb-symptom-first", "User", "text", "bahut tez bukhar hai"))
+
+        check(len(sent_buttons) == 0, "high-confidence language should skip the confirm buttons")
+        # One send_text is expected here -- the "welcome_banner" greeting _confirm_or_start_language
+        # sends once a high-confidence language resolves. The bug this test guards against is a
+        # SECOND text message: the generic, specialty-unaware location_prompt template.
+        generic_location_prompt = i18n.t("location_prompt", "hg")
+        check(
+            all(t != generic_location_prompt for t in sent_texts),
+            f"must not fall back to the generic plain-text location prompt, got {sent_texts!r}",
+        )
+        check(len(sent_loc_reqs) == 1, f"should send exactly one combined location-request message, got {sent_loc_reqs!r}")
+        if sent_loc_reqs:
+            check("General Physician" in sent_loc_reqs[0], f"should name the resolved specialty, got {sent_loc_reqs[0]!r}")
+            check("fikar" in sent_loc_reqs[0] or "concerning" in sent_loc_reqs[0].lower() or "চিন্তা" in sent_loc_reqs[0],
+                  f"should use the symptom-concern framing (not the plain specialty-enthusiasm one), got {sent_loc_reqs[0]!r}")
+
+        step, ctx = db_mock.state.get("fb-symptom-first", (None, {}))
+        check(step == "choosing_location", f"should be waiting on location next, got {step!r}")
+        check(ctx.get("pending_specialty") == "General Physician", "pending_specialty must survive for after location resolves")
+    finally:
+        conversation.db = original_db
+        conversation.intent_router.db = original_router_db
+        conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_buttons = original_send_buttons
+        conversation.whatsapp_client.send_location_request = original_send_loc
+        conversation.hms_client.list_specialties = original_list_specialties
+        conversation.symptom_client.route_symptom = original_route_symptom
+        conversation.nlu_client.classify_message = original_classify
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:
