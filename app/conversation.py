@@ -1972,8 +1972,15 @@ async def _handle_awaiting_patient_details(client, phone, input_type, input_valu
         parsed = _parse_details(input_value, 4)
         if parsed:
             name, age, gender, guardian = parsed
+        else:
+            # Guardian is optional (matches the Flow form, where it's an optional field) --
+            # accept "Name, Age, Gender" with no 4th part too.
+            parsed = _parse_details(input_value, 3)
+            if parsed:
+                name, age, gender = parsed
+                guardian = ""
 
-    if not name or not age or not gender or not guardian:
+    if not name or not age or not gender:
         await whatsapp_client.send_text(client, phone, t("patient_details_invalid", lang))
         await _send_patient_details_flow(client, phone, context)
         return

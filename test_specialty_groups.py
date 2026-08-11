@@ -2461,6 +2461,71 @@ def test_awaiting_symptom_step_announces_specialty_before_sort():
         conversation.symptom_client.route_symptom = original_route_symptom
 
 
+def test_guardian_is_optional_in_patient_details():
+    """User-reported mismatch: the WhatsApp Flow form already marks Guardian as an optional
+    field, but _handle_awaiting_patient_details rejected a submission with no guardian as
+    invalid on both the Flow (nfm_reply) and free-text paths -- code was stricter than the
+    form it's validating. Guardian was never actually required downstream (_patient_line
+    already does `if guardian: ...`, hms_client never receives it, db.py's
+    create_pending_appointment already types it as str | None), so the fix is purely relaxing
+    this one validation check plus the free-text parser accepting a 3rd-field-less line."""
+    import asyncio
+    import json
+
+    sent_texts = []
+
+    async def mock_send_text(client, to, text):
+        sent_texts.append(text)
+
+    async def mock_advance_booking_flow(client, phone, context, booking):
+        pass  # isolate the parsing/validation being tested from the rest of the booking flow
+
+    async def mock_send_patient_details_flow(client, phone, context):
+        pass  # isolate from the re-prompt Flow/buttons rendering, not what's under test here
+
+    original_send_text = conversation.whatsapp_client.send_text
+    original_advance = conversation._advance_booking_flow
+    original_send_flow_prompt = conversation._send_patient_details_flow
+    conversation.whatsapp_client.send_text = mock_send_text
+    conversation._advance_booking_flow = mock_advance_booking_flow
+    conversation._send_patient_details_flow = mock_send_patient_details_flow
+
+    mock_client = object()
+    try:
+        # Free-text path: "Name, Age, Gender" with no 4th (guardian) part.
+        context = {"lang": "en"}
+        asyncio.run(conversation._handle_awaiting_patient_details(mock_client, "p1", "text", "Riya, 8, Female", context))
+        check(not sent_texts, f"3-field details (no guardian) should be accepted, got {sent_texts!r}")
+        check(context.get("patient_display_name") == "Riya", "name should still be captured")
+        check(context.get("patient_guardian") == "", f"guardian should be empty, not missing, got {context.get('patient_guardian')!r}")
+
+        # Flow (nfm_reply) path: guardian submitted as an empty string, as the Flow would send
+        # when its optional field is left blank.
+        sent_texts.clear()
+        context2 = {"lang": "en"}
+        flow_payload = json.dumps({"name": "Aman", "age": "40", "gender": "Male", "guardian": ""})
+        asyncio.run(conversation._handle_awaiting_patient_details(mock_client, "p2", "nfm_reply", flow_payload, context2))
+        check(not sent_texts, f"Flow submission with blank guardian should be accepted, got {sent_texts!r}")
+        check(context2.get("patient_display_name") == "Aman", "name should still be captured from the Flow")
+
+        # Guardian, when actually given, must still be captured correctly (not silently
+        # dropped by this change).
+        sent_texts.clear()
+        context3 = {"lang": "en"}
+        asyncio.run(conversation._handle_awaiting_patient_details(mock_client, "p3", "text", "Riya, 8, Female, Rajesh", context3))
+        check(context3.get("patient_guardian") == "Rajesh", f"guardian should still be captured when given, got {context3.get('patient_guardian')!r}")
+
+        # Name/age/gender remain required -- this isn't a blanket relaxation.
+        sent_texts.clear()
+        context4 = {"lang": "en"}
+        asyncio.run(conversation._handle_awaiting_patient_details(mock_client, "p4", "text", "Riya, 8", context4))
+        check(len(sent_texts) == 1, f"missing gender should still be rejected, got {sent_texts!r}")
+    finally:
+        conversation.whatsapp_client.send_text = original_send_text
+        conversation._advance_booking_flow = original_advance
+        conversation._send_patient_details_flow = original_send_flow_prompt
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:
