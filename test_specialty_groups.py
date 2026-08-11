@@ -671,50 +671,50 @@ def test_language_detection():
     detect = conversation._detect_language
 
     # 1. Generic greetings (open option / None)
-    check(detect("hi") is None, "single word hi should be open option")
-    check(detect("hello") is None, "single word hello should be open option")
-    check(detect("hey") is None, "single word hey should be open option")
-    check(detect("  hey  ") is None, "whitespace-padded hey should be open option")
-    check(detect("Hlo") is None, "Capitalized hlo should be open option")
+    check(detect("hi") == (None, False), "single word hi should be open option")
+    check(detect("hello") == (None, False), "single word hello should be open option")
+    check(detect("hey") == (None, False), "single word hey should be open option")
+    check(detect("  hey  ") == (None, False), "whitespace-padded hey should be open option")
+    check(detect("Hlo") == (None, False), "Capitalized hlo should be open option")
 
     # 2. English (en) with spelling variations / typos
-    check(detect("hey i have to book an appointment") == "en", "standard english appointment booking should be en")
-    check(detect("need to bok an apointmint") == "en", "english with typos bok/apointmint should be en")
-    check(detect("dr appontment") == "en", "english with typos dr/appontment should be en")
-    check(detect("download prescribtion") == "en", "prescription download english should be en")
-    check(detect("get medicine list") == "en", "medicine list english should be en")
+    check(detect("hey i have to book an appointment") == ("en", False), "standard english appointment booking should be en")
+    check(detect("need to bok an apointmint") == ("en", False), "english with typos bok/apointmint should be en")
+    check(detect("dr appontment") == ("en", False), "english with typos dr/appontment should be en")
+    check(detect("download prescribtion") == ("en", False), "prescription download english should be en")
+    check(detect("get medicine list") == ("en", False), "medicine list english should be en")
 
     # 3. Hinglish (hg) with spelling variations / typos
-    check(detect("hi mujhe appointment book krna hai") == "hg", "standard hinglish appointment booking should be hg")
-    check(detect("muje appontment buk krna h") == "hg", "hinglish with typos muje/buk/h should be hg")
-    check(detect("apointment book krna he") == "hg", "hinglish with typos apointment/he should be hg")
-    check(detect("mje dr dikhao") == "hg", "hinglish with typo mje and dikhao should be hg")
-    check(detect("parcha download krna h") == "hg", "prescription download in hinglish should be hg")
-    check(detect("preskripsion downlod krna hai") == "hg", "prescription download with typos in hinglish should be hg")
+    check(detect("hi mujhe appointment book krna hai") == ("hg", False), "standard hinglish appointment booking should be hg")
+    check(detect("muje appontment buk krna h") == ("hg", False), "hinglish with typos muje/buk/h should be hg")
+    check(detect("apointment book krna he") == ("hg", False), "hinglish with typos apointment/he should be hg")
+    check(detect("mje dr dikhao") == ("hg", False), "hinglish with typo mje and dikhao should be hg")
+    check(detect("parcha download krna h") == ("hg", False), "prescription download in hinglish should be hg")
+    check(detect("preskripsion downlod krna hai") == ("hg", False), "prescription download with typos in hinglish should be hg")
 
-    # 4. Hindi Devanagari (hi) with spelling variations / typos
-    check(detect("मुझे अपॉइंटमेंट बुक करना है") == "hi", "hindi devanagari should be hi")
-    check(detect("अपोइंटमेंट बुक करना है") == "hi", "hindi devanagari with typo अपोइंटमेंट should be hi")
-    check(detect("डॉक्टर बुक करे") == "hi", "hindi devanagari doctor should be hi")
-    check(detect("दवा पर्ची डाउनलोड") == "hi", "hindi devanagari prescription download should be hi")
+    # 4. Hindi Devanagari (hi) with spelling variations / typos (High confidence)
+    check(detect("मुझे अपॉइंटमेंट बुक करना है") == ("hi", True), "hindi devanagari should be hi")
+    check(detect("अपोइंटमेंट बुक करना है") == ("hi", True), "hindi devanagari with typo अपोइंटमेंट should be hi")
+    check(detect("डॉक्टर बुक करे") == ("hi", True), "hindi devanagari doctor should be hi")
+    check(detect("दवा पर्ची डाउनलोड") == ("hi", True), "hindi devanagari prescription download should be hi")
 
-    # 5. Bengali (bn) with spelling variations / typos
-    check(detect("আমি একটা অ্যাপয়েন্টমেন্ট বুক করতে চাই") == "bn", "bengali should be bn")
-    check(detect("ডাক্তার বুকিং করতে চাই") == "bn", "bengali doctor booking should be bn")
-    check(detect("প্রেসক্রিপশন ডাউনলোড") == "bn", "bengali prescription download should be bn")
-    check(detect("প্রেসক্রিপসন ডাউনলোড করতে চাই") == "bn", "bengali prescription typo should be bn")
+    # 5. Bengali (bn) with spelling variations / typos (High confidence)
+    check(detect("আমি একটা অ্যাপয়েন্টমেন্ট বুক করতে চাই") == ("bn", True), "bengali should be bn")
+    check(detect("ডাক্তার বুকিং করতে চাই") == ("bn", True), "bengali doctor booking should be bn")
+    check(detect("প্রেসক্রিপশন ডাউনলোড") == ("bn", True), "bengali prescription download should be bn")
+    check(detect("প্রেসক্রিপসন ডাউনলোড করতে চাই") == ("bn", True), "bengali prescription typo should be bn")
 
-    # 5b. Benglish / Romanized Bengali (bn)
-    check(detect("amar doctor lagbe") == "bn", "benglish amar doctor lagbe should be bn")
-    check(detect("amar daktarer appointment lagbe") == "bn", "benglish daktarer appointment lagbe should be bn")
-    check(detect("daktar dekhate chai") == "bn", "benglish daktar dekhate chai should be bn")
-    check(detect("oshudh prescription lagbe") == "bn", "benglish oshudh prescription lagbe should be bn")
+    # 5b. Benglish / Romanized Bengali (bn) (Low confidence)
+    check(detect("amar doctor lagbe") == ("bn", False), "benglish amar doctor lagbe should be bn")
+    check(detect("amar daktarer appointment lagbe") == ("bn", False), "benglish daktarer appointment lagbe should be bn")
+    check(detect("daktar dekhate chai") == ("bn", False), "benglish daktar dekhate chai should be bn")
+    check(detect("oshudh prescription lagbe") == ("bn", False), "benglish oshudh prescription lagbe should be bn")
 
     # 6. Gibberish / Unknown / Mixed Tie-breaking / Standalone 'he' regression
-    check(detect("xyz abc") is None, "gibberish should trigger open option")
-    check(detect("He needs an appointment") == "en", "standalone 'he' should detect as English, not Hinglish")
-    check(detect("doctor appointment lagbe") == "bn", "tie-breaking between english loanwords and lagbe (benglish) should be bn")
-    check(detect("appointment book karna hai") == "hg", "tie-breaking with karna hai (hinglish) should be hg")
+    check(detect("xyz abc") == (None, False), "gibberish should trigger open option")
+    check(detect("He needs an appointment") == ("en", False), "standalone 'he' should detect as English, not Hinglish")
+    check(detect("doctor appointment lagbe") == ("bn", False), "tie-breaking between english loanwords and lagbe (benglish) should be bn")
+    check(detect("appointment book karna hai") == ("hg", False), "tie-breaking with karna hai (hinglish) should be hg")
 
 
 def test_slot_label_formatting():
@@ -1117,6 +1117,75 @@ def test_first_message_nlu_symptom_routing():
         conversation.whatsapp_client.send_list = original_send_list
         conversation.whatsapp_client.send_location_request = original_send_loc
 
+def test_high_confidence_language_bypass():
+    import asyncio
+    class MockDB:
+        def __init__(self):
+            self.state = {}
+        async def get_conversation_state(self, phone):
+            val = self.state.get(phone)
+            if not val:
+                return None
+            return {"current_step": val[0], "context": val[1]}
+        async def save_conversation_state(self, phone, step, context):
+            self.state[phone] = (step, context)
+        async def clear_conversation_state(self, phone):
+            self.state.pop(phone, None)
+
+    db_mock = MockDB()
+    original_db = conversation.db
+    conversation.db = db_mock
+
+    # Mock NLU to return out_of_scope
+    async def mock_classify(client, text):
+        return {"intent": "out_of_scope", "confidence": "low", "entities": {}}
+    original_classify = conversation.nlu_client.classify_message
+    conversation.nlu_client.classify_message = mock_classify
+
+    sent_texts = []
+    sent_buttons = []
+    
+    async def mock_send_text(client, phone, text):
+        sent_texts.append(text)
+    async def mock_send_buttons(client, phone, text, buttons):
+        sent_buttons.append((text, buttons))
+    async def mock_send_loc(client, phone, text):
+        pass
+
+    original_send_text = conversation.whatsapp_client.send_text
+    original_send_buttons = conversation.whatsapp_client.send_buttons
+    original_send_loc = conversation.whatsapp_client.send_location_request
+
+    conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_buttons = mock_send_buttons
+    conversation.whatsapp_client.send_location_request = mock_send_loc
+
+    try:
+        class MockClientObj:
+            pass
+        mock_client = MockClientObj()
+
+        # Send Devanagari text (unambiguous high confidence)
+        asyncio.run(conversation.handle_message(
+            mock_client, "user_high_conf", "Patient", "text", "मुझे डॉक्टर चाहिए"
+        ))
+
+        # Check state: should skip language confirmation and request location immediately
+        state = db_mock.state.get("user_high_conf")
+        check(state is not None, "session state must be created")
+        check(state[0] == "choosing_location", f"should transition straight to choosing_location, got {state[0]!r}")
+        check(state[1].get("lang") == "hi", f"language must be set directly to hi, got {state[1].get('lang')!r}")
+        check(len(sent_buttons) == 0, "should NOT send language confirmation buttons")
+        check(any("स्वागत है" in t for t in sent_texts), "should send welcome banner text")
+
+    finally:
+        conversation.db = original_db
+        conversation.nlu_client.classify_message = original_classify
+        conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_buttons = original_send_buttons
+        conversation.whatsapp_client.send_location_request = original_send_loc
+
+
 
 def test_cancel_quit_and_back_logic():
     class MockDB:
@@ -1230,13 +1299,21 @@ def test_language_confirmation_flow():
     conversation.whatsapp_client.send_list = mock_send_list
 
     try:
-        # 1. Trigger initial text input that gets auto-detected as Hinglish
-        asyncio.run(conversation.handle_message(mock_client, "123", "User", "text", "mujhe doctor chahiye"))
+        # 1. Trigger initial text input that gets auto-detected as Hindi (Devanagari - High confidence)
+        asyncio.run(conversation.handle_message(mock_client, "123", "User", "text", "मुझे डॉक्टर चाहिए"))
         state = asyncio.run(db_mock.get_conversation_state("123"))
         check(state is not None, "conversation state should be created")
         check(state["current_step"] == "choosing_location", "should transition directly to choosing_location")
-        check(state["context"].get("lang") == "hg", "should set language directly to Hinglish")
+        check(state["context"].get("lang") == "hi", "should set language directly to Hindi")
         check(len(sent_locations) == 1, "should send location request directly")
+
+        # 1b. Reset and trigger text input that gets auto-detected as Hinglish (Low confidence - should prompt for confirmation)
+        asyncio.run(db_mock.clear_conversation_state("123"))
+        sent_buttons.clear()
+        asyncio.run(conversation.handle_message(mock_client, "123", "User", "text", "mujhe doctor chahiye"))
+        state = asyncio.run(db_mock.get_conversation_state("123"))
+        check(state["current_step"] == "confirming_language", "should transition to confirming_language for low-confidence match")
+        check(len(sent_buttons) == 1, "should send language confirmation buttons")
 
         # 2. Reset and test fallback when language is not auto-detected (e.g. hello greeting)
         asyncio.run(db_mock.clear_conversation_state("123"))

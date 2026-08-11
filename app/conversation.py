@@ -67,9 +67,9 @@ def _looks_like_age(value: str) -> bool:
     return bool(digits) and 0 < int(digits) <= 120
 
 
-def _detect_language(text: str) -> str | None:
+def _detect_language(text: str) -> tuple[str | None, bool]:
     if not text:
-        return None
+        return None, False
 
     # Normalize: lowercase, strip, and strip common punctuation
     normalized = text.strip().lower()
@@ -78,15 +78,15 @@ def _detect_language(text: str) -> str | None:
     # Generic greetings: return None to present open language selection prompt
     greetings = {"hi", "hello", "hey", "hola", "namaste", "pranam", "helo", "hlo"}
     if normalized in greetings:
-        return None
+        return None, False
 
     # Devanagari Hindi check
     if re.search(r'[\u0900-\u097F]', text):
-        return "hi"
+        return "hi", True
 
     # Bengali check
     if re.search(r'[\u0980-\u09FF]', text):
-        return "bn"
+        return "bn", True
 
     # Hinglish keywords/typos
     hinglish_keywords = {
@@ -118,7 +118,7 @@ def _detect_language(text: str) -> str | None:
 
     words = re.findall(r'\b\w+\b', normalized)
     if not words:
-        return None
+        return None, False
 
     # Calculate scores: unambiguous keywords (Hinglish/Benglish) get higher weight
     # than English keywords, which are frequently used as loanwords in other languages.
@@ -127,22 +127,22 @@ def _detect_language(text: str) -> str | None:
     en_score = sum(1 for w in words if w in english_keywords)
 
     if hi_score == 0 and bn_score == 0 and en_score == 0:
-        return None
+        return None, False
 
     max_score = max(hi_score, bn_score, en_score)
 
     if hi_score == max_score and hi_score > 0 and hi_score > bn_score:
-        return "hg"
+        return "hg", False
     elif bn_score == max_score and bn_score > 0 and bn_score > hi_score:
-        return "bn"
+        return "bn", False
     elif en_score == max_score and en_score > hi_score and en_score > bn_score:
-        return "en"
+        return "en", False
     elif hi_score == en_score and hi_score > bn_score and hi_score > 0:
-        return "hg"
+        return "hg", False
     elif bn_score == en_score and bn_score > hi_score and bn_score > 0:
-        return "bn"
+        return "bn", False
     else:
-        return None
+        return None, False
 
 # ---------------------------------------------------------------------------------------
 # Clipboard Initialization from Legacy Context
@@ -281,7 +281,7 @@ async def handle_message(
     lang = context.get("lang")
     has_lang_init = lang is not None
     if input_type == "text" and input_value.strip() and has_lang_init:
-        detected_lang = _detect_language(input_value)
+        detected_lang, _ = _detect_language(input_value)
         if detected_lang and detected_lang != lang:
             logger.info("Auto-swapping language from %s to %s for user %s", lang, detected_lang, phone)
             lang = detected_lang
@@ -689,23 +689,12 @@ async def handle_message(
         else:
             # No state (new/returning user) or an unrecognized step — restart cleanly
             # rather than leave the conversation stuck.
-            detected_lang = None
+            init_context = {}
             if input_type == "text" and input_value.strip():
-                detected_lang = _detect_language(input_value)
-
-            if detected_lang:
-                confirm_context = {
-                    "lang": detected_lang,
-                }
                 if _is_doctor_search_query(input_value):
-                    confirm_context["search_doctor_query"] = input_value
-                
-                await whatsapp_client.send_text(client, phone, t("welcome_banner", detected_lang))
-                await _send_location_request(client, phone, confirm_context)
-            else:
-                init_context = {}
-                if input_type == "text" and _is_doctor_search_query(input_value):
                     init_context["search_doctor_query"] = input_value
+                await _confirm_or_start_language(client, phone, init_context, input_value)
+            else:
                 await _start(client, phone, init_context)
     except HmsApiError as exc:
         logger.warning("HMS API rejected request for %s: %s", phone, exc)
@@ -724,14 +713,21 @@ async def handle_message(
 
 
 async def _confirm_or_start_language(client: httpx.AsyncClient, phone: str, context: dict, input_value: str) -> None:
-    detected_lang = _detect_language(input_value) if input_value else None
+    detected_lang, is_high_confidence = _detect_language(input_value) if input_value else (None, False)
     if detected_lang:
-        confirm_context = {
-            **context,
-            "guess_lang": detected_lang,
-        }
-        await _transition_to(phone, "confirming_language", confirm_context, None)
-        await _trigger_step_prompt(client, phone, "confirming_language", confirm_context)
+        if is_high_confidence:
+            context["lang"] = detected_lang
+            booking = _get_or_create_clipboard(context)
+            booking_slots.fill(booking, "lang", detected_lang, source="user")
+            await whatsapp_client.send_text(client, phone, t("welcome_banner", detected_lang))
+            await _advance_booking_flow(client, phone, context, booking)
+        else:
+            confirm_context = {
+                **context,
+                "guess_lang": detected_lang,
+            }
+            await _transition_to(phone, "confirming_language", confirm_context, None)
+            await _trigger_step_prompt(client, phone, "confirming_language", confirm_context)
     else:
         await _start(client, phone, context)
 
