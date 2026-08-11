@@ -2391,6 +2391,76 @@ def test_first_message_symptom_resolves_to_combined_message_not_generic_location
         conversation.nlu_client.classify_message = original_classify
 
 
+def test_awaiting_symptom_step_announces_specialty_before_sort():
+    """Live-reported gap: the "Describe symptoms" button flow (choosing_search_mode ->
+    awaiting_symptom, i.e. _handle_awaiting_symptom) matched the typed symptom to a specialty
+    correctly, but jumped straight to the generic sort-prompt list ("Doctor list kis basis par
+    dikhayein?") with zero mention of what specialty it matched to or any concern
+    acknowledgment -- unlike the NLU-shortcut symptom/specialty paths (Task 4/5), which always
+    named the specialty. This step is reached only after choosing_location has already passed,
+    so there's no location to ask for here -- the fix is to fold a concern/enthusiasm sentence
+    naming the specialty into the SAME sort-prompt list message via _send_sort_prompt's new
+    concern_prefix, not to send it as a second message."""
+    import asyncio
+
+    class MockDB:
+        def __init__(self):
+            self.state = {}
+
+        async def get_conversation_state(self, phone):
+            if phone in self.state:
+                step, ctx = self.state[phone]
+                return {"current_step": step, "context": ctx}
+            return None
+
+        async def save_conversation_state(self, phone, step, context):
+            self.state[phone] = (step, context)
+
+        async def clear_conversation_state(self, phone):
+            self.state.pop(phone, None)
+
+    db_mock = MockDB()
+    original_db = conversation.db
+    conversation.db = db_mock
+
+    sent_lists = []
+
+    async def mock_send_list(client, to, text, button_label, rows, section_title="Options"):
+        sent_lists.append(text)
+
+    original_send_list = conversation.whatsapp_client.send_list
+
+    async def mock_list_specialties():
+        return [{"category": "General Physician"}, {"category": "Cardiologist (Heart)"}]
+
+    async def mock_route_symptom(q):
+        return ["General Physician"]
+
+    original_list_specialties = conversation.hms_client.list_specialties
+    original_route_symptom = conversation.symptom_client.route_symptom
+    conversation.whatsapp_client.send_list = mock_send_list
+    conversation.hms_client.list_specialties = mock_list_specialties
+    conversation.symptom_client.route_symptom = mock_route_symptom
+
+    mock_client = object()
+    try:
+        # Location already known (as it would be by the time this step is reached in the real
+        # flow -- choosing_search_mode only follows choosing_location).
+        context = {"lang": "hg", "patient_lat": 26.11, "patient_lng": 87.55}
+        asyncio.run(conversation._handle_awaiting_symptom(mock_client, "aw1", "text", "bahut tez bukhar hai", context))
+
+        check(len(sent_lists) == 1, f"should send exactly one combined message, got {len(sent_lists)}")
+        if sent_lists:
+            check("General Physician" in sent_lists[0], f"should name the matched specialty, got {sent_lists[0]!r}")
+            check("fikar" in sent_lists[0], f"should use the symptom-concern framing, got {sent_lists[0]!r}")
+            check(i18n.t("sort_prompt", "hg") in sent_lists[0], "should still include the sort-prompt question in the same message")
+    finally:
+        conversation.db = original_db
+        conversation.whatsapp_client.send_list = original_send_list
+        conversation.hms_client.list_specialties = original_list_specialties
+        conversation.symptom_client.route_symptom = original_route_symptom
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:

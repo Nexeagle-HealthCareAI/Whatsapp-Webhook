@@ -698,6 +698,23 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Zaroor! Aapke liye achha {specialty} dhoondte hain. Najdeeki doctors dikhane ke liye apni location share kar dijiye:",
         "bn": "অবশ্যই! আপনার জন্য একজন ভালো {specialty} খুঁজি। কাছাকাছি ডাক্তার দেখাতে অনুগ্রহ করে আপনার লোকেশন শেয়ার করুন:",
     },
+    # Same concern/enthusiasm framing as the two entries above, minus the location-ask
+    # sentence -- for use when location is ALREADY known (e.g. _handle_awaiting_symptom,
+    # reached only after the choosing_location step has already passed) and the very next
+    # thing shown is the sort-prompt, not a location request. Prepended to sort_prompt's own
+    # text by _send_sort_prompt to keep it one message, not two.
+    "symptom_concern_only": {
+        "en": "That sounds concerning — best to get it checked soon. This looks like a case for a {specialty}.",
+        "hi": "ये सुनकर थोड़ी चिंता हुई — जल्दी दिखवाना सही रहेगा। ये {specialty} के पास जाने वाला मामला लगता है।",
+        "hg": "Sunke thodi fikar hui — jaldi dikhwana sahi rahega. Ye {specialty} ke paas jaane wala case lagta hai.",
+        "bn": "শুনে একটু চিন্তা হলো — শীঘ্রই দেখানো ভালো হবে। এটা {specialty}-এর কাছে যাওয়ার মতো বিষয় মনে হচ্ছে।",
+    },
+    "specialty_enthusiasm_only": {
+        "en": "Sure! Let's find you a good {specialty}.",
+        "hi": "ज़रूर! आपके लिए एक अच्छे {specialty} ढूंढते हैं।",
+        "hg": "Zaroor! Aapke liye achha {specialty} dhoondte hain.",
+        "bn": "অবশ্যই! আপনার জন্য একজন ভালো {specialty} খুঁজি।",
+    },
     "doctor_too_many_ask_location": {
         "en": "We have {count}+ doctors matching '{query}' — share your location so I can find the right one quickly:",
         "hi": "'{query}' नाम से हमारे पास {count}+ डॉक्टर हैं — सही वाले तक जल्दी पहुंचने के लिए कृपया अपनी लोकेशन शेयर करें:",

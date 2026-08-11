@@ -546,7 +546,10 @@ async def handle_message(
                     new_context["pending_specialty_is_symptom"] = False
                     has_loc = new_context.get("city") or (new_context.get("patient_lat") is not None and new_context.get("patient_lng") is not None)
                     if new_context.get("lang") and has_loc:
-                        await _send_sort_prompt(client, phone, new_context, matched, current_step)
+                        await _send_sort_prompt(
+                            client, phone, new_context, matched, current_step,
+                            concern_prefix=t("specialty_enthusiasm_only", new_context.get("lang"), specialty=matched),
+                        )
                         return
                     else:
                         if not new_context.get("lang"):
@@ -575,7 +578,10 @@ async def handle_message(
                     new_context["pending_specialty_is_symptom"] = True
                     has_loc = new_context.get("city") or (new_context.get("patient_lat") is not None and new_context.get("patient_lng") is not None)
                     if new_context.get("lang") and has_loc:
-                        await _send_sort_prompt(client, phone, new_context, matched, current_step)
+                        await _send_sort_prompt(
+                            client, phone, new_context, matched, current_step,
+                            concern_prefix=t("symptom_concern_only", new_context.get("lang"), specialty=matched),
+                        )
                         return
                     else:
                         if not new_context.get("lang"):
@@ -1134,7 +1140,10 @@ async def _handle_awaiting_symptom(client, phone, input_type, input_value, conte
         await _send_specialty_list(client, phone, context)
         return
 
-    await _send_sort_prompt(client, phone, context, matched_category, "awaiting_symptom")
+    await _send_sort_prompt(
+        client, phone, context, matched_category, "awaiting_symptom",
+        concern_prefix=t("symptom_concern_only", lang, specialty=matched_category),
+    )
 
 
 def _specialty_row(specialty: dict) -> tuple[str, str, str]:
@@ -1262,7 +1271,10 @@ async def _handle_choosing_specialty(client, phone, input_type, input_value, con
 # ---------------------------------------------------------------------------------------
 
 
-async def _send_sort_prompt(client: httpx.AsyncClient, phone: str, context: dict, specialty_category: str, current_step: str) -> None:
+async def _send_sort_prompt(
+    client: httpx.AsyncClient, phone: str, context: dict, specialty_category: str, current_step: str,
+    concern_prefix: str | None = None,
+) -> None:
     lang = context.get("lang")
     context = {**context, "specialty_category": specialty_category}
     rows = [
@@ -1276,7 +1288,14 @@ async def _send_sort_prompt(client: httpx.AsyncClient, phone: str, context: dict
     # point offering the option here if it can't do anything).
     if context.get("patient_lat") is not None or context.get("location_text"):
         rows.insert(1, ("nearest", t("sort_nearest", lang)))
-    await whatsapp_client.send_list(client, phone, t("sort_prompt", lang), t("sort_button", lang), rows, "Sort")
+    # concern_prefix names the specialty this search matched to (Task 4/5's concern/enthusiasm
+    # framing) for callers where location was already known and the patient hasn't been told
+    # yet what specialty their symptom/request resolved to -- folded into this one list message
+    # rather than sent separately, so a matched specialty is never silently unannounced without
+    # doubling up messages. Callers that already announced it (e.g. as part of an earlier
+    # combined location-ask message) pass nothing.
+    body = f"{concern_prefix}\n\n{t('sort_prompt', lang)}" if concern_prefix else t("sort_prompt", lang)
+    await whatsapp_client.send_list(client, phone, body, t("sort_button", lang), rows, "Sort")
     await _transition_to(phone, "choosing_sort", context, current_step)
 
 
