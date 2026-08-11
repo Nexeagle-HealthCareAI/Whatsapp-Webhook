@@ -677,10 +677,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "bn": "{patient_name}-এর জন্য অ্যাপয়েন্টমেন্টের অনুরোধ জমা দেওয়া হয়েছে! আমাদের ফ্রন্ট ডেস্ক শীঘ্রই সঠিক সময় নিশ্চিত করবে।",
     },
     "booked_queue_note": {
-        "en": "We'll send you live queue/token updates on WhatsApp on the day of the visit.",
-        "hi": "विज़िट के दिन हम आपको WhatsApp पर लाइव क्यू/टोकन अपडेट भेजेंगे।",
-        "hg": "Visit ke din hum aapko WhatsApp par live queue/token updates bhejenge.",
-        "bn": "আমরা পরিদর্শনের দিন আপনাকে হোয়াটসঅ্যাপে লাইভ কিউ/টোকন আপডেট পাঠাব।",
+        "en": "We'll send you live queue/token updates on WhatsApp on the day of the visit.\n\nNeed anything else? Just send a message — doctor search, symptom check, or a new booking.",
+        "hi": "विज़िट के दिन हम आपको WhatsApp पर लाइव क्यू/टोकन अपडेट भेजेंगे।\n\nकुछ और चाहिए? बस मैसेज भेजें — डॉक्टर सर्च, सिम्पटम चेक, या नई बुकिंग।",
+        "hg": "Visit ke din hum aapko WhatsApp par live queue/token updates bhejenge.\n\nKuch aur chahiye? Bas message bhejein — doctor search, symptom check, ya nayi booking.",
+        "bn": "আমরা পরিদর্শনের দিন আপনাকে হোয়াটসঅ্যাপে লাইভ কিউ/টোকন আপডেট পাঠাব।\n\nআর কিছু দরকার? শুধু একটি বার্তা পাঠান — ডাক্তার খোঁজা, উপসর্গ পরীক্ষা, বা নতুন বুকিং।",
     },
     "booked_map_caption": {
         "en": "{hospital_name} — tap to see the location.",
