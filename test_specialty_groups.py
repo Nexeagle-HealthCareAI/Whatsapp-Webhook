@@ -2526,6 +2526,89 @@ def test_guardian_is_optional_in_patient_details():
         conversation._send_patient_details_flow = original_send_flow_prompt
 
 
+def test_unresolved_location_reprompts_instead_of_silently_advancing():
+    """Live-reported bug: a generic booking request with no doctor/symptom/specialty named
+    (e.g. "Mujhe kal subah appointment chahiye") correctly asks for location. But when the
+    typed city fails to resolve (e.g. "kishaganj", missing the 'n' in "Kishanganj" -- city_index
+    has no fuzzy/typo tolerance, see match_typed_city), the conversation silently jumped straight
+    to "Aap symptom ke hisaab se search karna chahte hain ya doctor ke naam se?" (choosing_search_mode)
+    with NO "couldn't find that city" message at all -- the patient had no idea their location
+    wasn't understood. Later, once a symptom/specialty search actually needed a location, the bot
+    asked for it again, which read as a confusing duplicate ask for something already answered.
+
+    Root cause: booking_slots.next_action() correctly returns ("retry", "location") when the
+    location slot is marked notfound, but _step_for_action had no case for action=="retry" with
+    slot_name=="location" -- it fell through every other elif and hit the function's default
+    return of "choosing_search_mode". _trigger_step_prompt's own "choosing_location" branch
+    already knows how to send the "couldn't find that city" message for a notfound status (see
+    app/conversation.py's step == "choosing_location" case) -- it just was never reached.
+
+    Fix: _step_for_action now routes ("retry", "location") back to "choosing_location" so that
+    existing notfound-messaging actually fires before re-asking, instead of masquerading as if
+    the location had been accepted."""
+    import asyncio
+
+    class MockDB:
+        def __init__(self):
+            self.state = {}
+
+        async def get_conversation_state(self, phone):
+            if phone in self.state:
+                step, ctx = self.state[phone]
+                return {"current_step": step, "context": ctx}
+            return None
+
+        async def save_conversation_state(self, phone, step, context):
+            self.state[phone] = (step, context)
+
+        async def clear_conversation_state(self, phone):
+            self.state.pop(phone, None)
+
+    db_mock = MockDB()
+    original_db = conversation.db
+    conversation.db = db_mock
+
+    sent_texts, sent_loc_reqs = [], []
+
+    async def mock_send_text(client, to, text):
+        sent_texts.append(text)
+
+    async def mock_send_loc_req(client, to, text):
+        sent_loc_reqs.append(text)
+
+    original_send_text = conversation.whatsapp_client.send_text
+    original_send_loc = conversation.whatsapp_client.send_location_request
+    conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_location_request = mock_send_loc_req
+
+    mock_client = object()
+    try:
+        # Fresh clipboard, lang already known, sitting on choosing_location -- exactly the
+        # state a generic "Mujhe kal subah appointment chahiye" request leaves the patient in.
+        booking = conversation.booking_slots.empty()
+        conversation.booking_slots.fill(booking, "lang", "hg", source="user")
+        context = {"lang": "hg", "booking": booking, "current_step": "choosing_location"}
+
+        asyncio.run(conversation._handle_choosing_location(mock_client, "loc1", "text", "kishaganj", context))
+
+        check(
+            any("kishaganj" in t and ("nahi mili" in t or "couldn't find" in t.lower()) for t in sent_texts),
+            f"should tell the patient their city wasn't recognised, got sent_texts={sent_texts!r}",
+        )
+        check(len(sent_loc_reqs) == 1, f"should re-ask for location (not silently move on), got {sent_loc_reqs!r}")
+
+        step, ctx = db_mock.state.get("loc1", (None, {}))
+        check(step == "choosing_location", f"must stay on choosing_location for a retry, got {step!r}")
+        check(
+            ctx.get("booking", {}).get("location", {}).get("status") == "notfound",
+            "clipboard should record the failed match as notfound, not silently filled or blank",
+        )
+    finally:
+        conversation.db = original_db
+        conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_location_request = original_send_loc
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:

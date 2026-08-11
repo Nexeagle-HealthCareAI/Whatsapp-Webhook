@@ -221,6 +221,15 @@ def _step_for_action(action: str, slot_name: str | None, context: dict) -> str:
         return "choosing_location"
     elif action == "disambiguate" and slot_name == "location":
         return "choosing_location"
+    elif action == "retry" and slot_name == "location":
+        # Falling through to the default ("choosing_search_mode") below would silently
+        # accept the unresolved location and move on -- the patient never learns their city
+        # didn't match, and whatever later needs a location (a symptom/specialty search)
+        # ends up asking for it again out of nowhere, reading as a duplicate ask. Routing
+        # back to choosing_location lets _trigger_step_prompt's own "notfound" branch send
+        # the "couldn't find that city" message before re-asking, which it already knows
+        # how to do -- it just wasn't being reached.
+        return "choosing_location"
     elif action == "ask" and slot_name == "doctor":
         current_step = context.get("current_step")
         if current_step in {
