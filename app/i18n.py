@@ -676,6 +676,12 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "{patient_name} ke liye appointment request submit ho gayi hai! Front desk jald hi exact time confirm karegi.",
         "bn": "{patient_name}-এর জন্য অ্যাপয়েন্টমেন্টের অনুরোধ জমা দেওয়া হয়েছে! আমাদের ফ্রন্ট ডেস্ক শীঘ্রই সঠিক সময় নিশ্চিত করবে।",
     },
+    "doctor_match_found_detailed": {
+        "en": "Found {doctor} for you — {details}.",
+        "hi": "{doctor} मिल गए — {details}।",
+        "hg": "{doctor} mil gaye — {details}.",
+        "bn": "{doctor}-কে পাওয়া গেছে — {details}।",
+    },
     "booked_queue_note": {
         "en": "We'll send you live queue/token updates on WhatsApp on the day of the visit.\n\nNeed anything else? Just send a message — doctor search, symptom check, or a new booking.",
         "hi": "विज़िट के दिन हम आपको WhatsApp पर लाइव क्यू/टोकन अपडेट भेजेंगे।\n\nकुछ और चाहिए? बस मैसेज भेजें — डॉक्टर सर्च, सिम्पटम चेक, या नई बुकिंग।",

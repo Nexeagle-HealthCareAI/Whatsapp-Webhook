@@ -1471,14 +1471,10 @@ async def _render_doctor_list(
         context["hospital_lng"] = d.get("longitude")
         context.pop("doctor_options", None)
         
-        info_msg = f"Found matching doctor: {context['doctor_name']} ({context['hospital_name']})."
-        if lang == "hi":
-            info_msg = f"आपके लिए डॉक्टर मिले: {context['doctor_name']} ({context['hospital_name']})."
-        elif lang == "hg":
-            info_msg = f"Aapke matching doctor mile: {context['doctor_name']} ({context['hospital_name']})."
-        elif lang == "bn":
-            info_msg = f"আপনার জন্য ডাক্তার পাওয়া গেছে: {context['doctor_name']} ({context['hospital_name']})."
-            
+        info_msg = t(
+            "doctor_match_found_detailed", lang,
+            doctor=context["doctor_name"], details=_doctor_row_description(d, context),
+        )
         await whatsapp_client.send_text(client, phone, info_msg)
         booking_slots.fill(booking, "doctor", {"id": d["doctorId"], "fullName": context["doctor_name"]}, raw=context["doctor_name"], source="user")
         await _advance_booking_flow(client, phone, context, booking)
