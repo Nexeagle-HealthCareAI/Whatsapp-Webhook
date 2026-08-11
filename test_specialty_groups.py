@@ -1749,6 +1749,285 @@ def test_failed_hot_swap_clears_stale_doctor_and_reprompts():
         conversation.city_index.get_all_doctors = original_get_all_doctors
 
 
+def test_single_match_message_includes_full_details():
+    """Task 1: the single-doctor-match message used to say only "Found matching doctor:
+    X (Y)." — the specialty/hospital/distance/rating/fee were already in context but never
+    reused for this message. Now reuses _doctor_row_description() directly."""
+    import asyncio
+
+    class MockDB:
+        async def save_conversation_state(self, phone, step, context):
+            pass
+
+    original_db = conversation.db
+    conversation.db = MockDB()
+    sent = []
+
+    async def mock_send_text(client, to, text):
+        sent.append(text)
+
+    original_send_text = conversation.whatsapp_client.send_text
+    conversation.whatsapp_client.send_text = mock_send_text
+
+    async def mock_advance(client, phone, context, booking):
+        pass
+
+    original_advance = conversation._advance_booking_flow
+    conversation._advance_booking_flow = mock_advance
+
+    doctor = {
+        "doctorId": "d1", "fullName": "Dr. Avinash Kumar",
+        "primaryMedicalSpecialityPatientFacingName": "Orthopaedic Surgeon",
+        "hospitalName": "Purnea General Hospital", "city": "Purnea",
+        "latitude": 25.78, "longitude": 87.47, "rating": 4.6, "discountedFee": 500,
+    }
+    try:
+        asyncio.run(conversation._render_doctor_list(
+            object(), "999", {"lang": "hg", "patient_lat": 25.80, "patient_lng": 87.48}, [doctor]
+        ))
+        check(len(sent) == 1, "single match should send exactly one message")
+        msg = sent[0] if sent else ""
+        check("Avinash" in msg, f"message should name the doctor, got {msg!r}")
+        check("Orthopaedic" in msg, f"message should include the specialty, got {msg!r}")
+        check("Purnea General Hospital" in msg, f"message should include the hospital, got {msg!r}")
+        check("500" in msg, f"message should include the fee, got {msg!r}")
+    finally:
+        conversation.db = original_db
+        conversation.whatsapp_client.send_text = original_send_text
+        conversation._advance_booking_flow = original_advance
+
+
+def test_doctor_too_many_matches_asks_location_instead_of_truncating():
+    """Task 3: _render_doctor_list used to silently slice to [:10] with no signal that more
+    matches existed. Now: >10 matches with no location known yet asks for location instead
+    of showing a silently-truncated list. <=10 must still render normally (regression)."""
+    import asyncio
+
+    saved = {}
+
+    class MockDB:
+        async def save_conversation_state(self, phone, step, context):
+            saved["step"] = step
+
+    original_db = conversation.db
+    conversation.db = MockDB()
+
+    sent_loc_reqs, sent_lists = [], []
+
+    async def mock_send_loc_req(client, to, text):
+        sent_loc_reqs.append(text)
+
+    async def mock_send_list(client, to, text, btn, rows, section="Options"):
+        sent_lists.append(rows)
+
+    original_send_loc = conversation.whatsapp_client.send_location_request
+    original_send_list = conversation.whatsapp_client.send_list
+    conversation.whatsapp_client.send_location_request = mock_send_loc_req
+    conversation.whatsapp_client.send_list = mock_send_list
+
+    try:
+        docs_15 = [{"doctorId": f"d{i}", "fullName": f"Dr. Sharma {i}", "hospitalName": "H", "city": "C"} for i in range(15)]
+        context = {"lang": "hg", "search_doctor_query": "Sharma"}
+        asyncio.run(conversation._render_doctor_list(object(), "999", context, docs_15, "awaiting_doctor_name"))
+        check(len(sent_loc_reqs) == 1, "15 matches with no location should ask for location once")
+        check("15" in sent_loc_reqs[0], f"message should state the count, got {sent_loc_reqs[0]!r}")
+        check(len(sent_lists) == 0, "must not show a truncated list when asking for location")
+        check(saved.get("step") == "choosing_location", "should transition to choosing_location")
+
+        sent_loc_reqs.clear(); sent_lists.clear(); saved.clear()
+        docs_4 = [{"doctorId": f"d{i}", "fullName": f"Dr. X {i}", "hospitalName": "H", "city": "C"} for i in range(4)]
+        asyncio.run(conversation._render_doctor_list(object(), "999", {"lang": "hg", "search_doctor_query": "X"}, docs_4, "awaiting_doctor_name"))
+        check(len(sent_loc_reqs) == 0, "4 matches should not trigger a location ask (regression)")
+        check(len(sent_lists) == 1 and len(sent_lists[0]) == 4, "4 matches should still show a normal list")
+    finally:
+        conversation.db = original_db
+        conversation.whatsapp_client.send_location_request = original_send_loc
+        conversation.whatsapp_client.send_list = original_send_list
+
+
+def test_welcome_message_lists_actions():
+    """Task 0: welcome_multilang used to only say "select a language" — now names what the
+    bot can do, in the same message (no new message added)."""
+    msg = i18n.t("welcome_multilang", None)
+    check("Doctor search" in msg, f"welcome message should list doctor search, got {msg!r}")
+    check("Symptom check" in msg, f"welcome message should list symptom check, got {msg!r}")
+    check("Book appointment" in msg, f"welcome message should list booking, got {msg!r}")
+
+
+def test_booking_success_invites_new_search():
+    """Task 14: booked_queue_note used to end the conversation with no invitation to start
+    again, unlike the cancelled message which already did. Now symmetric."""
+    for lang in ("en", "hi", "hg", "bn"):
+        msg = i18n.t("booked_queue_note", lang)
+        check(len(msg.split("\n\n")) >= 2, f"booked_queue_note[{lang}] should have a closing invitation on its own line")
+
+
+def test_symptom_and_specialty_open_with_one_combined_location_message():
+    """Task 4 and 5: the sym_name/spec_name branches used to fall through to a generic,
+    symptom/specialty-unaware location_prompt when location wasn't known yet. Now each sends
+    exactly one personalised message (concern/enthusiasm + the specialty + location ask)."""
+    import asyncio
+
+    class MockDB:
+        def __init__(self):
+            self.state = {}
+
+        async def get_conversation_state(self, phone):
+            if phone in self.state:
+                step, ctx = self.state[phone]
+                return {"current_step": step, "context": ctx}
+            return None
+
+        async def save_conversation_state(self, phone, step, context):
+            self.state[phone] = (step, context)
+
+        async def clear_conversation_state(self, phone):
+            self.state.pop(phone, None)
+
+        async def log_nlu_interaction(self, **kw):
+            pass
+
+    db_mock = MockDB()
+    original_db = conversation.db
+    original_router_db = conversation.intent_router.db
+    conversation.db = db_mock
+    conversation.intent_router.db = db_mock
+
+    sent_texts, sent_loc_reqs = [], []
+
+    async def mock_send_text(client, to, text):
+        sent_texts.append(text)
+
+    async def mock_send_loc_req(client, to, text):
+        sent_loc_reqs.append(text)
+
+    original_send_text = conversation.whatsapp_client.send_text
+    original_send_loc = conversation.whatsapp_client.send_location_request
+    conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_location_request = mock_send_loc_req
+
+    async def mock_list_specialties():
+        return [{"category": "General Physician"}, {"category": "Cardiologist (Heart)"}]
+
+    async def mock_route_symptom(q):
+        return ["General Physician"]
+
+    original_list_specialties = conversation.hms_client.list_specialties
+    original_route_symptom = conversation.symptom_client.route_symptom
+    conversation.hms_client.list_specialties = mock_list_specialties
+    conversation.symptom_client.route_symptom = mock_route_symptom
+
+    original_classify = conversation.nlu_client.classify_message
+    mock_client = object()
+
+    try:
+        mock_nlu_symptom = {"intent": "describe_symptom", "confidence": "high", "entities": {"symptom": "bahut tez bukhar hai"}}
+
+        async def mock_classify_symptom(client, text):
+            return mock_nlu_symptom
+
+        conversation.nlu_client.classify_message = mock_classify_symptom
+        asyncio.run(db_mock.save_conversation_state("cs1", None, {"lang": "hg"}))
+        asyncio.run(conversation.handle_message(mock_client, "cs1", "User", "text", "bahut tez bukhar hai"))
+        check(len(sent_texts) == 0, "symptom path should not send a plain text message")
+        check(len(sent_loc_reqs) == 1, "symptom path should send exactly one location-request message")
+        if sent_loc_reqs:
+            check("General Physician" in sent_loc_reqs[0], f"should name the resolved specialty, got {sent_loc_reqs[0]!r}")
+
+        sent_texts.clear(); sent_loc_reqs.clear()
+        mock_nlu_specialty = {"intent": "check_availability", "confidence": "high", "entities": {"specialty": "cardiologist"}}
+
+        async def mock_classify_specialty(client, text):
+            return mock_nlu_specialty
+
+        conversation.nlu_client.classify_message = mock_classify_specialty
+        asyncio.run(db_mock.save_conversation_state("cs2", None, {"lang": "hg"}))
+        asyncio.run(conversation.handle_message(mock_client, "cs2", "User", "text", "mujhe cardiologist ko dikhana hai"))
+        check(len(sent_texts) == 0, "specialty path should not send a plain text message")
+        check(len(sent_loc_reqs) == 1, "specialty path should send exactly one location-request message")
+        if sent_loc_reqs:
+            check("Cardiologist" in sent_loc_reqs[0], f"should name the resolved specialty, got {sent_loc_reqs[0]!r}")
+    finally:
+        conversation.db = original_db
+        conversation.intent_router.db = original_router_db
+        conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_location_request = original_send_loc
+        conversation.hms_client.list_specialties = original_list_specialties
+        conversation.symptom_client.route_symptom = original_route_symptom
+        conversation.nlu_client.classify_message = original_classify
+
+
+def test_radius_auto_widens_without_confirm_tap():
+    """Task 6: once the widest configured band (50km) comes up empty, _send_doctor_list used
+    to ask permission via buttons before searching further. Now it tells the patient and
+    searches unrestricted immediately — no confirm tap, and no city filter."""
+    import asyncio
+
+    class MockDB:
+        async def clear_conversation_state(self, phone):
+            pass
+
+    original_db = conversation.db
+    conversation.db = MockDB()
+
+    sent_texts, sent_buttons = [], []
+
+    async def mock_send_text(client, to, text):
+        sent_texts.append(text)
+
+    async def mock_send_buttons(client, to, text, buttons):
+        sent_buttons.append((text, buttons))
+
+    original_send_text = conversation.whatsapp_client.send_text
+    original_send_buttons = conversation.whatsapp_client.send_buttons
+    conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_buttons = mock_send_buttons
+
+    original_fetch_near = conversation._fetch_doctors_near
+    original_safe_index = conversation._safe_city_index
+    original_render = conversation._render_doctor_list
+    original_list_doctors = conversation.hms_client.list_doctors
+
+    async def mock_fetch_near_empty(specialty, context, radius, index, cache):
+        return []
+
+    async def mock_safe_index():
+        return {"SomeCity": [[26.1, 87.9]]}
+
+    rendered = {}
+
+    async def mock_render(client, phone, context, doctors, current_step=None):
+        rendered["doctors"] = doctors
+
+    wide_results = [{"doctorId": "far1", "fullName": "Dr. Far"}]
+
+    async def mock_list_doctors(specialty, page_size=50, city=None):
+        check(city is None, "auto-widened search must not pass a city filter")
+        return wide_results
+
+    conversation._fetch_doctors_near = mock_fetch_near_empty
+    conversation._safe_city_index = mock_safe_index
+    conversation._render_doctor_list = mock_render
+    conversation.hms_client.list_doctors = mock_list_doctors
+
+    try:
+        context = {"lang": "hg", "specialty_category": "Cardiologist (Heart)", "patient_lat": 26.10, "patient_lng": 87.95}
+        asyncio.run(conversation._send_doctor_list(object(), "999", context))
+        check(len(sent_buttons) == 0, "auto-widen must not show a search-wider confirm button")
+        check(len(sent_texts) == 1, "auto-widen should send exactly one informational message")
+        if sent_texts:
+            check("50" in sent_texts[0], f"message should state the max radius, got {sent_texts[0]!r}")
+        check(rendered.get("doctors") == wide_results, "should render the unrestricted search results")
+    finally:
+        conversation.db = original_db
+        conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_buttons = original_send_buttons
+        conversation._fetch_doctors_near = original_fetch_near
+        conversation._safe_city_index = original_safe_index
+        conversation._render_doctor_list = original_render
+        conversation.hms_client.list_doctors = original_list_doctors
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:
