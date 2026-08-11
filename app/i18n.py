@@ -706,6 +706,54 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Hi {patient_name}, {doctor_name} se milne ke baad bas haal-chaal pooch rahe hain — kaisa feel kar rahe hain? Follow-up book karna ho to reply karein.",
         "bn": "হাই {patient_name}, {doctor_name}-এর কাছে আপনার পরিদর্শনের পর খোঁজ নিচ্ছি — আপনি কেমন অনুভব করছেন? ফলো-আপ বুক করতে হলে উত্তর দিন।",
     },
+    "checkin_invalid_code": {
+        "en": "This check-in code isn't valid. Please ask reception for help.",
+        "hi": "यह चेक-इन कोड मान्य नहीं है। कृपया रिसेप्शन से मदद लें।",
+        "hg": "Yeh check-in code valid nahi hai. Reception se madad le lijiye.",
+        "bn": "এই চেক-ইন কোডটি বৈধ নয়। অনুগ্রহ করে রিসেপশনের সাহায্য নিন।",
+    },
+    "checkin_location_prompt": {
+        "en": "You're checking in at {hospital_name}. Please share your location so we can confirm you're on-site — tap below.",
+        "hi": "आप {hospital_name} पर चेक-इन कर रहे हैं। कृपया अपनी लोकेशन शेयर करें ताकि हम पुष्टि कर सकें कि आप वहाँ मौजूद हैं — नीचे टैप करें।",
+        "hg": "Aap {hospital_name} par check-in kar rahe hain. Kripya apni location share karein taaki hum confirm kar sakein aap wahaan maujood hain — neeche tap karein.",
+        "bn": "আপনি {hospital_name}-এ চেক-ইন করছেন। অনুগ্রহ করে আপনার অবস্থান শেয়ার করুন যাতে আমরা নিশ্চিত করতে পারি আপনি সেখানে আছেন — নিচে ট্যাপ করুন।",
+    },
+    "checkin_too_far": {
+        "en": "You don't seem to be at the hospital yet. Please make sure you're on-site and share your location again.",
+        "hi": "लगता है आप अभी अस्पताल पर नहीं हैं। कृपया सुनिश्चित करें कि आप वहाँ हैं और दोबारा लोकेशन शेयर करें।",
+        "hg": "Lagta hai aap abhi hospital par nahi hain. Kripya confirm karein aap wahaan hain aur dobara location share karein.",
+        "bn": "মনে হচ্ছে আপনি এখনও হাসপাতালে নেই। অনুগ্রহ করে নিশ্চিত করুন আপনি সেখানে আছেন এবং আবার আপনার অবস্থান শেয়ার করুন।",
+    },
+    "checkin_no_appointment": {
+        "en": "We couldn't find an appointment for today under this number. Please check in at reception.",
+        "hi": "इस नंबर पर आज के लिए कोई अपॉइंटमेंट नहीं मिली। कृपया रिसेप्शन पर चेक-इन करें।",
+        "hg": "Is number par aaj ke liye koi appointment nahi mili. Kripya reception par check-in karein.",
+        "bn": "এই নম্বরে আজকের জন্য কোনো অ্যাপয়েন্টমেন্ট পাওয়া যায়নি। অনুগ্রহ করে রিসেপশনে চেক-ইন করুন।",
+    },
+    "checkin_choose_appointment": {
+        "en": "We found more than one appointment for you today. Please choose one:",
+        "hi": "आज आपके लिए एक से ज़्यादा अपॉइंटमेंट मिली हैं। कृपया एक चुनें:",
+        "hg": "Aaj aapke liye ek se zyada appointments mili hain. Kripya ek choose karein:",
+        "bn": "আজ আপনার জন্য একাধিক অ্যাপয়েন্টমেন্ট পাওয়া গেছে। অনুগ্রহ করে একটি বেছে নিন:",
+    },
+    "checkin_choose_button": {
+        "en": "Choose",
+        "hi": "चुनें",
+        "hg": "Choose karein",
+        "bn": "বেছে নিন",
+    },
+    "checkin_success": {
+        "en": "You're checked in! Your token number is #{token_no}. We'll message you here as the queue moves.",
+        "hi": "आप चेक-इन हो गए हैं! आपका टोकन नंबर #{token_no} है। क्यू आगे बढ़ने पर हम आपको यहाँ मैसेज करेंगे।",
+        "hg": "Aap check-in ho gaye hain! Aapka token number #{token_no} hai. Queue aage badhne par hum aapko yahaan message karenge.",
+        "bn": "আপনি চেক-ইন হয়ে গেছেন! আপনার টোকেন নম্বর #{token_no}। কিউ এগোলে আমরা আপনাকে এখানে মেসেজ করব।",
+    },
+    "checkin_failed": {
+        "en": "We couldn't check you in right now. Please check in at reception.",
+        "hi": "अभी हम आपको चेक-इन नहीं कर पाए। कृपया रिसेप्शन पर चेक-इन करें।",
+        "hg": "Abhi hum aapko check-in nahi kar paaye. Kripya reception par check-in karein.",
+        "bn": "এখন আমরা আপনাকে চেক-ইন করতে পারিনি। অনুগ্রহ করে রিসেপশনে চেক-ইন করুন।",
+    },
 }
 
 

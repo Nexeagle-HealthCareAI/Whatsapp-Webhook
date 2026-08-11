@@ -28,6 +28,9 @@ services:
       # — a different secret from WHATSAPP_APP_SECRET, which authenticates Meta instead.
       INTERNAL_EVENTS_TOKEN: "${INTERNAL_EVENTS_TOKEN}"
       SARVAM_API_KEY: "${SARVAM_API_KEY}"
+      # Only this service serves GET /c/{hospital_code} (worker.py never mounts the FastAPI
+      # app) -- optional, see app/config.py for why an unset value degrades gracefully.
+      WHATSAPP_DISPLAY_NUMBER: "${WHATSAPP_DISPLAY_NUMBER:-}"
     # Bound to localhost only — the VM's existing shared Caddy/reverse proxy (already
     # serving other nexeagle.com subdomains) reverse_proxy's to this from the host side.
     # This stack does NOT run its own Caddy: a second process can't also bind 80/443

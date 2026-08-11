@@ -10,6 +10,15 @@ class Settings(BaseSettings):
     whatsapp_app_secret: str
     whatsapp_flow_id: str | None = "1534474454316152"
     whatsapp_flow_screen_id: str = "REGISTRATION_SCREEN"
+    # The dialable number used in wa.me/<number> click-to-chat links -- NOT the same value as
+    # whatsapp_phone_number_id above, which is Meta's internal id for the Cloud API, never
+    # dialable. Used by GET /c/{hospital_code} (app/webhook.py) to build the redirect that
+    # opens WhatsApp with "CHECKIN <code>" prefilled. Optional (unlike internal_events_token)
+    # deliberately: this is a new addition to an already-deployed service, and every other
+    # required setting here is read from a .env the deploy workflow generates from GitHub
+    # secrets — an unset required field would crash-loop the whole bot on the next deploy
+    # until that secret exists. GET /c/{code} degrades to a friendly error instead.
+    whatsapp_display_number: str | None = None
 
     # Password is embedded in the URL (redis://:{password}@redis:6379/0) — docker-compose
     # interpolates REDIS_PASSWORD into this value, the app itself only needs the one var.

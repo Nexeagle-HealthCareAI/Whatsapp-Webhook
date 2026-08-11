@@ -28,6 +28,10 @@ GREETING_TEXT = "Hi! I can help you book a doctor's appointment."
 
 _SORT_OPTIONS = ["rating", "nearest", "experience", "fee"]
 
+# OPD QR check-in trigger — matches the "CHECKIN <code>" text GET /c/{hospital_code}
+# (app/webhook.py) prefills into the wa.me deep link. See the interceptor in handle_message.
+_CHECKIN_TRIGGER_PATTERN = re.compile(r"^checkin\s+(\S+)$", re.IGNORECASE)
+
 
 def _match_choice(input_type: str, input_value: str, valid_ids: list[str]) -> str | None:
     """Accepts a button/list tap, or plain text typed by hand matching one of the choices —
@@ -277,6 +281,18 @@ async def handle_message(
     state = await db.get_conversation_state(phone)
     current_step = state["current_step"] if state else None
     context = state["context"] if state else {}
+    # OPD QR check-in: a deterministic command from a QR scan (GET /c/{hospital_code} in
+    # webhook.py), not natural language — intercepted before language detection/NLU/the
+    # clipboard even initialize, same priority as "cancel"/"back" below but earlier, so it
+    # never burns an NLU call or risks the casual-chat fallback swallowing it. Existing
+    # conversation state (e.g. a booking in progress) is intentionally left untouched unless
+    # the code is valid.
+    if input_type == "text" and input_value.strip():
+        checkin_match = _CHECKIN_TRIGGER_PATTERN.match(input_value.strip())
+        if checkin_match:
+            await _handle_checkin_trigger(client, phone, checkin_match.group(1), context, current_step)
+            return
+
     booking = _get_or_create_clipboard(context)
     lang = context.get("lang")
     has_lang_init = lang is not None
@@ -640,7 +656,10 @@ async def handle_message(
         has_entities = nlu_result and any(nlu_result.get(k) for k in ("doctor_name", "specialty", "symptom"))
         if not nlu_result or nlu_result.get("intent") == "out_of_scope" or nlu_result.get("confidence", 0.0) < settings.nlu_confidence_threshold:
             if not has_entities:
-                if current_step not in ("awaiting_symptom", "awaiting_doctor_name", "awaiting_patient_details"):
+                if current_step not in (
+                    "awaiting_symptom", "awaiting_doctor_name", "awaiting_patient_details",
+                    "checkin_awaiting_location", "checkin_choosing_appointment",
+                ):
                     try:
                         dynamic_reply = await nlu_client.generate_conversational_response(client, "general_chat", context, input_value)
                         if dynamic_reply:
@@ -686,6 +705,10 @@ async def handle_message(
             await _handle_awaiting_patient_details(client, phone, input_type, input_value, context)
         elif current_step == "confirming":
             await _handle_confirming(client, phone, sender_name, input_type, input_value, context)
+        elif current_step == "checkin_awaiting_location":
+            await _handle_checkin_awaiting_location(client, phone, input_type, input_value, context)
+        elif current_step == "checkin_choosing_appointment":
+            await _handle_checkin_choosing_appointment(client, phone, input_type, input_value, context)
         else:
             # No state (new/returning user) or an unrecognized step — restart cleanly
             # rather than leave the conversation stuck.
@@ -2078,6 +2101,19 @@ async def _trigger_step_prompt(client: httpx.AsyncClient, phone: str, step: str,
                 ("cancel", t("cancel_btn", lang)),
             ],
         )
+    elif step == "checkin_awaiting_location":
+        await whatsapp_client.send_location_request(
+            client, phone, t("checkin_location_prompt", lang, hospital_name=context.get("checkin_hospital_name"))
+        )
+    elif step == "checkin_choosing_appointment":
+        rows = [
+            (appt_id, c.get("doctorName") or "Doctor", c.get("startAt") or "")
+            for appt_id, c in context.get("checkin_options", {}).items()
+        ]
+        if rows:
+            await whatsapp_client.send_list(
+                client, phone, t("checkin_choose_appointment", lang), t("checkin_choose_button", lang), rows,
+            )
     else:
         await _start(client, phone)
 
@@ -2092,3 +2128,125 @@ async def _handle_awaiting_doctor_name(client, phone, input_type, input_value, c
     if await _search_doctors_flow(client, phone, context, "awaiting_doctor_name"):
         return
     await _handle_doctor_search_miss(client, phone, context, input_value)
+
+
+# ---------------------------------------------------------------------------------------
+# OPD QR check-in — a separate, self-contained flow from booking above, entered only via the
+# CHECKIN trigger in handle_message. Deliberately kept on its own current_step values rather
+# than folded into booking_slots.py's clipboard model: the clipboard drives the *booking*
+# flow's slot-filling, and check-in isn't a slot-filling problem (it's a fixed two-step
+# location-share -> resolve sequence) -- reusing it here would mean teaching the clipboard
+# about slots that only exist for a completely different flow.
+# ---------------------------------------------------------------------------------------
+
+
+async def _handle_checkin_trigger(
+    client: httpx.AsyncClient, phone: str, hospital_code: str, context: dict, current_step: str | None
+) -> None:
+    # Re-resolves independently of GET /c/{hospital_code}'s own validation (app/webhook.py) —
+    # that redirect is a UX nicety, never the authoritative check, since the prefilled text is
+    # just a string the patient's WhatsApp client could technically let them edit before send.
+    try:
+        hospital = await hms_client.get_hospital_by_code(hospital_code)
+    except HmsApiError:
+        lang = context.get("lang")
+        await whatsapp_client.send_text(client, phone, t("checkin_invalid_code", lang))
+        return
+
+    # Fresh context, not merged with whatever the patient was doing before (e.g. an
+    # in-progress booking search) — check-in is an independent flow, and reusing stale keys
+    # like doctor_options here would only risk cross-contamination.
+    checkin_context = {
+        "lang": context.get("lang"),
+        "checkin_hospital_id": hospital["hospitalId"],
+        "checkin_hospital_name": hospital.get("name") or "the hospital",
+    }
+    await _transition_to(phone, "checkin_awaiting_location", checkin_context, current_step)
+    lang = checkin_context.get("lang")
+    await whatsapp_client.send_location_request(
+        client, phone, t("checkin_location_prompt", lang, hospital_name=checkin_context["checkin_hospital_name"])
+    )
+
+
+async def _handle_checkin_awaiting_location(client, phone, input_type, input_value, context) -> None:
+    lang = context.get("lang")
+    if input_type != "location":
+        await whatsapp_client.send_text(
+            client, phone, t("checkin_location_prompt", lang, hospital_name=context.get("checkin_hospital_name"))
+        )
+        return
+
+    lat_str, lng_str = input_value.split(",")
+    latitude, longitude = float(lat_str), float(lng_str)
+    hospital_id = context["checkin_hospital_id"]
+
+    result = await hms_client.resolve_checkin(hospital_id, mobile=phone, latitude=latitude, longitude=longitude)
+
+    if result.get("success") and result.get("appointmentId"):
+        await _finish_checkin(client, phone, lang, result["appointmentId"], result.get("tokenNo"))
+        return
+
+    candidates = result.get("candidates")
+    if candidates:
+        checkin_options = {c["appointmentId"]: c for c in candidates}
+        new_context = {
+            **context,
+            "checkin_latitude": latitude,
+            "checkin_longitude": longitude,
+            "checkin_options": checkin_options,
+        }
+        new_context.pop("booking", None)  # _get_or_create_clipboard's side effect, not needed here
+        await _transition_to(phone, "checkin_choosing_appointment", new_context, "checkin_awaiting_location")
+        rows = [
+            (c["appointmentId"], c.get("doctorName") or "Doctor", c.get("startAt") or "")
+            for c in candidates
+        ]
+        await whatsapp_client.send_list(
+            client, phone, t("checkin_choose_appointment", lang), t("checkin_choose_button", lang), rows,
+        )
+        return
+
+    # No candidates: either "too far" (geofence) or "nothing found today" — both are
+    # success:false with no candidates, distinguished only by message text server-side.
+    # There's no reliable machine-checkable signal to tell them apart here, so re-prompting
+    # for location covers the geofence case (the more recoverable one) while the message
+    # itself (not surfaced verbatim to avoid leaking backend wording) covers the other.
+    message = result.get("message") or ""
+    if "appointment" in message.lower():
+        await whatsapp_client.send_text(client, phone, t("checkin_no_appointment", lang))
+        await db.clear_conversation_state(phone)
+    else:
+        await whatsapp_client.send_text(client, phone, t("checkin_too_far", lang))
+
+
+async def _handle_checkin_choosing_appointment(client, phone, input_type, input_value, context) -> None:
+    lang = context.get("lang")
+    if input_type != "list_reply":
+        await whatsapp_client.send_text(client, phone, t("checkin_choose_appointment", lang))
+        return
+
+    appointment_id = input_value
+    if appointment_id not in context.get("checkin_options", {}):
+        # Stale list (e.g. patient tapped an old message) — same guard as _handle_choosing_doctor.
+        await whatsapp_client.send_text(client, phone, t("checkin_choose_appointment", lang))
+        return
+
+    result = await hms_client.issue_queue_token(
+        appointment_id, context["checkin_latitude"], context["checkin_longitude"]
+    )
+
+    if result.get("success"):
+        await _finish_checkin(client, phone, lang, appointment_id, result.get("tokenNo"))
+    else:
+        await whatsapp_client.send_text(client, phone, t("checkin_failed", lang))
+        await db.clear_conversation_state(phone)
+
+
+async def _finish_checkin(client, phone, lang: str | None, appointment_id: str, token_no: int | None) -> None:
+    # Registers this appointment into the same table POST /events/token-called reads from
+    # (app/db.py:get_appointment_by_hms_id) — without this, a walk-in whose appointment wasn't
+    # booked through this bot would check in successfully but never receive a queue-update
+    # push, since that lookup only ever found bot-booked appointments before this call existed.
+    await db.upsert_checkin_notification(appointment_id, phone, lang)
+    await whatsapp_client.send_text(client, phone, t("checkin_success", lang, token_no=token_no))
+    await db.clear_conversation_state(phone)

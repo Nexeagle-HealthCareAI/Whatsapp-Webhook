@@ -108,3 +108,50 @@ async def book_appointment(
     if not data.get("success"):
         raise HmsApiError(data.get("message") or "Booking failed")
     return data
+
+
+@_retry_network_errors
+async def get_hospital_by_code(hospital_code: str) -> dict[str, Any]:
+    """Resolves a scanned OPD QR code to a hospital. Raises HmsApiError (never returns a
+    falsy/empty dict) if the code doesn't resolve — callers should treat that as "this QR
+    isn't valid" rather than distinguishing 404 from other failures."""
+    async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=10) as client:
+        response = await client.get(f"/public/hospitals/by-code/{hospital_code}", headers=_headers())
+    if response.status_code == 404:
+        raise HmsApiError("Hospital code not found")
+    response.raise_for_status()
+    data = response.json()
+    if not data.get("success"):
+        raise HmsApiError(data.get("message") or "Hospital code not found")
+    return data
+
+
+@_retry_network_errors
+async def resolve_checkin(
+    hospital_id: str, mobile: str, latitude: float, longitude: float
+) -> dict[str, Any]:
+    """Walk-in check-in: resolves "this phone number's appointment today at this hospital"
+    without the caller needing to already know an AppointmentId. Geofence-gated server-side
+    (see ResolveCheckInHandler) — never a bare mobile lookup. success:false with a
+    `candidates` list means more than one appointment matched; the caller must disambiguate
+    and then call issue_queue_token() for the chosen one, same as a regular success:false
+    with no candidates means "too far" or "nothing found today" (see `message`)."""
+    body = {"hospitalId": hospital_id, "mobile": mobile, "latitude": latitude, "longitude": longitude}
+    async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=15) as client:
+        response = await client.post("/public/checkin/resolve", json=body, headers=_headers())
+    if response.status_code >= 500:
+        response.raise_for_status()
+    return response.json()
+
+
+@_retry_network_errors
+async def issue_queue_token(appointment_id: str, latitude: float, longitude: float) -> dict[str, Any]:
+    """Same endpoint Phase 1 built for the direct-AppointmentId check-in path — reused here
+    once the patient has disambiguated which of several today's appointments they meant
+    (see resolve_checkin's `candidates` case)."""
+    body = {"appointmentId": appointment_id, "latitude": latitude, "longitude": longitude}
+    async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=15) as client:
+        response = await client.post("/public/tokens", json=body, headers=_headers())
+    if response.status_code >= 500:
+        response.raise_for_status()
+    return response.json()

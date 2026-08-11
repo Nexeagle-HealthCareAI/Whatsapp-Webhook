@@ -163,6 +163,40 @@ async def get_appointment_by_hms_id(hms_appointment_id: str) -> dict[str, Any] |
         }
 
 
+async def upsert_checkin_notification(
+    hms_appointment_id: str,
+    phone_number: str,
+    preferred_language: str | None,
+    patient_display_name: str | None = None,
+) -> None:
+    """Registers an appointment that wasn't booked through this bot (a walk-in who scanned the
+    OPD QR and checked in) into the same table get_appointment_by_hms_id (above) reads from --
+    without this, a walk-in would successfully check in but never receive a queue-update push,
+    since that lookup only ever found appointments this bot itself booked. Same MERGE-upsert
+    idiom as save_conversation_state/save_queue_status."""
+    pool = await get_pool()
+    today = date_type.today()
+    async with pool.acquire() as conn, conn.cursor() as cur:
+        await cur.execute(
+            """
+            MERGE dbo.pending_appointments AS target
+            USING (SELECT ? AS hms_appointment_id) AS src
+            ON target.hms_appointment_id = src.hms_appointment_id
+            WHEN MATCHED THEN
+                UPDATE SET phone_number = ?, preferred_language = ?,
+                           patient_display_name = COALESCE(target.patient_display_name, ?)
+            WHEN NOT MATCHED THEN
+                INSERT (phone_number, preferred_date, hms_appointment_id, status, preferred_language, patient_display_name)
+                VALUES (?, ?, ?, 'checked_in', ?, ?);
+            """,
+            (
+                hms_appointment_id,
+                phone_number, preferred_language, patient_display_name,
+                phone_number, today, hms_appointment_id, preferred_language, patient_display_name,
+            ),
+        )
+
+
 async def save_queue_status(
     hms_appointment_id: str, current_token: int, estimated_wait_minutes: int | None
 ) -> None:

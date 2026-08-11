@@ -3,13 +3,16 @@ import hmac
 import json
 import logging
 import time
+from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
-from app import db, i18n
+from app import db, hms_client, i18n
 from app.config import settings
+from app.hms_client import HmsApiError
 from app.redis_client import get_redis
 from app.whatsapp_client import send_text
 
@@ -27,6 +30,34 @@ async def verify_webhook(
     if hub_mode != "subscribe" or hub_verify_token != settings.whatsapp_verify_token:
         raise HTTPException(status_code=403, detail="Verification token mismatch")
     return Response(content=hub_challenge, media_type="text/plain")
+
+
+@router.get("/c/{hospital_code}")
+async def checkin_qr_redirect(hospital_code: str):
+    """Physical OPD QR target. Validates the code server-side before ever opening WhatsApp —
+    conversation.py re-validates it independently when the CHECKIN message actually arrives
+    (this is a UX nicety, catching a dead/mistyped code before the redirect, not the
+    authoritative check). Not wired to worker.py/Redis at all: nothing async needed here."""
+    if not settings.whatsapp_display_number:
+        logger.warning("GET /c/%s hit but WHATSAPP_DISPLAY_NUMBER isn't configured yet", hospital_code)
+        return Response(
+            content="Check-in isn't set up yet at this hospital. Please check in at reception.",
+            media_type="text/plain",
+            status_code=503,
+        )
+
+    try:
+        hospital = await hms_client.get_hospital_by_code(hospital_code)
+    except HmsApiError:
+        return Response(
+            content="This QR code isn't valid. Please ask reception for help.",
+            media_type="text/plain",
+            status_code=404,
+        )
+
+    logger.info("QR scan for hospital %s (%s)", hospital.get("hospitalId"), hospital.get("name"))
+    wa_text = quote(f"CHECKIN {hospital_code}")
+    return RedirectResponse(f"https://wa.me/{settings.whatsapp_display_number}?text={wa_text}")
 
 
 def _verify_signature(raw_body: bytes, signature_header: str | None) -> bool:
