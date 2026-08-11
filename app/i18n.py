@@ -264,19 +264,23 @@ _STRINGS: dict[str, dict[str, str]] = {
     "welcome_multilang": {
         "en": (
             "Welcome! Select language below to start.\n"
-            "स्वागत है! आगे बढ़ने के लिए नीचे भाषा चुनें।"
+            "स्वागत है! आगे बढ़ने के लिए नीचे भाषा चुनें।\n\n"
+            "🩺 Doctor search · 🤒 Symptom check · 📅 Book appointment"
         ),
         "hi": (
             "Welcome! Select language below to start.\n"
-            "स्वागत है! आगे बढ़ने के लिए नीचे भाषा चुनें।"
+            "स्वागत है! आगे बढ़ने के लिए नीचे भाषा चुनें।\n\n"
+            "🩺 Doctor search · 🤒 Symptom check · 📅 Book appointment"
         ),
         "hg": (
             "Welcome! Select language below to start.\n"
-            "स्वागत है! आगे बढ़ने के लिए नीचे भाषा चुनें।"
+            "स्वागत है! आगे बढ़ने के लिए नीचे भाषा चुनें।\n\n"
+            "🩺 Doctor search · 🤒 Symptom check · 📅 Book appointment"
         ),
         "bn": (
             "Welcome! Select language below to start.\n"
-            "स्वागत है! आगे बढ़ने के लिए नीचे भाषा चुनें।"
+            "स्वागत है! आगे बढ़ने के लिए नीचे भाषा चुनें।\n\n"
+            "🩺 Doctor search · 🤒 Symptom check · 📅 Book appointment"
         ),
     },
     "back_no_history": {
