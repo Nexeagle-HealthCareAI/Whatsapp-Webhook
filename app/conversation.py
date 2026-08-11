@@ -1456,6 +1456,21 @@ async def _render_doctor_list(
     """Sorts, trims to WhatsApp's row cap, and sends. Shared by the normal radius search and
     the opted-in wider search so both present results identically."""
     lang = context.get("lang")
+
+    # More matches than WhatsApp's list can show (10 rows) and no location to narrow by yet
+    # — say so and ask, rather than silently showing only the first 10 with no indication
+    # more exist. Only meaningful for the name-search path: the specialty/symptom path
+    # already requires a location before it ever reaches this function.
+    has_loc = context.get("patient_lat") is not None or context.get("city")
+    if len(doctors) > 10 and not has_loc:
+        query = context.get("search_doctor_query", "")
+        await whatsapp_client.send_location_request(
+            client, phone,
+            t("doctor_too_many_ask_location", lang, count=len(doctors), query=query),
+        )
+        await _transition_to(phone, "choosing_location", context, current_step)
+        return
+
     sorted_doctors = _sort_doctors(doctors, context)[:10]
     booking = _get_or_create_clipboard(context)
     
