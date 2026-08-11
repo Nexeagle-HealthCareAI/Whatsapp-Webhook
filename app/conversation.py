@@ -501,10 +501,16 @@ async def handle_message(
                         if not new_context.get("lang"):
                             await _start(client, phone, new_context)
                         else:
+                            # One personalised message (enthusiasm + the specialty named +
+                            # the location ask) instead of a generic location prompt that
+                            # never mentioned what the patient just said.
                             await _transition_to(phone, "choosing_location", new_context, current_step)
-                            await _trigger_step_prompt(client, phone, "choosing_location", new_context)
+                            await whatsapp_client.send_location_request(
+                                client, phone,
+                                t("specialty_enthusiasm_and_location_ask", new_context.get("lang"), specialty=matched),
+                            )
                         return
-            
+
             elif sym_name:
                 labels = await symptom_client.route_symptom(sym_name)
                 categories = await hms_client.list_specialties()
@@ -523,8 +529,13 @@ async def handle_message(
                         if not new_context.get("lang"):
                             await _start(client, phone, new_context)
                         else:
+                            # Same idea as the specialty branch above: concern + the
+                            # specialty this looks like + the location ask, one message.
                             await _transition_to(phone, "choosing_location", new_context, current_step)
-                            await _trigger_step_prompt(client, phone, "choosing_location", new_context)
+                            await whatsapp_client.send_location_request(
+                                client, phone,
+                                t("symptom_concern_and_location_ask", new_context.get("lang"), specialty=matched),
+                            )
                         return
 
         elif intent == "provide_location":

@@ -680,6 +680,18 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "{patient_name} ke liye appointment request submit ho gayi hai! Front desk jald hi exact time confirm karegi.",
         "bn": "{patient_name}-এর জন্য অ্যাপয়েন্টমেন্টের অনুরোধ জমা দেওয়া হয়েছে! আমাদের ফ্রন্ট ডেস্ক শীঘ্রই সঠিক সময় নিশ্চিত করবে।",
     },
+    "symptom_concern_and_location_ask": {
+        "en": "That sounds concerning — best to get it checked soon. This looks like a case for a {specialty}.\n\nShare your location so I can find doctors near you:",
+        "hi": "ये सुनकर थोड़ी चिंता हुई — जल्दी दिखवाना सही रहेगा। ये {specialty} के पास जाने वाला मामला लगता है।\n\nअपने पास के डॉक्टर ढूंढने के लिए कृपया अपनी लोकेशन शेयर करें:",
+        "hg": "Sunke thodi fikar hui — jaldi dikhwana sahi rahega. Ye {specialty} ke paas jaane wala case lagta hai.\n\nApke najdeek doctor dhoondhne ke liye apni location share kar dijiye:",
+        "bn": "শুনে একটু চিন্তা হলো — শীঘ্রই দেখানো ভালো হবে। এটা {specialty}-এর কাছে যাওয়ার মতো বিষয় মনে হচ্ছে।\n\nআপনার কাছাকাছি ডাক্তার খুঁজতে অনুগ্রহ করে আপনার লোকেশন শেয়ার করুন:",
+    },
+    "specialty_enthusiasm_and_location_ask": {
+        "en": "Sure! Let's find you a good {specialty}. Share your location so I can show doctors near you:",
+        "hi": "ज़रूर! आपके लिए एक अच्छे {specialty} ढूंढते हैं। अपने पास के डॉक्टर दिखाने के लिए कृपया अपनी लोकेशन शेयर करें:",
+        "hg": "Zaroor! Aapke liye achha {specialty} dhoondte hain. Najdeeki doctors dikhane ke liye apni location share kar dijiye:",
+        "bn": "অবশ্যই! আপনার জন্য একজন ভালো {specialty} খুঁজি। কাছাকাছি ডাক্তার দেখাতে অনুগ্রহ করে আপনার লোকেশন শেয়ার করুন:",
+    },
     "doctor_too_many_ask_location": {
         "en": "We have {count}+ doctors matching '{query}' — share your location so I can find the right one quickly:",
         "hi": "'{query}' नाम से हमारे पास {count}+ डॉक्टर हैं — सही वाले तक जल्दी पहुंचने के लिए कृपया अपनी लोकेशन शेयर करें:",
