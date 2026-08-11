@@ -2137,15 +2137,6 @@ async def _handle_confirming(client, phone, sender_name, input_type, input_value
 
     await whatsapp_client.send_text(client, phone, t("booked_success", lang, patient_name=patient_name))
 
-    hospital_lat, hospital_lng = context.get("hospital_lat"), context.get("hospital_lng")
-    if hospital_lat is not None and hospital_lng is not None:
-        await whatsapp_client.send_location(
-            client, phone, hospital_lat, hospital_lng,
-            name=context.get("hospital_name", ""), address=context.get("hospital_address", ""),
-        )
-
-    await whatsapp_client.send_text(client, phone, t("booked_queue_note", lang))
-
     # Mark NLU correctness based on final booked doctor matching extracted NLU name
     final_doctor_name = context.get("doctor_name")
     if final_doctor_name and hasattr(db, "mark_session_nlu_correctness_on_booking"):
