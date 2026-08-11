@@ -157,6 +157,8 @@ async def classify_message(client: httpx.AsyncClient, text: str) -> dict:
         "intent": "out_of_scope",
         "entities": {},
         "confidence": "low",
+        "detected_language": None,
+        "language_confidence": None,
         "_validated": True,
         "_had_hallucination": False
     }

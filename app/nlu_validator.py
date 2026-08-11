@@ -15,7 +15,7 @@ gate se guzregaa.
 """
 
 import logging
-from app.nlu_config import VALID_INTENTS, VALID_ENTITIES
+from app.nlu_config import VALID_INTENTS, VALID_ENTITIES, VALID_LANGUAGES
 
 logger = logging.getLogger("nlu_validator")
 logging.basicConfig(level=logging.INFO)
@@ -60,10 +60,28 @@ def validate_nlu_response(parsed: dict, raw_text: str = "", model_name: str = ""
                 model_name, raw_text, key,
             )
 
+    # Dropped (left None) rather than forced to a default -- callers treat a missing/invalid
+    # value the same as the model not having offered a language opinion at all, and fall back
+    # to their own local detection (see app.conversation._confirm_or_start_language).
+    detected_language = parsed.get("detected_language")
+    if detected_language not in VALID_LANGUAGES:
+        if detected_language is not None:
+            logger.warning(
+                "HALLUCINATED LANGUAGE | model=%s | text=%r | got=%r",
+                model_name, raw_text, detected_language,
+            )
+        detected_language = None
+
+    language_confidence = parsed.get("language_confidence")
+    if language_confidence not in ("high", "low"):
+        language_confidence = None
+
     return {
         "intent": intent,
         "entities": clean_entities,
         "confidence": confidence,
+        "detected_language": detected_language,
+        "language_confidence": language_confidence,
         "_validated": True,
         "_had_hallucination": hallucinated_intent or (len(clean_entities) != len(entities)),
     }

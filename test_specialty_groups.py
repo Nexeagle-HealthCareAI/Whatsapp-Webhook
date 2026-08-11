@@ -2149,6 +2149,131 @@ def test_first_message_doctor_name_resolves_without_waiting_for_location():
         conversation._get_offered_slots = original_get_offered_slots
 
 
+def test_sarvam_language_confidence_upgrade_skips_confirm_step():
+    """User-requested improvement: local keyword-based language detection (_detect_language)
+    caps romanized/Hinglish guesses at low-confidence by design (word-overlap alone is a weak
+    signal), which always shows the confirm-language buttons. But nlu_client.classify_message
+    already reads the full message for intent/entity extraction on every text message (and now
+    on the first message too) via the same Sarvam call -- if it also reports a confident
+    language opinion, _confirm_or_start_language should use that to skip the redundant confirm
+    step entirely, matching the earlier "agar bot khud hi language identify kr leta hai toh fr
+    usee language choose krne ka option na ho" request. Script-based detection (Devanagari/
+    Bengali) is untouched by this -- it was already high-confidence and free.
+
+    This uses the exact same typo'd message as the "Dr Avinash" bug report ("Miujhe" instead of
+    "Mujhe"), which previously always showed the confirm buttons -- this test locks in that it
+    now skips them when Sarvam is confident, while a companion low-confidence case still shows
+    them."""
+    import asyncio
+
+    class MockDB:
+        def __init__(self):
+            self.state = {}
+
+        async def get_conversation_state(self, phone):
+            if phone in self.state:
+                step, ctx = self.state[phone]
+                return {"current_step": step, "context": ctx}
+            return None
+
+        async def save_conversation_state(self, phone, step, context):
+            self.state[phone] = (step, context)
+
+        async def clear_conversation_state(self, phone):
+            self.state.pop(phone, None)
+
+        async def log_nlu_interaction(self, **kw):
+            pass
+
+    db_mock = MockDB()
+    original_db = conversation.db
+    original_router_db = conversation.intent_router.db
+    conversation.db = db_mock
+    conversation.intent_router.db = db_mock
+
+    sent_texts, sent_buttons, sent_flows = [], [], []
+
+    async def mock_send_text(client, to, text):
+        sent_texts.append(text)
+
+    async def mock_send_buttons(client, to, text, buttons):
+        sent_buttons.append((text, buttons))
+
+    async def mock_send_flow(client, to, body_text, flow_id, flow_cta, screen_id, flow_token, initial_data=None):
+        sent_flows.append(body_text)
+        return True
+
+    original_send_text = conversation.whatsapp_client.send_text
+    original_send_buttons = conversation.whatsapp_client.send_buttons
+    original_send_flow = conversation.whatsapp_client.send_flow
+    conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_buttons = mock_send_buttons
+    conversation.whatsapp_client.send_flow = mock_send_flow
+
+    async def mock_get_all_doctors(force_refresh=False):
+        return [{
+            "doctorId": "d1", "fullName": "Dr. Avinash Kumar", "hospitalName": "Purnea General Hospital",
+            "city": "Kishanganj", "primaryMedicalSpecialityPatientFacingName": "General Physician",
+            "rating": 4.5, "discountedFee": 400,
+        }]
+
+    original_get_all_doctors = conversation.city_index.get_all_doctors
+    conversation.city_index.get_all_doctors = mock_get_all_doctors
+
+    async def mock_get_offered_slots(doctor_id, lang):
+        return [{"date": date(2026, 8, 12), "is_today": True, "shift_name": "Morning", "button_id": "slot_today_morning", "label": "Morning (Today)"}]
+
+    original_get_offered_slots = conversation._get_offered_slots
+    conversation._get_offered_slots = mock_get_offered_slots
+
+    mock_client = object()
+    message_text = "Miujhe Dr Avinash k sath appointment book krni hai"
+
+    original_classify = conversation.nlu_client.classify_message
+    try:
+        # Case A: Sarvam confidently reports the language -- confirm buttons must be skipped.
+        async def mock_classify_high_conf(client, text):
+            return {
+                "intent": "book_appointment", "confidence": "high",
+                "entities": {"doctor_name": "Avinash"},
+                "detected_language": "hg", "language_confidence": "high",
+            }
+        conversation.nlu_client.classify_message = mock_classify_high_conf
+
+        asyncio.run(conversation.handle_message(mock_client, "fb-sarvam-upgrade", "User", "text", message_text))
+
+        check(len(sent_buttons) == 0, f"Sarvam high-confidence language should skip the confirm buttons, got {sent_buttons!r}")
+        check(any("Avinash" in t for t in sent_texts), "should proceed straight to the resolved doctor's message")
+        check(len(sent_flows) == 1, "should proceed straight to the patient details Flow")
+
+        # Case B: Sarvam offers no opinion (or low confidence) -- confirm buttons must still show,
+        # exactly as before this change (no regression on the ambiguous case).
+        sent_texts.clear()
+        sent_buttons.clear()
+        sent_flows.clear()
+
+        async def mock_classify_no_opinion(client, text):
+            return {
+                "intent": "book_appointment", "confidence": "high",
+                "entities": {"doctor_name": "Avinash"},
+                "detected_language": None, "language_confidence": None,
+            }
+        conversation.nlu_client.classify_message = mock_classify_no_opinion
+
+        asyncio.run(conversation.handle_message(mock_client, "fb-sarvam-no-upgrade", "User", "text", message_text))
+
+        check(len(sent_buttons) == 1, f"without a confident Sarvam opinion, the confirm buttons should still show, got {sent_buttons!r}")
+    finally:
+        conversation.db = original_db
+        conversation.intent_router.db = original_router_db
+        conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_buttons = original_send_buttons
+        conversation.whatsapp_client.send_flow = original_send_flow
+        conversation.nlu_client.classify_message = original_classify
+        conversation.city_index.get_all_doctors = original_get_all_doctors
+        conversation._get_offered_slots = original_get_offered_slots
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:

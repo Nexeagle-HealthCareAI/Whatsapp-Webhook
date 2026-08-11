@@ -339,6 +339,7 @@ async def handle_message(
             return
 
     nlu_result = None
+    raw_nlu_result = None
     if input_type == "text" and input_value.strip():
         try:
             # 1. Classify message using the new NLU client
@@ -383,7 +384,7 @@ async def handle_message(
                     if matched:
                         new_context["pending_specialty"] = matched
 
-                await _confirm_or_start_language(client, phone, new_context, input_value)
+                await _confirm_or_start_language(client, phone, new_context, input_value, nlu_hint=raw_nlu_result)
                 return
             
             # Log the raw interaction to the database
@@ -752,7 +753,7 @@ async def handle_message(
             if input_type == "text" and input_value.strip():
                 if _is_doctor_search_query(input_value):
                     init_context["search_doctor_query"] = input_value
-                await _confirm_or_start_language(client, phone, init_context, input_value)
+                await _confirm_or_start_language(client, phone, init_context, input_value, nlu_hint=raw_nlu_result)
             else:
                 await _start(client, phone, init_context)
     except HmsApiError as exc:
@@ -771,8 +772,26 @@ async def handle_message(
 # ---------------------------------------------------------------------------------------
 
 
-async def _confirm_or_start_language(client: httpx.AsyncClient, phone: str, context: dict, input_value: str) -> None:
+async def _confirm_or_start_language(
+    client: httpx.AsyncClient, phone: str, context: dict, input_value: str, nlu_hint: dict | None = None,
+) -> None:
     detected_lang, is_high_confidence = _detect_language(input_value) if input_value else (None, False)
+
+    # Script-based detection (Devanagari/Bengali) above is already deterministic and free --
+    # never second-guessed. Everything else is a keyword-overlap guess that's capped at
+    # low-confidence by design (a handful of shared words is a weak signal on its own). Sarvam
+    # already read this exact message for intent/entity extraction, so if it also offered a
+    # confident language opinion, that's a free upgrade -- no extra API call, and it judges the
+    # sentence as a whole rather than word-by-word.
+    if not is_high_confidence and nlu_hint:
+        sarvam_lang = nlu_hint.get("detected_language")
+        sarvam_confidence = nlu_hint.get("language_confidence")
+        if sarvam_lang:
+            if sarvam_confidence == "high":
+                detected_lang, is_high_confidence = sarvam_lang, True
+            elif detected_lang is None:
+                detected_lang = sarvam_lang
+
     if detected_lang:
         if is_high_confidence:
             context["lang"] = detected_lang
