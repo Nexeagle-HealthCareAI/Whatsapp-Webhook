@@ -60,6 +60,52 @@ async def checkin_qr_redirect(hospital_code: str):
     return RedirectResponse(f"https://wa.me/{settings.whatsapp_display_number}?text={wa_text}")
 
 
+async def _document_qr_redirect(code_prefix: str, code: str, resolver) -> Response:
+    """Shared by the discharge/prescription/visit-summary QR routes below -- same posture as
+    checkin_qr_redirect above: validates the code server-side before ever opening WhatsApp
+    (conversation.py re-validates independently once the DISCHARGE/RX/RXV message actually
+    arrives; this is a UX nicety catching a dead/expired code before the redirect, not the
+    authoritative check). `resolver` is one of the hms_client.get_*_url functions -- only
+    called to confirm the code resolves right now, its return value isn't needed here."""
+    if not settings.whatsapp_display_number:
+        logger.warning("GET /%s/%s hit but WHATSAPP_DISPLAY_NUMBER isn't configured yet", code_prefix.lower(), code)
+        return Response(
+            content="This isn't set up yet. Please ask reception for help.",
+            media_type="text/plain",
+            status_code=503,
+        )
+
+    try:
+        await resolver(code)
+    except HmsApiError:
+        return Response(
+            content="This QR code isn't valid or has expired.",
+            media_type="text/plain",
+            status_code=404,
+        )
+
+    wa_text = quote(f"{code_prefix} {code}")
+    return RedirectResponse(f"https://wa.me/{settings.whatsapp_display_number}?text={wa_text}")
+
+
+@router.get("/d/{access_token}")
+async def discharge_qr_redirect(access_token: str):
+    """Printed discharge-summary letterhead QR target -- mirrors GET /c/{hospital_code}."""
+    return await _document_qr_redirect("DISCHARGE", access_token, hms_client.get_discharge_summary_url)
+
+
+@router.get("/rx/{attachment_id}")
+async def prescription_qr_redirect(attachment_id: str):
+    """Prescription (InkRx/manual upload) letterhead QR target -- mirrors GET /c/{hospital_code}."""
+    return await _document_qr_redirect("RX", attachment_id, hms_client.get_prescription_attachment_url)
+
+
+@router.get("/rxv/{appointment_id}")
+async def visit_summary_qr_redirect(appointment_id: str):
+    """Structured e-prescription (EPrescriptionPad) letterhead QR target -- mirrors GET /c/{hospital_code}."""
+    return await _document_qr_redirect("RXV", appointment_id, hms_client.get_visit_summary_url)
+
+
 def _verify_signature(raw_body: bytes, signature_header: str | None) -> bool:
     if not signature_header or not signature_header.startswith("sha256="):
         return False

@@ -32,6 +32,40 @@ _SORT_OPTIONS = ["rating", "nearest", "experience", "fee"]
 # (app/webhook.py) prefills into the wa.me deep link. See the interceptor in handle_message.
 _CHECKIN_TRIGGER_PATTERN = re.compile(r"^checkin\s+(\S+)$", re.IGNORECASE)
 
+# Discharge-summary / prescription QR pull triggers — matches the "DISCHARGE <token>",
+# "RX <attachmentId>", "RXV <appointmentId>" text the GET /d, /rx, /rxv routes (webhook.py)
+# prefill into their wa.me deep links. RXV is checked before RX would otherwise be
+# ambiguous, but isn't actually: "RXV abc" never matches ^rx\s+ since the 'v' sits where
+# _PRESCRIPTION_TRIGGER_PATTERN requires whitespace right after "rx". See
+# _DOCUMENT_TRIGGERS / _handle_document_trigger below.
+_DISCHARGE_TRIGGER_PATTERN = re.compile(r"^discharge\s+(\S+)$", re.IGNORECASE)
+_PRESCRIPTION_TRIGGER_PATTERN = re.compile(r"^rx\s+(\S+)$", re.IGNORECASE)
+_VISIT_SUMMARY_TRIGGER_PATTERN = re.compile(r"^rxv\s+(\S+)$", re.IGNORECASE)
+
+# (pattern, resolver attribute name, filename, "not available" i18n key, "delivered" caption
+# i18n key) — the resolver is looked up on hms_client by name at call time (see
+# _handle_document_trigger), not bound to the function object here, so it stays patchable
+# the same way _handle_checkin_trigger's direct hms_client.get_hospital_by_code(...) call is
+# (a name bound here at import time would freeze in the pre-patch function, same class of bug
+# as capturing `from x import y` instead of `import x`). RX (InkRx/manual
+# PrescriptionAttachment uploads) and RXV (structured EPrescriptionPad e-prescriptions) are
+# two different backend storage paths (see hms_client.py) but read as the same thing to a
+# patient, so they share both i18n keys.
+_DOCUMENT_TRIGGERS = (
+    (
+        _DISCHARGE_TRIGGER_PATTERN, "get_discharge_summary_url", "Discharge_Summary.pdf",
+        "discharge_not_available", "discharge_delivered",
+    ),
+    (
+        _PRESCRIPTION_TRIGGER_PATTERN, "get_prescription_attachment_url", "Prescription.pdf",
+        "prescription_not_available", "prescription_delivered",
+    ),
+    (
+        _VISIT_SUMMARY_TRIGGER_PATTERN, "get_visit_summary_url", "Prescription.pdf",
+        "prescription_not_available", "prescription_delivered",
+    ),
+)
+
 
 def _match_choice(input_type: str, input_value: str, valid_ids: list[str]) -> str | None:
     """Accepts a button/list tap, or plain text typed by hand matching one of the choices —
@@ -336,17 +370,27 @@ async def handle_message(
     state = await db.get_conversation_state(phone)
     current_step = state["current_step"] if state else None
     context = state["context"] if state else {}
-    # OPD QR check-in: a deterministic command from a QR scan (GET /c/{hospital_code} in
-    # webhook.py), not natural language — intercepted before language detection/NLU/the
-    # clipboard even initialize, same priority as "cancel"/"back" below but earlier, so it
-    # never burns an NLU call or risks the casual-chat fallback swallowing it. Existing
-    # conversation state (e.g. a booking in progress) is intentionally left untouched unless
-    # the code is valid.
+    # OPD QR check-in / discharge-summary & prescription QR pull: deterministic commands from
+    # a QR scan (GET /c, /d, /rx, /rxv in webhook.py), not natural language — intercepted
+    # before language detection/NLU/the clipboard even initialize, same priority as
+    # "cancel"/"back" below but earlier, so it never burns an NLU call or risks the
+    # casual-chat fallback swallowing it. Existing conversation state (e.g. a booking in
+    # progress) is intentionally left untouched unless the code is valid.
     if input_type == "text" and input_value.strip():
-        checkin_match = _CHECKIN_TRIGGER_PATTERN.match(input_value.strip())
+        stripped_input = input_value.strip()
+        checkin_match = _CHECKIN_TRIGGER_PATTERN.match(stripped_input)
         if checkin_match:
             await _handle_checkin_trigger(client, phone, checkin_match.group(1), context, current_step)
             return
+
+        for pattern, resolver_name, filename, not_available_key, delivered_key in _DOCUMENT_TRIGGERS:
+            document_match = pattern.match(stripped_input)
+            if document_match:
+                await _handle_document_trigger(
+                    client, phone, document_match.group(1), context,
+                    resolver_name, filename, not_available_key, delivered_key,
+                )
+                return
 
     booking = _get_or_create_clipboard(context)
     lang = context.get("lang")
@@ -2256,6 +2300,43 @@ async def _handle_awaiting_doctor_name(client, phone, input_type, input_value, c
     if await _search_doctors_flow(client, phone, context, "awaiting_doctor_name"):
         return
     await _handle_doctor_search_miss(client, phone, context, input_value)
+
+
+# ---------------------------------------------------------------------------------------
+# Discharge-summary / prescription QR pull — resolves and replies in one shot, unlike
+# check-in below. No current_step/context changes needed: existing conversation state
+# (e.g. a booking in progress) is left completely untouched either way.
+# ---------------------------------------------------------------------------------------
+
+
+async def _handle_document_trigger(
+    client: httpx.AsyncClient,
+    phone: str,
+    code: str,
+    context: dict,
+    resolver_name: str,
+    filename: str,
+    not_available_key: str,
+    delivered_key: str,
+) -> None:
+    # Re-resolves independently of the GET /d, /rx, /rxv routes' own validation
+    # (app/webhook.py) — same "redirect is a UX nicety, never the authoritative check"
+    # reasoning as _handle_checkin_trigger below, since the prefilled text is just a string
+    # the patient's WhatsApp client could technically let them edit before send.
+    lang = context.get("lang")
+    resolver = getattr(hms_client, resolver_name)
+    try:
+        url = await resolver(code)
+    except HmsApiError:
+        await whatsapp_client.send_text(client, phone, t(not_available_key, lang))
+        return
+
+    sent = await whatsapp_client.send_document(client, phone, url, filename, caption=t(delivered_key, lang))
+    if not sent:
+        # The document exists but the WhatsApp send itself failed (network/API error) — a
+        # generic retry message is more accurate here than "not available", which would
+        # wrongly imply nothing was ever uploaded.
+        await whatsapp_client.send_text(client, phone, t("error_hms", lang))
 
 
 # ---------------------------------------------------------------------------------------

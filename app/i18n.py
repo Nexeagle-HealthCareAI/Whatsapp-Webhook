@@ -805,6 +805,30 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Abhi hum aapko check-in nahi kar paaye. Kripya reception par check-in karein.",
         "bn": "এখন আমরা আপনাকে চেক-ইন করতে পারিনি। অনুগ্রহ করে রিসেপশনে চেক-ইন করুন।",
     },
+    "discharge_not_available": {
+        "en": "No discharge summary is available yet. Please check with the hospital.",
+        "hi": "अभी कोई डिस्चार्ज समरी उपलब्ध नहीं है। कृपया अस्पताल से संपर्क करें।",
+        "hg": "Abhi koi discharge summary available nahi hai. Kripya hospital se check karein.",
+        "bn": "এখনও কোনো ডিসচার্জ সামারি পাওয়া যায়নি। অনুগ্রহ করে হাসপাতালের সাথে যোগাযোগ করুন।",
+    },
+    "prescription_not_available": {
+        "en": "No prescription is available yet. Please check with the doctor or hospital.",
+        "hi": "अभी कोई प्रिस्क्रिप्शन उपलब्ध नहीं है। कृपया डॉक्टर या अस्पताल से संपर्क करें।",
+        "hg": "Abhi koi prescription available nahi hai. Kripya doctor ya hospital se check karein.",
+        "bn": "এখনও কোনো প্রেসক্রিপশন পাওয়া যায়নি। অনুগ্রহ করে ডাক্তার বা হাসপাতালের সাথে যোগাযোগ করুন।",
+    },
+    "discharge_delivered": {
+        "en": "Here's your discharge summary. 📄",
+        "hi": "यह रही आपकी डिस्चार्ज समरी। 📄",
+        "hg": "Yeh rahi aapki discharge summary. 📄",
+        "bn": "এই যে আপনার ডিসচার্জ সামারি। 📄",
+    },
+    "prescription_delivered": {
+        "en": "Here's your prescription. 📄",
+        "hi": "यह रहा आपका प्रिस्क्रिप्शन। 📄",
+        "hg": "Yeh raha aapka prescription. 📄",
+        "bn": "এই যে আপনার প্রেসক্রিপশন। 📄",
+    },
 }
 
 

@@ -165,6 +165,29 @@ async def send_location(
     )
 
 
+async def send_document(
+    client: httpx.AsyncClient, to: str, url: str, filename: str, caption: str | None = None
+) -> bool:
+    """Sends a document by URL (Meta fetches it) — a plain message, not a template, since
+    this is only ever called from inside an active 24h conversation window (the patient just
+    sent us a message to trigger it). Used for the QR-scan pull flows (DISCHARGE/RX/RXV
+    codes in conversation.py) — distinct from the template-based pushes easyHMSAPI's own
+    IWhatsAppMessagingService sends directly on upload. Returns True if successful."""
+    document: dict = {"link": url, "filename": filename}
+    if caption:
+        document["caption"] = caption
+    response = await _send(
+        client,
+        {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "document",
+            "document": document,
+        },
+    )
+    return response.status_code < 400
+
+
 async def send_flow(
     client: httpx.AsyncClient,
     to: str,

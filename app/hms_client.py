@@ -126,6 +126,53 @@ async def get_hospital_by_code(hospital_code: str) -> dict[str, Any]:
     return data
 
 
+async def _resolve_public_redirect(path: str, not_found_message: str) -> str:
+    """Shared by the three "scan/DM a code, get a document back" resolvers below. Each hits
+    a [AllowAnonymous] controller (DischargeSummaryPublicController /
+    PrescriptionAttachmentPublicController / VisitSummaryPublicController) that itself
+    responds with an HTTP redirect to a freshly presigned document URL on success, or a 404
+    if the id/token doesn't resolve — this just reads the Location header instead of
+    following it, since callers need the URL itself to hand to WhatsApp's send_document, not
+    the bytes. Raises HmsApiError (never returns a falsy/empty string) on anything
+    unresolved, matching get_hospital_by_code's posture."""
+    async with httpx.AsyncClient(
+        base_url=settings.hms_api_base_url, timeout=10, follow_redirects=False
+    ) as client:
+        response = await client.get(path, headers=_headers())
+    if response.status_code in (301, 302, 303, 307, 308):
+        location = response.headers.get("location")
+        if location:
+            return location
+    elif response.status_code != 404:
+        response.raise_for_status()
+    raise HmsApiError(not_found_message)
+
+
+@_retry_network_errors
+async def get_discharge_summary_url(access_token: str) -> str:
+    """Resolves a "DISCHARGE <token>" code to a fresh discharge-summary document URL."""
+    return await _resolve_public_redirect(
+        f"/public-discharge/{access_token}", "Discharge summary not available"
+    )
+
+
+@_retry_network_errors
+async def get_prescription_attachment_url(attachment_id: str) -> str:
+    """Resolves a "RX <id>" code (InkRx/manual prescription uploads) to a fresh document URL."""
+    return await _resolve_public_redirect(
+        f"/public-prescription/{attachment_id}", "Prescription not available"
+    )
+
+
+@_retry_network_errors
+async def get_visit_summary_url(appointment_id: str) -> str:
+    """Resolves a "RXV <id>" code (structured EPrescriptionPad e-prescriptions) to a fresh
+    document URL."""
+    return await _resolve_public_redirect(
+        f"/public-visit-summary/{appointment_id}", "Prescription not available"
+    )
+
+
 @_retry_network_errors
 async def resolve_checkin(
     hospital_id: str, mobile: str, latitude: float, longitude: float
