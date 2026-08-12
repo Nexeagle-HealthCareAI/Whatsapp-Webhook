@@ -237,6 +237,33 @@ def test_legitimate_multi_turn_still_merges_with_matching_step():
     check(routed2.entities.get("datetime") == "kal", "datetime from turn 1 must be preserved when the step hasn't moved")
     check(routed2.entities.get("specialty") == "gyno", "specialty from turn 2 must be merged in")
 
+def test_short_datetime_reply_recovered_when_nlu_returns_out_of_scope():
+    print("\n--- Running Short Datetime-Reply Recovery Test (live-reported bug) ---")
+    # Live-reported: "hi, i have to book appointment with Dr, Radha" -> router asks for a
+    # date -> patient replies just "today" -> router asks the SAME question again, forever.
+    # Root cause: Sarvam classifies a bare "today" (no surrounding context reaching the
+    # model) as out_of_scope with empty entities -- there's nothing for the merge logic to
+    # pick up, so the missing "datetime" slot never gets filled no matter how many times the
+    # patient answers correctly.
+    db_mock.has_active_appt = False
+    wa_id = "user_short_datetime_1"
+
+    turn1 = {"intent": "book_appointment", "confidence": "high", "entities": {"doctor_name": "Radha"}}
+    routed1 = asyncio.run(intent_router.route_intent(wa_id, turn1, "hi, i have to book appointment with Dr, Radha"))
+    check(routed1.action == "ask_followup", "turn 1 should ask for the missing datetime")
+    check("date" in routed1.followup_prompt.lower(), f"turn 1 prompt should ask for a date, got {routed1.followup_prompt!r}")
+
+    # Exactly what a bare "today" gets classified as out of context, in practice.
+    turn2 = {"intent": "out_of_scope", "confidence": "low", "entities": {}}
+    routed2 = asyncio.run(intent_router.route_intent(wa_id, turn2, "today"))
+    check(
+        routed2.action == "proceed_to_business_logic",
+        f"turn 2 ('today') must complete the booking instead of re-asking, got action={routed2.action!r} entities={routed2.entities!r}",
+    )
+    check(routed2.entities.get("doctor_name") == "Radha", "doctor_name from turn 1 must survive")
+    check(routed2.entities.get("datetime"), f"'today' should have been recovered as a datetime, got {routed2.entities!r}")
+
+
 def test_gemini_fallback_simulation():
     print("\n--- Running Gemini Fallback Simulation Tests ---")
     original_api_key = settings.sarvam_api_key
@@ -266,6 +293,7 @@ if __name__ == "__main__":
     test_nlu_confidence_gate_rejection()
     test_stale_session_discarded_on_step_mismatch()
     test_legitimate_multi_turn_still_merges_with_matching_step()
+    test_short_datetime_reply_recovered_when_nlu_returns_out_of_scope()
     test_live_time_of_day_extraction()
     test_gemini_fallback_simulation()
 
