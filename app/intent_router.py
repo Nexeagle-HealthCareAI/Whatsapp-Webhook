@@ -122,6 +122,16 @@ def get_followup_prompt(intent: str, missing_slot, lang: str | None = None) -> s
     return _pick(_GENERIC_SLOT_PROMPT, lang).format(slot=missing_slot)
 
 
+async def clear_session(wa_id: str) -> None:
+    """Drops any accumulated multi-turn state (including an awaiting_clarification
+    follow-up) for this patient. Called by conversation.py, via app/flow_policy.py,
+    right before route_intent() would otherwise consult that state -- see
+    flow_policy.py's module docstring for why a global intent (cancel/back/greeting)
+    must never be swallowed by a stale or in-progress local session here."""
+    redis = get_redis()
+    await redis.delete(f"nlu:session:{wa_id}")
+
+
 async def route_intent(
     wa_id: str, validated_nlu_result: dict, raw_text: str = "", lang: str | None = None,
     current_step: str | None = None,

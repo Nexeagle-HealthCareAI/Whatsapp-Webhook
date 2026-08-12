@@ -13,7 +13,7 @@ from app.resolver import resolve_doctor, extract_location_from_query, match_hosp
 from app.config import settings
 from app.geo import haversine_km
 from app.hms_client import HmsApiError
-from app import nlu_client, intent_router, safety
+from app import nlu_client, intent_router, safety, flow_policy
 from app.model_config import PRIMARY_NLU
 from app.i18n import LANGUAGE_LABELS, LANG_PROMPT, t
 
@@ -496,6 +496,18 @@ async def handle_message(
                 )
             
             # 2. Route intent using intent_router (slot filling, session merge, duplicate booking check)
+            #
+            # A global intent (cancel/back/greeting) on THIS message must always be honoured,
+            # even if intent_router has an in-progress multi-turn session (e.g. it's mid-way
+            # through asking "book new or reschedule?") -- see app/flow_policy.py for why: that
+            # session's own local logic has no notion of "these intents always work", so a bare
+            # "hi" or "cancel" arriving while it's active used to get silently swallowed and
+            # replayed the same follow-up question forever. Clearing the session first means
+            # route_intent() finds nothing to merge against and routes this intent normally,
+            # straight through to the "Prioritize NLU global intents" handling below.
+            if flow_policy.is_global_override(raw_nlu_result.get("intent"), raw_nlu_result.get("confidence")):
+                await intent_router.clear_session(phone)
+
             routed = await intent_router.route_intent(phone, raw_nlu_result, input_value, lang, current_step)
             logger.info("NLU Router Result: %s", routed)
             
