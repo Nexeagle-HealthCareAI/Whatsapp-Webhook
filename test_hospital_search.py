@@ -130,13 +130,23 @@ async def _run_doctor_search_miss(context, query="Apollo Hospital"):
     # _handle_doctor_search_miss is only ever called AFTER a doctor-name search already
     # returned zero matches -- it has no doctor-searching logic of its own, so there's nothing
     # to mock there (city_index/resolve_doctor are exercised by test_resolver.py instead).
+    #
+    # The "not found" message goes through _phrase(), which tries a live model call before
+    # falling back to the template (see app/conversation.py). Whenever a real SARVAM_API_KEY
+    # is present in the environment (e.g. a developer's local .env, unlike a clean CI
+    # checkout), that call actually reaches Sarvam and can come back paraphrased -- no longer
+    # containing the query text verbatim, which is exactly what test_no_hospital_match_falls_
+    # through_to_not_found asserts on below. Forcing generate_step_prompt to return None here
+    # makes _phrase() take its template fallback deterministically, regardless of what
+    # credentials happen to be configured in whichever environment this runs in.
     db_mock = AsyncMock()
     wa_mock = _RecordingWhatsApp()
     record_lead_mock = AsyncMock()
 
     with patch.object(conversation, "db", db_mock), \
          patch.object(conversation, "whatsapp_client", wa_mock), \
-         patch.object(conversation.hms_client, "record_lead", record_lead_mock):
+         patch.object(conversation.hms_client, "record_lead", record_lead_mock), \
+         patch.object(conversation.nlu_client, "generate_step_prompt", AsyncMock(return_value=None)):
         async with httpx.AsyncClient() as client:
             await conversation._handle_doctor_search_miss(client, "919876543210", context, query)
     return wa_mock, record_lead_mock, context
