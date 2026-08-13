@@ -7,6 +7,7 @@ import aioodbc
 
 from app.config import settings
 from app.db.dedup import is_message_processed, mark_message_processed
+from app.db.conversation_state import get_conversation_state, save_conversation_state, clear_conversation_state
 
 _pool: aioodbc.Pool | None = None
 
@@ -18,46 +19,7 @@ async def get_pool() -> aioodbc.Pool:
     return _pool
 
 
-async def get_conversation_state(phone: str) -> dict[str, Any] | None:
-    pool = await get_pool()
-    async with pool.acquire() as conn, conn.cursor() as cur:
-        await cur.execute(
-            "SELECT current_step, context_json FROM dbo.conversation_state WHERE phone_number = ?",
-            (phone,),
-        )
-        row = await cur.fetchone()
-        if row is None:
-            return None
-        current_step, context_json = row
-        return {
-            "current_step": current_step,
-            "context": json.loads(context_json) if context_json else {},
-        }
 
-
-async def save_conversation_state(phone: str, step: str, context: dict[str, Any]) -> None:
-    pool = await get_pool()
-    context_json = json.dumps(context)
-    async with pool.acquire() as conn, conn.cursor() as cur:
-        await cur.execute(
-            """
-            MERGE dbo.conversation_state AS target
-            USING (SELECT ? AS phone_number) AS src
-            ON target.phone_number = src.phone_number
-            WHEN MATCHED THEN
-                UPDATE SET current_step = ?, context_json = ?, updated_at = SYSUTCDATETIME()
-            WHEN NOT MATCHED THEN
-                INSERT (phone_number, current_step, context_json)
-                VALUES (?, ?, ?);
-            """,
-            (phone, step, context_json, phone, step, context_json),
-        )
-
-
-async def clear_conversation_state(phone: str) -> None:
-    pool = await get_pool()
-    async with pool.acquire() as conn, conn.cursor() as cur:
-        await cur.execute("DELETE FROM dbo.conversation_state WHERE phone_number = ?", (phone,))
 
 
 
