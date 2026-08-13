@@ -50,7 +50,7 @@ os.environ.setdefault("SQLSERVER_CONN_STRING", "test")
 os.environ.setdefault("INTERNAL_EVENTS_TOKEN", "test")
 
 # Import system under test
-from app import nlu_client, intent_router, db
+from app import nlu_client, intent_router, db, flow_policy
 from app.config import settings
 
 failures = []
@@ -237,6 +237,98 @@ def test_legitimate_multi_turn_still_merges_with_matching_step():
     check(routed2.entities.get("datetime") == "kal", "datetime from turn 1 must be preserved when the step hasn't moved")
     check(routed2.entities.get("specialty") == "gyno", "specialty from turn 2 must be merged in")
 
+def test_short_datetime_reply_recovered_when_nlu_returns_out_of_scope():
+    print("\n--- Running Short Datetime-Reply Recovery Test (live-reported bug) ---")
+    # Live-reported: "hi, i have to book appointment with Dr, Radha" -> router asks for a
+    # date -> patient replies just "today" -> router asks the SAME question again, forever.
+    # Root cause: Sarvam classifies a bare "today" (no surrounding context reaching the
+    # model) as out_of_scope with empty entities -- there's nothing for the merge logic to
+    # pick up, so the missing "datetime" slot never gets filled no matter how many times the
+    # patient answers correctly.
+    db_mock.has_active_appt = False
+    wa_id = "user_short_datetime_1"
+
+    turn1 = {"intent": "book_appointment", "confidence": "high", "entities": {"doctor_name": "Radha"}}
+    routed1 = asyncio.run(intent_router.route_intent(wa_id, turn1, "hi, i have to book appointment with Dr, Radha"))
+    check(routed1.action == "ask_followup", "turn 1 should ask for the missing datetime")
+    check("date" in routed1.followup_prompt.lower(), f"turn 1 prompt should ask for a date, got {routed1.followup_prompt!r}")
+
+    # Exactly what a bare "today" gets classified as out of context, in practice.
+    turn2 = {"intent": "out_of_scope", "confidence": "low", "entities": {}}
+    routed2 = asyncio.run(intent_router.route_intent(wa_id, turn2, "today"))
+    check(
+        routed2.action == "proceed_to_business_logic",
+        f"turn 2 ('today') must complete the booking instead of re-asking, got action={routed2.action!r} entities={routed2.entities!r}",
+    )
+    check(routed2.entities.get("doctor_name") == "Radha", "doctor_name from turn 1 must survive")
+    check(routed2.entities.get("datetime"), f"'today' should have been recovered as a datetime, got {routed2.entities!r}")
+
+
+def test_global_intent_escapes_awaiting_clarification_loop():
+    print("\n--- Running Global-Intent Override Test (live-reported stuck-loop bug) ---")
+    # Live-reported: a patient with an active appointment tries to book a new one, gets
+    # asked "book new or reschedule?" (awaiting_clarification state saved in Redis) -- then
+    # sends a plain "hi", and the bot repeats the EXACT SAME clarification question. Sending
+    # "cancel" instead has the identical problem. Neither "hi" nor "cancel" match either of
+    # awaiting_clarification's own keyword lists (reschedule words / new-booking words), so
+    # its "else: keep asking" branch just replays the question -- forever, regardless of what
+    # the patient actually said, since conversation.py's own cancel/back/greeting handling
+    # never even runs (it's gated behind route_intent returning proceed_to_business_logic,
+    # which this branch never reaches).
+    db_mock.has_active_appt = True
+
+    for label, message_intent, message_text in [
+        ("hi", "greeting", "hi"),
+        ("cancel", "cancel_appointment", "cancel"),
+        ("back", "navigate_back", "back"),
+    ]:
+        wa_id = f"user_global_override_{label}"
+        step = "confirming"
+
+        turn1 = {"intent": "book_appointment", "confidence": "high", "entities": {"doctor_name": "Radha", "datetime": "2026-08-13"}}
+        routed1 = asyncio.run(intent_router.route_intent(wa_id, turn1, "book appointment with radha tomorrow", "en", step))
+        check(routed1.action == "ask_followup", f"[{label}] turn 1 should ask to clarify new-vs-reschedule (active appointment exists)")
+
+        # This is what conversation.py's handle_message now does before calling
+        # route_intent() on the next turn -- see the call site right before "2. Route intent
+        # using intent_router" in app/conversation.py.
+        turn2 = {"intent": message_intent, "confidence": "high", "entities": {}}
+        if flow_policy.is_global_override(turn2["intent"], turn2["confidence"]):
+            asyncio.run(intent_router.clear_session(wa_id))
+        routed2 = asyncio.run(intent_router.route_intent(wa_id, turn2, message_text, "en", step))
+
+        check(
+            routed2.action == "proceed_to_business_logic",
+            f"[{label}] must escape the clarification loop, got action={routed2.action!r}",
+        )
+        check(routed2.intent == message_intent, f"[{label}] must be routed as its own real intent, got {routed2.intent!r}")
+
+    db_mock.has_active_appt = False
+
+
+def test_legitimate_followup_answer_not_treated_as_a_global_override():
+    print("\n--- Running Non-Regression Test: ordinary follow-up answers still merge ---")
+    # The fix must not clear a genuinely in-progress multi-turn session just because some
+    # OTHER unrelated message happens to arrive -- only an actual global-intent message
+    # (cancel/back/greeting) should clear it. An ordinary follow-up answer like "gyno" is
+    # none of those, so flow_policy.is_global_override must say no, and the session must
+    # still merge normally.
+    db_mock.has_active_appt = False
+    wa_id = "user_global_override_no_false_positive"
+    step = "choosing_search_mode"
+
+    turn1 = {"intent": "book_appointment", "confidence": "high", "entities": {"datetime": "kal"}}
+    routed1 = asyncio.run(intent_router.route_intent(wa_id, turn1, "kal appointment chahiye", "en", step))
+    check(routed1.action == "ask_followup", "turn 1 should ask for the missing doctor/specialty")
+
+    turn2 = {"intent": "check_availability", "confidence": "low", "entities": {"specialty": "gyno"}}
+    check(not flow_policy.is_global_override(turn2["intent"], turn2["confidence"]), "'gyno' is not a global intent, must not trigger a session clear")
+    routed2 = asyncio.run(intent_router.route_intent(wa_id, turn2, "gyno", "en", step))
+    check(routed2.action == "proceed_to_business_logic", "ordinary follow-up should still complete the booking")
+    check(routed2.entities.get("datetime") == "kal", "datetime from turn 1 must still be preserved")
+    check(routed2.entities.get("specialty") == "gyno", "specialty from turn 2 must still be merged in")
+
+
 def test_gemini_fallback_simulation():
     print("\n--- Running Gemini Fallback Simulation Tests ---")
     original_api_key = settings.sarvam_api_key
@@ -266,6 +358,9 @@ if __name__ == "__main__":
     test_nlu_confidence_gate_rejection()
     test_stale_session_discarded_on_step_mismatch()
     test_legitimate_multi_turn_still_merges_with_matching_step()
+    test_short_datetime_reply_recovered_when_nlu_returns_out_of_scope()
+    test_global_intent_escapes_awaiting_clarification_loop()
+    test_legitimate_followup_answer_not_treated_as_a_global_override()
     test_live_time_of_day_extraction()
     test_gemini_fallback_simulation()
 

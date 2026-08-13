@@ -3,7 +3,7 @@ import logging
 import time
 import re
 from app.redis_client import get_redis
-from app import db
+from app import db, nlu_client
 from app.config import settings
 
 logger = logging.getLogger("intent_router")
@@ -122,6 +122,16 @@ def get_followup_prompt(intent: str, missing_slot, lang: str | None = None) -> s
     return _pick(_GENERIC_SLOT_PROMPT, lang).format(slot=missing_slot)
 
 
+async def clear_session(wa_id: str) -> None:
+    """Drops any accumulated multi-turn state (including an awaiting_clarification
+    follow-up) for this patient. Called by conversation.py, via app/flow_policy.py,
+    right before route_intent() would otherwise consult that state -- see
+    flow_policy.py's module docstring for why a global intent (cancel/back/greeting)
+    must never be swallowed by a stale or in-progress local session here."""
+    redis = get_redis()
+    await redis.delete(f"nlu:session:{wa_id}")
+
+
 async def route_intent(
     wa_id: str, validated_nlu_result: dict, raw_text: str = "", lang: str | None = None,
     current_step: str | None = None,
@@ -161,6 +171,20 @@ async def route_intent(
     new_intent = validated_nlu_result.get("intent", "out_of_scope")
     new_confidence = validated_nlu_result.get("confidence", "low")
     new_entities = validated_nlu_result.get("entities", {}) or {}
+
+    # A short, context-free reply to the router's own "when would you like the appointment?"
+    # follow-up (e.g. just "today") routinely gets classified out_of_scope with empty
+    # entities -- Sarvam has no way to know a bare date word answers a question it never saw,
+    # since each message is classified independently. That leaves nothing for the merge below
+    # to pick up, and the same follow-up prompt gets sent again forever (live-reported: "hi, i
+    # have to book appointment with Dr, Radha" -> asked for a date -> "today" -> asked again).
+    # normalize_datetime_to_date only matches a short, unambiguous set of literal date
+    # phrasings (today/kal/parso/a real date/etc.), so running it unconditionally on the raw
+    # text is safe -- it won't fire on unrelated text, it just recovers what the model missed.
+    if "datetime" not in new_entities:
+        fallback_date = nlu_client.normalize_datetime_to_date(raw_text)
+        if fallback_date:
+            new_entities = {**new_entities, "datetime": fallback_date}
 
     score = _CONFIDENCE_SCORE.get(new_confidence, 0.3)
     if score < settings.nlu_confidence_threshold:
