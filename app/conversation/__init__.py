@@ -32,6 +32,7 @@ from app.conversation.doctor_list import (
 from app.conversation.slot_selection import _parse_shift_end, _format_slot_label, _pick_matching_slot
 from app.conversation.patient_details import _parse_details, _looks_like_age
 from app.conversation.booking_confirmation import _clinic_line, _patient_line
+from app.conversation.doctor_search import _is_doctor_search_query
 
 logger = logging.getLogger("conversation")
 
@@ -1852,22 +1853,6 @@ async def _handle_confirming(client, phone, sender_name, input_type, input_value
         await db.mark_session_nlu_correctness_on_booking(phone, final_doctor_name)
 
     await db.clear_conversation_state(phone)
-
-
-def _is_doctor_search_query(text: str) -> bool:
-    normalized = text.strip().lower()
-    match = re.search(r'\b(?:dr\.?|doctor)[.,\s]*\s*([a-zA-Z]+)', normalized)
-    if match:
-        next_word = match.group(1)
-        forbidden = {
-            "btao", "chahiye", "dikhao", "dikhayein", "hai", "ho", "kr", "raha", "se", "milna",
-            "ko", "me", "ka", "ki", "ke", "kya", "kuch", "appoint", "appointment", "book",
-            "booking", "list", "search", "find", "with", "for", "an", "to", "please", "pls",
-            "help", "consult", "hai", "tha", "thi", "hu", "hua", "gaya", "gayi", "liye"
-        }
-        if next_word not in forbidden:
-            return True
-    return False
 
 
 async def _search_doctors_flow(client: httpx.AsyncClient, phone: str, context: dict, current_step: str) -> bool:
