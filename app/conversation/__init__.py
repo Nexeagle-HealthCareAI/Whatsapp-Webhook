@@ -23,7 +23,10 @@ from app.i18n import LANGUAGE_LABELS, LANG_PROMPT, t
 # ~/.claude/plans/expressive-seeking-lemon.md for which names DO get monkeypatched and
 # why those must stay defined directly in this file instead.
 from app.conversation.shared import _match_choice
-from app.conversation.language import _detect_language
+from app.conversation.language import (
+    _detect_language, _confirm_or_start_language, _start,
+    _handle_choosing_language, _handle_confirming_language,
+)
 from app.conversation.specialty_browsing import (
     _specialty_row, _groups_with_live_categories,
     _send_search_mode_prompt, _handle_choosing_search_mode, _handle_awaiting_symptom,
@@ -740,141 +743,6 @@ async def handle_message(
     except httpx.HTTPError as exc:
         logger.warning("HMS API unreachable for %s: %s", phone, exc)
         await whatsapp_client.send_text(client, phone, t("error_hms_unreachable", lang))
-
-
-# ---------------------------------------------------------------------------------------
-# 1. Language selection — every fresh conversation starts here, before anything else,
-# including the greeting itself (which is why GREETING_TEXT isn't used as-is any more —
-# the greeting now comes as part of _handle_choosing_language's reply, once we know which
-# language to greet in).
-# ---------------------------------------------------------------------------------------
-
-
-async def _confirm_or_start_language(
-    client: httpx.AsyncClient, phone: str, context: dict, input_value: str, nlu_hint: dict | None = None,
-) -> None:
-    detected_lang, is_high_confidence = _detect_language(input_value) if input_value else (None, False)
-
-    # Script-based detection (Devanagari/Bengali) above is already deterministic and free --
-    # never second-guessed. Everything else is a keyword-overlap guess that's capped at
-    # low-confidence by design (a handful of shared words is a weak signal on its own). Sarvam
-    # already read this exact message for intent/entity extraction, so if it also offered a
-    # confident language opinion, that's a free upgrade -- no extra API call, and it judges the
-    # sentence as a whole rather than word-by-word.
-    if not is_high_confidence and nlu_hint:
-        sarvam_lang = nlu_hint.get("detected_language")
-        sarvam_confidence = nlu_hint.get("language_confidence")
-        if sarvam_lang:
-            if sarvam_confidence == "high":
-                detected_lang, is_high_confidence = sarvam_lang, True
-            elif detected_lang is None:
-                detected_lang = sarvam_lang
-
-    if detected_lang:
-        if is_high_confidence:
-            context["lang"] = detected_lang
-            booking = _get_or_create_clipboard(context)
-            booking_slots.fill(booking, "lang", detected_lang, source="user")
-            await whatsapp_client.send_text(client, phone, t("welcome_banner", detected_lang))
-            await _advance_booking_flow(client, phone, context, booking)
-        else:
-            confirm_context = {
-                **context,
-                "guess_lang": detected_lang,
-            }
-            await _transition_to(phone, "confirming_language", confirm_context, None)
-            await _trigger_step_prompt(client, phone, "confirming_language", confirm_context)
-    else:
-        await _start(client, phone, context)
-
-
-async def _start(client: httpx.AsyncClient, phone: str, init_context: dict | None = None) -> None:
-    await whatsapp_client.send_text(client, phone, t("welcome_multilang", None))
-    await whatsapp_client.send_list(
-        client, phone, LANG_PROMPT, "Choose / चुनें",
-        [(code, label) for code, label in LANGUAGE_LABELS.items()],
-        "Languages",
-    )
-    from uuid import uuid4
-    ctx = init_context or {}
-    ctx["session_id"] = str(uuid4())
-    await _transition_to(phone, "choosing_language", ctx, None)
-
-
-async def _handle_choosing_language(client, phone, input_type, input_value, context) -> None:
-    lang = _match_choice(input_type, input_value, list(LANGUAGE_LABELS.keys()))
-    if lang is None:
-        # Note: this hint is unavoidably English-only — we don't know the language yet,
-        # that's exactly what's being asked.
-        await whatsapp_client.send_text(client, phone, "Please tap one of the language options above.")
-        return
-    context["lang"] = lang
-    booking = _get_or_create_clipboard(context)
-    booking_slots.fill(booking, "lang", lang, source="user")
-    await whatsapp_client.send_text(client, phone, t("greeting", lang))
-    await _advance_booking_flow(client, phone, context, booking)
-
-
-async def _handle_confirming_language(client, phone, input_type, input_value, context) -> None:
-    guess_lang = context.get("guess_lang", "en")
-    
-    # Try direct button reply or exact match ID matching first
-    choice = _match_choice(input_type, input_value, ["lang_confirm_yes", "lang_confirm_change"])
-    
-    # Fallback to colloquial text input matching
-    if not choice and input_type == "text" and input_value.strip():
-        val = input_value.strip().lower()
-        # Yes indicators:
-        yes_indicators = {
-            "yes", "y", "haan", "ha", "haa", "confirm", "ok", "okay", "haji", "ji", "yes, continue", "continue",
-            "হ্যাঁ", "হ্যা", "হ্যাঁ, চালিয়ে যান", "কন্টিনিউ", "হ্যাঁ কন্টিনিউ", "হ্যাঁ, চালিয়ে যাও"
-        }
-        # Change / No indicators:
-        change_indicators = {
-            "no", "change", "n", "no, change", "badlo", "badlein", "language change", "change language",
-            "না", "না, পরিবর্তন করুন", "ভাষা পরিবর্তন", "ভাষা বদলান"
-        }
-        
-        # Add dynamic localized button label strings to the sets
-        for lang_code in LANGUAGE_LABELS.keys():
-            yes_indicators.add(t("confirm_yes", lang_code).lower())
-            change_indicators.add(t("confirm_change", lang_code).lower())
-            
-        if val in yes_indicators:
-            choice = "lang_confirm_yes"
-        elif val in change_indicators:
-            choice = "lang_confirm_change"
-            
-    if choice == "lang_confirm_yes":
-        lang = guess_lang
-        context["lang"] = lang
-        booking = _get_or_create_clipboard(context)
-        booking_slots.fill(booking, "lang", lang, source="user")
-        await _advance_booking_flow(client, phone, context, booking)
-    elif choice == "lang_confirm_change":
-        init_context = {}
-        if "search_doctor_query" in context:
-            init_context["search_doctor_query"] = context["search_doctor_query"]
-        await db.clear_conversation_state(phone)
-        init_context.pop("booking", None)
-        await _start(client, phone, init_context)
-    else:
-        # Prompt them again
-        prompt = t("confirm_lang_prompt", guess_lang)
-        buttons = [
-            ("lang_confirm_yes", t("confirm_yes", guess_lang)),
-            ("lang_confirm_change", t("confirm_change", guess_lang))
-        ]
-        await whatsapp_client.send_buttons(client, phone, prompt, buttons)
-
-
-# ---------------------------------------------------------------------------------------
-# 3. Location capture (requirement 2). WhatsApp has no server-side "auto-detect without a
-# tap" — send_location_request()'s button opens the phone's native location picker, which
-# defaults to sharing current GPS in one tap; that's the real-world equivalent of
-# "auto-detect" here. A typed city/area name is accepted as a fallback for anyone who
-# declines the GPS prompt (handled in _handle_choosing_location below).
-# ---------------------------------------------------------------------------------------
 
 
 async def _send_location_request(client: httpx.AsyncClient, phone: str, context: dict) -> None:
