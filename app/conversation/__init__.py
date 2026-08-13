@@ -27,6 +27,7 @@ from app.conversation.language import (
     _detect_language, _confirm_or_start_language, _start,
     _handle_choosing_language, _handle_confirming_language,
 )
+from app.conversation.location import _send_location_request, _resolve_city, _handle_choosing_location
 from app.conversation.specialty_browsing import (
     _specialty_row, _groups_with_live_categories,
     _send_search_mode_prompt, _handle_choosing_search_mode, _handle_awaiting_symptom,
@@ -745,13 +746,6 @@ async def handle_message(
         await whatsapp_client.send_text(client, phone, t("error_hms_unreachable", lang))
 
 
-async def _send_location_request(client: httpx.AsyncClient, phone: str, context: dict) -> None:
-    lang = context.get("lang")
-    await whatsapp_client.send_location_request(client, phone, t("location_prompt", lang))
-    await whatsapp_client.send_text(client, phone, t("location_manual_hint", lang))
-    await _transition_to(phone, "choosing_location", context, "choosing_language")
-
-
 async def _safe_city_index() -> dict:
     """The city index, or an empty dict if it can't be built. Every caller treats empty as
     "fall back to a plain city-name search" rather than an error — an unreachable index
@@ -761,64 +755,6 @@ async def _safe_city_index() -> dict:
     except (httpx.HTTPError, ValueError) as exc:
         logger.warning("City index unavailable: %s", exc)
         return {}
-
-
-async def _resolve_city(context: dict) -> dict:
-    """Works out which city name to hand to /public/doctors?city=.
-
-    Only used for the typed-location path and as a fallback. When the patient shares GPS the
-    search is driven by radius instead (see _fetch_doctors_near) — city names are too
-    unreliable to decide results on, since the same town name can exist in more than one
-    place and some records carry a city that disagrees with their own coordinates."""
-    index = await _safe_city_index()
-    if not index:
-        return context
-
-    if context.get("patient_lat") is not None:
-        city, distance_km = city_index.nearest_city(index, context["patient_lat"], context["patient_lng"])
-        if city:
-            logger.info("Resolved GPS to city %s (%.1f km)", city, distance_km)
-            return {**context, "city": city, "city_distance_km": round(distance_km, 1)}
-        return context
-
-    typed = context.get("location_text")
-    if typed:
-        city = city_index.match_typed_city(index, typed)
-        if city:
-            logger.info("Matched typed location %r to city %s", typed, city)
-            new_ctx = {**context, "city": city}
-            lat_lng = index[city][0] if index.get(city) else [None, None]
-            if lat_lng[0] is not None:
-                new_ctx["patient_lat"] = lat_lng[0]
-                new_ctx["patient_lng"] = lat_lng[1]
-            return new_ctx
-        logger.info("Typed location %r matches no known city, searching unfiltered", typed)
-    return context
-
-
-async def _handle_choosing_location(client, phone, input_type, input_value, context) -> None:
-    lang = context.get("lang")
-    if input_type == "location":
-        lat_str, lng_str = input_value.split(",")
-        context["patient_lat"] = float(lat_str)
-        context["patient_lng"] = float(lng_str)
-    elif input_type == "text" and input_value.strip():
-        context["location_text"] = input_value.strip()
-    else:
-        await whatsapp_client.send_text(client, phone, t("location_prompt", lang))
-        return
-    context = await _resolve_city(context)
-
-    booking = _get_or_create_clipboard(context)
-    if context.get("city"):
-        location_val = context["city"]
-        if context.get("patient_lat") is not None:
-            location_val = {"lat": context["patient_lat"], "lng": context["patient_lng"], "city": context.get("city")}
-        booking_slots.fill(booking, "location", location_val, raw=context.get("location_text"), source="user")
-    else:
-        booking_slots.mark_notfound(booking, "location", raw=context.get("location_text"))
-
-    await _advance_booking_flow(client, phone, context, booking)
 
 
 # ---------------------------------------------------------------------------------------
