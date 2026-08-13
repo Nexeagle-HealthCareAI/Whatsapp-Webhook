@@ -31,6 +31,7 @@ from app.conversation.doctor_list import (
 )
 from app.conversation.slot_selection import _parse_shift_end, _format_slot_label, _pick_matching_slot
 from app.conversation.patient_details import _parse_details, _looks_like_age
+from app.conversation.booking_confirmation import _clinic_line, _patient_line
 
 logger = logging.getLogger("conversation")
 
@@ -1658,40 +1659,6 @@ async def _handle_choosing_slot(client, phone, input_type, input_value, context)
         return
 
     await _finalize_slot_selection(client, phone, context, selected_slot)
-
-
-def _clinic_line(context: dict, lang: str | None) -> str:
-    """Where the patient actually has to travel to, as one line.
-
-    Worth spelling out at confirm time: the search now reaches up to 75km, so the chosen
-    doctor may well be in a different town from the patient. Previously this only became
-    apparent after confirming, when the map pin arrived."""
-    parts = [p for p in (context.get("hospital_name"), context.get("hospital_city")) if p]
-    where = ", ".join(parts) or t("clinic_unknown", lang)
-    distance = _doctor_distance_km(
-        {"latitude": context.get("hospital_lat"), "longitude": context.get("hospital_lng")},
-        context.get("patient_lat"), context.get("patient_lng"),
-    )
-    if distance != float("inf"):
-        where += f" · {distance:.0f} km"
-    return where
-
-
-def _patient_line(context: dict, lang: str | None) -> str:
-    name = context.get("patient_display_name") or t("you", lang)
-    age = context.get("patient_age")
-    gender = context.get("patient_gender")
-    guardian = context.get("patient_guardian")
-
-    parts = [name]
-    if age:
-        parts.append(str(age))
-    if gender:
-        parts.append(gender)
-    line = ", ".join(parts)
-    if guardian:
-        line += f" (Guardian: {guardian})"
-    return line
 
 
 async def _send_patient_details_flow(client: httpx.AsyncClient, phone: str, context: dict) -> None:
