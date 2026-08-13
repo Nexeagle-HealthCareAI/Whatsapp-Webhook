@@ -29,6 +29,7 @@ from app.conversation.doctor_list import (
     _doctor_fee, _doctor_rating, _doctor_distance_km, _sort_doctors,
     _clean_specialty, _clean_hospital, _doctor_row_description,
 )
+from app.conversation.slot_selection import _parse_shift_end, _format_slot_label, _pick_matching_slot
 
 logger = logging.getLogger("conversation")
 
@@ -1283,20 +1284,6 @@ def _clinic_now() -> datetime:
     return datetime.now(ZoneInfo(settings.clinic_timezone))
 
 
-def _parse_shift_end(shift: dict) -> time | None:
-    """The shift's finish time, e.g. "20:30:00" -> 20:30. Returns None if the API omits or
-    malforms it, and callers then treat the shift as still open rather than hiding it —
-    better to show a shift that has passed than to hide one that hasn't."""
-    raw = shift.get("endTime")
-    if not raw:
-        return None
-    try:
-        return time.fromisoformat(str(raw))
-    except ValueError:
-        logger.warning("Unparseable shift endTime %r", raw)
-        return None
-
-
 def _usable_shifts(availability: dict, preferred_date: date) -> list[str]:
     """Shift names the patient could still turn up for.
 
@@ -1550,21 +1537,6 @@ async def _handle_choosing_doctor(client, phone, input_type, input_value, contex
 # ---------------------------------------------------------------------------------------
 
 
-def _format_slot_label(shift_name: str, is_today: bool, lang: str | None) -> str:
-    # Get localized shift name
-    shift_key = shift_name.lower()
-    if shift_key == "afternoon":
-        shift_key = "noon"
-
-    localized_shift = t(f"shift_{shift_key}", lang) or shift_name
-
-    # Get localized date label
-    date_key = "date_today" if is_today else "date_tomorrow"
-    localized_date = t(date_key, lang)
-
-    return f"{localized_shift} ({localized_date})"
-
-
 async def _get_offered_slots(doctor_id: str, lang: str | None) -> list[dict]:
     today = _clinic_now().date()
     tomorrow = today + timedelta(days=1)
@@ -1598,20 +1570,6 @@ async def _get_offered_slots(doctor_id: str, lang: str | None) -> list[dict]:
             })
 
     return slots[:3]
-
-
-def _pick_matching_slot(slots: list[dict], preferred_date: str | None, time_of_day: str | None) -> dict | None:
-    """Auto-select a slot already implied by what the patient said (e.g. "kal subah") so
-    they aren't asked to re-pick a shift they already named. Deliberately conservative:
-    with no time_of_day there's nothing to match on, and any ambiguity (more than one
-    surviving candidate) falls through to the normal button prompt rather than guessing —
-    this only fires when there's exactly one slot consistent with what was said."""
-    if not time_of_day:
-        return None
-    candidates = [s for s in slots if s["shift_name"] == time_of_day]
-    if preferred_date:
-        candidates = [s for s in candidates if s["date"].isoformat() == preferred_date]
-    return candidates[0] if len(candidates) == 1 else None
 
 
 async def _finalize_slot_selection(client: httpx.AsyncClient, phone: str, context: dict, selected_slot: dict) -> None:
