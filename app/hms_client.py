@@ -142,6 +142,65 @@ async def book_appointment(
 
 
 @_retry_network_errors
+async def get_appointment(appointment_id: str) -> dict[str, Any]:
+    """Minimal, unauthenticated "what's the status of this appointment" lookup (see
+    GetPublicAppointmentHandler) -- used to re-verify a locally-cached booked appointment is
+    still live before offering it as a cancel/reschedule candidate (staff could have
+    changed/cancelled it from the hospital side since this bot last touched it). Returns the raw
+    dict; success:false (e.g. unknown id) is a normal outcome here, not raised."""
+    async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=10) as client:
+        response = await client.get(f"/public/appointments/{appointment_id}", headers=_headers())
+    if response.status_code >= 500:
+        response.raise_for_status()
+    return response.json()
+
+
+@_retry_network_errors
+async def cancel_appointment(
+    appointment_id: str, mobile: str, reason: str | None = None
+) -> dict[str, Any]:
+    """Cancels a real, already-booked HMS appointment (see PublicCancelAppointmentHandler).
+    appointment_id (the caller must already know it -- see db.get_booked_appointments_for_phone)
+    is the primary gate; mobile is cross-checked server-side against the appointment's patient
+    record. Returns the raw response dict rather than raising on success:false (unlike
+    book_appointment/get_hospital_by_code) -- same reasoning as resolve_checkin: the caller needs
+    the API's own `message` (e.g. "already cancelled", or the generic "not found" a mobile
+    mismatch also returns) to relay back to the patient, not just a pass/fail."""
+    body: dict[str, Any] = {"mobile": mobile, "reason": reason}
+    async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=15) as client:
+        response = await client.patch(
+            f"/public/appointments/{appointment_id}/cancel", json=body, headers=_headers()
+        )
+    if response.status_code >= 500:
+        response.raise_for_status()
+    return response.json()
+
+
+@_retry_network_errors
+async def reschedule_appointment(
+    appointment_id: str,
+    mobile: str,
+    to_date: date_type,
+    to_time: str | None = None,
+) -> dict[str, Any]:
+    """Reschedules a real, already-booked HMS appointment (see
+    PublicRescheduleAppointmentHandler). to_time, if given, must be "HH:MM" (24h) -- ToStartAt is
+    a full .NET DateTime? on the wire, not a bare TimeSpan, so it's combined with to_date before
+    sending. Same "return the raw dict, don't raise on success:false" posture as
+    cancel_appointment above."""
+    body: dict[str, Any] = {"mobile": mobile, "toApptDate": to_date.isoformat()}
+    if to_time:
+        body["toStartAt"] = f"{to_date.isoformat()}T{to_time}:00"
+    async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=15) as client:
+        response = await client.patch(
+            f"/public/appointments/{appointment_id}/reschedule", json=body, headers=_headers()
+        )
+    if response.status_code >= 500:
+        response.raise_for_status()
+    return response.json()
+
+
+@_retry_network_errors
 async def get_hospital_by_code(hospital_code: str) -> dict[str, Any]:
     """Resolves a scanned OPD QR code to a hospital. Raises HmsApiError (never returns a
     falsy/empty dict) if the code doesn't resolve — callers should treat that as "this QR

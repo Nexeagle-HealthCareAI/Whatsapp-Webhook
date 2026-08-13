@@ -163,6 +163,51 @@ async def get_appointment_by_hms_id(hms_appointment_id: str) -> dict[str, Any] |
         }
 
 
+async def get_booked_appointments_for_phone(phone: str) -> list[dict[str, Any]]:
+    """Candidates for "cancel/reschedule my appointment" — every appointment this bot itself
+    booked for this phone number that it still believes is live. Local status alone isn't proof
+    of that (staff could have cancelled/completed it from the hospital side since), so
+    conversation.py re-verifies each candidate against GET /public/appointments/{id} before
+    presenting or acting on it — this is just the local shortlist."""
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.cursor() as cur:
+        await cur.execute(
+            "SELECT id, hms_appointment_id, preferred_date "
+            "FROM dbo.pending_appointments "
+            "WHERE phone_number = ? AND status = 'booked' AND hms_appointment_id IS NOT NULL "
+            "ORDER BY preferred_date ASC",
+            (phone,),
+        )
+        rows = await cur.fetchall()
+        return [
+            {"id": row[0], "hms_appointment_id": row[1], "preferred_date": row[2]}
+            for row in rows
+        ]
+
+
+async def mark_appointment_cancelled_locally(hms_appointment_id: str) -> None:
+    """Keeps this bot's own record in sync after a successful cancel via hms_client — without
+    this, get_booked_appointments_for_phone would keep offering an appointment the patient
+    already cancelled through the bot as a cancel/reschedule candidate."""
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.cursor() as cur:
+        await cur.execute(
+            "UPDATE dbo.pending_appointments SET status = 'cancelled' WHERE hms_appointment_id = ?",
+            (hms_appointment_id,),
+        )
+
+
+async def mark_appointment_rescheduled_locally(hms_appointment_id: str, new_date: date_type) -> None:
+    """Keeps this bot's own preferred_date in sync after a successful reschedule via hms_client —
+    status stays 'booked' (it's still a live appointment, just moved)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.cursor() as cur:
+        await cur.execute(
+            "UPDATE dbo.pending_appointments SET preferred_date = ? WHERE hms_appointment_id = ?",
+            (new_date, hms_appointment_id),
+        )
+
+
 async def upsert_checkin_notification(
     hms_appointment_id: str,
     phone_number: str,
