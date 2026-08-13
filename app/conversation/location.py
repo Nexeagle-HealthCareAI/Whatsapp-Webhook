@@ -19,9 +19,10 @@ See docs/architecture.md and app/conversation/checkin.py's module docstring.
 """
 from app import booking_slots, city_index
 from app.i18n import t
+from app.types import ConversationContext
 
 
-async def _send_location_request(client, phone: str, context: dict) -> None:
+async def _send_location_request(client, phone: str, context: ConversationContext) -> None:
     from app import conversation
 
     lang = context.get("lang")
@@ -30,7 +31,7 @@ async def _send_location_request(client, phone: str, context: dict) -> None:
     await conversation._transition_to(phone, "choosing_location", context, "choosing_language")
 
 
-async def _resolve_city(context: dict) -> dict:
+async def _resolve_city(context: ConversationContext) -> ConversationContext:
     """Works out which city name to hand to /public/doctors?city=.
 
     Only used for the typed-location path and as a fallback. When the patient shares GPS the
@@ -65,7 +66,7 @@ async def _resolve_city(context: dict) -> dict:
     return context
 
 
-async def _handle_choosing_location(client, phone, input_type, input_value, context) -> None:
+async def _handle_choosing_location(client, phone, input_type, input_value, context: ConversationContext) -> None:
     from app import conversation
 
     lang = context.get("lang")

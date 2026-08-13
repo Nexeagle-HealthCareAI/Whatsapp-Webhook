@@ -19,6 +19,7 @@ from app import hms_client, i18n, symptom_client
 from app.i18n import t
 from app.conversation.shared import _match_choice
 from app.conversation.doctor_search import _is_doctor_search_query
+from app.types import ConversationContext
 
 
 def _specialty_row(specialty: dict) -> tuple[str, str, str]:
@@ -62,7 +63,7 @@ def _groups_with_live_categories(specialties: list[dict]) -> list[tuple[dict, li
     return paired
 
 
-async def _send_search_mode_prompt(client, phone: str, context: dict) -> None:
+async def _send_search_mode_prompt(client, phone: str, context: ConversationContext) -> None:
     from app import conversation
 
     lang = context.get("lang")
@@ -80,7 +81,7 @@ async def _send_search_mode_prompt(client, phone: str, context: dict) -> None:
     await conversation._transition_to(phone, "choosing_search_mode", context, "choosing_location")
 
 
-async def _handle_choosing_search_mode(client, phone, input_type, input_value, context) -> None:
+async def _handle_choosing_search_mode(client, phone, input_type, input_value, context: ConversationContext) -> None:
     from app import conversation
 
     lang = context.get("lang")
@@ -113,7 +114,7 @@ async def _handle_choosing_search_mode(client, phone, input_type, input_value, c
     await _send_specialty_list(client, phone, context)
 
 
-async def _handle_awaiting_symptom(client, phone, input_type, input_value, context) -> None:
+async def _handle_awaiting_symptom(client, phone, input_type, input_value, context: ConversationContext) -> None:
     from app import conversation
 
     lang = context.get("lang")
@@ -149,7 +150,7 @@ async def _handle_awaiting_symptom(client, phone, input_type, input_value, conte
     )
 
 
-async def _send_specialty_list(client, phone: str, context: dict) -> None:
+async def _send_specialty_list(client, phone: str, context: ConversationContext) -> None:
     """First of two levels: the broad areas. See the comment above SPECIALTY_GROUPS in
     i18n.py for why browsing can't just list all 30 categories in one message."""
     from app import conversation
@@ -179,7 +180,7 @@ async def _send_specialty_list(client, phone: str, context: dict) -> None:
     )
 
 
-async def _handle_choosing_specialty_group(client, phone, input_type, input_value, context) -> None:
+async def _handle_choosing_specialty_group(client, phone, input_type, input_value, context: ConversationContext) -> None:
     from app import conversation
 
     lang = context.get("lang")
@@ -218,7 +219,7 @@ async def _handle_choosing_specialty_group(client, phone, input_type, input_valu
     await conversation._transition_to(phone, "choosing_specialty", context, "choosing_specialty_group")
 
 
-async def _handle_choosing_specialty(client, phone, input_type, input_value, context) -> None:
+async def _handle_choosing_specialty(client, phone, input_type, input_value, context: ConversationContext) -> None:
     from app import conversation
 
     lang = context.get("lang")
@@ -229,7 +230,7 @@ async def _handle_choosing_specialty(client, phone, input_type, input_value, con
 
 
 async def _send_sort_prompt(
-    client, phone: str, context: dict, specialty_category: str, current_step: str,
+    client, phone: str, context: ConversationContext, specialty_category: str, current_step: str,
     concern_prefix: str | None = None,
 ) -> None:
     from app import conversation
@@ -258,7 +259,7 @@ async def _send_sort_prompt(
     await conversation._transition_to(phone, "choosing_sort", context, current_step)
 
 
-async def _handle_choosing_sort(client, phone, input_type, input_value, context) -> None:
+async def _handle_choosing_sort(client, phone, input_type, input_value, context: ConversationContext) -> None:
     from app import conversation
 
     lang = context.get("lang")

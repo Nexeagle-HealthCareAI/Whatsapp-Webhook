@@ -15,6 +15,7 @@ from app.hms_client import HmsApiError
 from app import nlu_client, intent_router, safety, flow_policy
 from app.model_config import PRIMARY_NLU
 from app.i18n import LANGUAGE_LABELS, LANG_PROMPT, t
+from app.types import ConversationContext
 
 # Re-exported from sibling modules purely so `conversation.<name>` keeps resolving --
 # the test suite reaches every one of these through the package object, never via
@@ -74,7 +75,7 @@ _SORT_OPTIONS = ["rating", "nearest", "experience", "fee"]
 # session parameters for backwards compatibility.
 # ---------------------------------------------------------------------------------------
 
-def _init_clipboard_from_legacy(context: dict) -> dict:
+def _init_clipboard_from_legacy(context: ConversationContext) -> dict:
     """Legacy context dict -> booking_slots clipboard. Read-only; never mutates context."""
     slots = booking_slots.empty()
 
@@ -123,7 +124,7 @@ def _init_clipboard_from_legacy(context: dict) -> dict:
     return slots
 
 
-def _get_or_create_clipboard(context: dict) -> dict:
+def _get_or_create_clipboard(context: ConversationContext) -> dict:
     if "booking" in context and isinstance(context["booking"], dict):
         return context["booking"]
     slots = _init_clipboard_from_legacy(context)
@@ -131,7 +132,7 @@ def _get_or_create_clipboard(context: dict) -> dict:
     return slots
 
 
-def _step_for_action(action: str, slot_name: str | None, context: dict) -> str:
+def _step_for_action(action: str, slot_name: str | None, context: ConversationContext) -> str:
     if action == "ask" and slot_name == "lang":
         return "choosing_language"
     elif action == "disambiguate" and slot_name == "lang":
@@ -169,7 +170,7 @@ def _step_for_action(action: str, slot_name: str | None, context: dict) -> str:
     return "choosing_search_mode"
 
 
-async def _advance_booking_flow(client: httpx.AsyncClient, phone: str, context: dict, booking: dict) -> None:
+async def _advance_booking_flow(client: httpx.AsyncClient, phone: str, context: ConversationContext, booking: dict) -> None:
     # A pending doctor-name search takes priority over whatever next_action()'s own slot
     # order would ask for next. SLOT_ORDER puts location before doctor, so waiting for
     # next_action() to say "doctor" (i.e. waiting for location to already be filled) means a
@@ -757,7 +758,7 @@ async def _safe_city_index() -> dict:
 
 
 async def _phrase(
-    client: httpx.AsyncClient, step: str, context: dict, fallback_key: str, **fallback_kwargs
+    client: httpx.AsyncClient, step: str, context: ConversationContext, fallback_key: str, **fallback_kwargs
 ) -> str:
     """Model-written wording for a step's prompt, falling back to the i18n template.
 
@@ -788,7 +789,7 @@ def _clinic_now() -> datetime:
 
 
 async def _fetch_doctors_near(
-    specialty_category: str, context: dict, radius_km: float, index: dict, cache: dict
+    specialty_category: str, context: ConversationContext, radius_km: float, index: dict, cache: dict
 ) -> list[dict]:
     """Doctors of this specialty whose OWN coordinates fall within radius_km of the patient.
 
@@ -841,7 +842,7 @@ async def _fetch_doctors_near(
     return within
 
 
-async def _send_doctor_list(client: httpx.AsyncClient, phone: str, context: dict) -> None:
+async def _send_doctor_list(client: httpx.AsyncClient, phone: str, context: ConversationContext) -> None:
     lang = context.get("lang")
     specialty_category = context["specialty_category"]
 
@@ -893,7 +894,7 @@ async def _send_doctor_list(client: httpx.AsyncClient, phone: str, context: dict
 
 
 async def _render_doctor_list(
-    client: httpx.AsyncClient, phone: str, context: dict, doctors: list[dict], current_step: str | None = None
+    client: httpx.AsyncClient, phone: str, context: ConversationContext, doctors: list[dict], current_step: str | None = None
 ) -> None:
     """Sorts, trims to WhatsApp's row cap, and sends. Shared by the normal radius search and
     the opted-in wider search so both present results identically."""
@@ -1053,7 +1054,7 @@ async def _get_offered_slots(doctor_id: str, lang: str | None) -> list[dict]:
     return slots[:3]
 
 
-async def _send_patient_details_flow(client: httpx.AsyncClient, phone: str, context: dict) -> None:
+async def _send_patient_details_flow(client: httpx.AsyncClient, phone: str, context: ConversationContext) -> None:
     lang = context.get("lang")
     flow_id = settings.whatsapp_flow_id
     success = False
@@ -1246,7 +1247,7 @@ async def _handle_confirming(client, phone, sender_name, input_type, input_value
     await db.clear_conversation_state(phone)
 
 
-async def _transition_to(phone: str, next_step: str, context: dict, current_step: str | None) -> None:
+async def _transition_to(phone: str, next_step: str, context: ConversationContext, current_step: str | None) -> None:
     history = context.get("_history", [])
     if current_step:
         clean_context = {k: v for k, v in context.items() if k != "_history"}
@@ -1257,7 +1258,7 @@ async def _transition_to(phone: str, next_step: str, context: dict, current_step
     await db.save_conversation_state(phone, next_step, new_context)
 
 
-async def _trigger_step_prompt(client: httpx.AsyncClient, phone: str, step: str, context: dict) -> None:
+async def _trigger_step_prompt(client: httpx.AsyncClient, phone: str, step: str, context: ConversationContext) -> None:
     step_config = STEP_REGISTRY.get(step)
     if step_config and "prompt" in step_config:
         try:

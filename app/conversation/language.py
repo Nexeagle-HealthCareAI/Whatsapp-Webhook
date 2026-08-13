@@ -20,6 +20,7 @@ from uuid import uuid4
 from app.i18n import LANGUAGE_LABELS, LANG_PROMPT, t
 from app import booking_slots
 from app.conversation.shared import _match_choice
+from app.types import ConversationContext
 
 
 def _detect_language(text: str) -> tuple[str | None, bool]:
@@ -101,7 +102,7 @@ def _detect_language(text: str) -> tuple[str | None, bool]:
 
 
 async def _confirm_or_start_language(
-    client, phone: str, context: dict, input_value: str, nlu_hint: dict | None = None,
+    client, phone: str, context: ConversationContext, input_value: str, nlu_hint: dict | None = None,
 ) -> None:
     from app import conversation
 
@@ -140,7 +141,7 @@ async def _confirm_or_start_language(
         await _start(client, phone, context)
 
 
-async def _start(client, phone: str, init_context: dict | None = None) -> None:
+async def _start(client, phone: str, init_context: ConversationContext | None = None) -> None:
     from app import conversation
 
     await conversation.whatsapp_client.send_text(client, phone, t("welcome_multilang", None))
@@ -154,7 +155,7 @@ async def _start(client, phone: str, init_context: dict | None = None) -> None:
     await conversation._transition_to(phone, "choosing_language", ctx, None)
 
 
-async def _handle_choosing_language(client, phone, input_type, input_value, context) -> None:
+async def _handle_choosing_language(client, phone, input_type, input_value, context: ConversationContext) -> None:
     from app import conversation
 
     lang = _match_choice(input_type, input_value, list(LANGUAGE_LABELS.keys()))
@@ -170,7 +171,7 @@ async def _handle_choosing_language(client, phone, input_type, input_value, cont
     await conversation._advance_booking_flow(client, phone, context, booking)
 
 
-async def _handle_confirming_language(client, phone, input_type, input_value, context) -> None:
+async def _handle_confirming_language(client, phone, input_type, input_value, context: ConversationContext) -> None:
     from app import conversation
 
     guess_lang = context.get("guess_lang", "en")
