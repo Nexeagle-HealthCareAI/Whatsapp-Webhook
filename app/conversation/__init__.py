@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import re
-from datetime import date, datetime, time, timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -38,7 +38,10 @@ from app.conversation.doctor_list import (
     _doctor_fee, _doctor_rating, _doctor_distance_km, _sort_doctors,
     _clean_specialty, _clean_hospital, _doctor_row_description,
 )
-from app.conversation.slot_selection import _parse_shift_end, _format_slot_label, _pick_matching_slot
+from app.conversation.slot_selection import (
+    _parse_shift_end, _format_slot_label, _pick_matching_slot, _usable_shifts,
+    _finalize_slot_selection, _send_slot_options, _handle_choosing_slot,
+)
 from app.conversation.patient_details import _parse_details, _looks_like_age
 from app.conversation.booking_confirmation import _clinic_line, _patient_line
 from app.conversation.doctor_search import (
@@ -56,7 +59,6 @@ from app.conversation.checkin import (
 
 logger = logging.getLogger("conversation")
 
-_SHIFT_FALLBACK = ["Morning", "Afternoon", "Evening"]
 
 # Kept for anything importing the old constant name (e.g. tests) — superseded by
 # i18n.LANG_PROMPT as the very first message now, since language is asked before anything
@@ -799,28 +801,6 @@ def _clinic_now() -> datetime:
     return datetime.now(ZoneInfo(settings.clinic_timezone))
 
 
-def _usable_shifts(availability: dict, preferred_date: date) -> list[str]:
-    """Shift names the patient could still turn up for.
-
-    The availability endpoint returns a doctor's standing schedule for a date — it does not
-    know what time it is, so for today it happily returns Morning (09:00-12:00) at 7pm.
-    Offering that books a patient into a slot that has already passed, so today's shifts are
-    filtered against the clock. Future dates pass through untouched."""
-    shifts = [s for s in availability.get("shifts", []) if s.get("name")]
-    if not shifts:
-        return list(_SHIFT_FALLBACK)
-    if preferred_date != _clinic_now().date():
-        return [s["name"] for s in shifts]
-
-    now = _clinic_now().time()
-    usable = []
-    for shift in shifts:
-        end = _parse_shift_end(shift)
-        if end is None or end > now:
-            usable.append(shift["name"])
-    return usable
-
-
 async def _fetch_doctors_near(
     specialty_category: str, context: dict, radius_km: float, index: dict, cache: dict
 ) -> list[dict]:
@@ -1085,118 +1065,6 @@ async def _get_offered_slots(doctor_id: str, lang: str | None) -> list[dict]:
             })
 
     return slots[:3]
-
-
-async def _finalize_slot_selection(client: httpx.AsyncClient, phone: str, context: dict, selected_slot: dict) -> None:
-    lang = context.get("lang")
-    date_label = t("date_today", lang) if selected_slot["is_today"] else t("date_tomorrow", lang)
-    # selected_slot["date"] is a real date object when this comes straight from
-    # _get_offered_slots (the auto-match path in _send_slot_options), but an ISO string
-    # when it comes from context["offered_slots"] (the manual-tap path in
-    # _handle_choosing_slot, where it was already serialised for context_json). context
-    # itself must only ever hold JSON-safe values, so normalise to a string here rather
-    # than at each call site.
-    raw_date = selected_slot["date"]
-    preferred_date = raw_date.isoformat() if hasattr(raw_date, "isoformat") else raw_date
-    context["preferred_date"] = preferred_date
-    context["date_label"] = date_label
-    context["shift_label"] = selected_slot["shift_name"]
-    context.pop("offered_slots", None)
-    context.pop("time_of_day_hint", None)
-
-    booking = _get_or_create_clipboard(context)
-    booking_slots.fill(booking, "date", preferred_date, raw=date_label, source="user")
-    booking_slots.fill(booking, "shift", selected_slot["shift_name"], raw=selected_slot["shift_name"], source="user")
-
-    await _advance_booking_flow(client, phone, context, booking)
-
-
-async def _send_slot_options(client: httpx.AsyncClient, phone: str, context: dict) -> None:
-    lang = context.get("lang")
-    doctor_id = context["doctor_id"]
-
-    slots = await _get_offered_slots(doctor_id, lang)
-    if not slots:
-        await whatsapp_client.send_buttons(
-            client, phone, t("today_shifts_over", lang),
-            [("change_doctor", t("change_doctor_btn", lang))],
-        )
-        await _transition_to(phone, "choosing_slot", context, "choosing_doctor")
-        return
-
-    time_of_day_hint = context.get("time_of_day_hint")
-    matched = _pick_matching_slot(slots, context.get("preferred_date"), time_of_day_hint)
-    if matched:
-        await _finalize_slot_selection(client, phone, context, matched)
-        return
-
-    buttons = [(s["button_id"], s["label"]) for s in slots]
-
-    offered_slots_data = [
-        {
-            "button_id": s["button_id"],
-            "shift_name": s["shift_name"],
-            "date": s["date"].isoformat(),
-            "is_today": s["is_today"],
-            "label": s["label"]
-        }
-        for s in slots
-    ]
-
-    await whatsapp_client.send_buttons(
-        client, phone, t("shift_prompt", lang),
-        buttons,
-    )
-
-    next_context = {**context, "offered_slots": offered_slots_data}
-    # A hint that didn't produce a unique match (ambiguous, or no offered slot matched it)
-    # shouldn't linger and silently auto-pick on some later, unrelated re-render.
-    next_context.pop("time_of_day_hint", None)
-    await _transition_to(phone, "choosing_slot", next_context, "choosing_doctor")
-
-
-async def _handle_choosing_slot(client, phone, input_type, input_value, context) -> None:
-    lang = context.get("lang")
-    offered_slots = context.get("offered_slots") or []
-
-    valid_ids = []
-    label_to_slot = {}
-    shift_name_to_slot = {}
-
-    for s in offered_slots:
-        b_id = s["button_id"]
-        valid_ids.append(b_id)
-        label_to_slot[s["label"].lower()] = s
-
-        sh_name = s["shift_name"].lower()
-        if sh_name not in shift_name_to_slot:
-            shift_name_to_slot[sh_name] = s
-
-    valid_ids.append("change_doctor")
-
-    choice = _match_choice(input_type, input_value, valid_ids)
-    selected_slot = None
-
-    if choice and choice != "change_doctor":
-        selected_slot = next(s for s in offered_slots if s["button_id"] == choice)
-    elif choice == "change_doctor":
-        await _send_doctor_list(client, phone, context)
-        return
-    else:
-        normalized = input_value.strip().lower()
-        if normalized in label_to_slot:
-            selected_slot = label_to_slot[normalized]
-        elif normalized in shift_name_to_slot:
-            selected_slot = shift_name_to_slot[normalized]
-
-    if selected_slot is None:
-        options_str = ", ".join(s["label"] for s in offered_slots)
-        await whatsapp_client.send_text(
-            client, phone, t("shift_choose_hint", lang, options=options_str)
-        )
-        return
-
-    await _finalize_slot_selection(client, phone, context, selected_slot)
 
 
 async def _send_patient_details_flow(client: httpx.AsyncClient, phone: str, context: dict) -> None:
