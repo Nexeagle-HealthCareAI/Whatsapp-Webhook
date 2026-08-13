@@ -17,6 +17,14 @@ from app import nlu_client, intent_router, safety, flow_policy
 from app.model_config import PRIMARY_NLU
 from app.i18n import LANGUAGE_LABELS, LANG_PROMPT, t
 
+# Re-exported from sibling modules purely so `conversation.<name>` keeps resolving --
+# the test suite reaches every one of these through the package object, never via
+# `from app.conversation.x import y`. Never monkeypatched (only ever called), so a plain
+# static import here is safe -- see docs/architecture.md and the approved plan at
+# ~/.claude/plans/expressive-seeking-lemon.md for which names DO get monkeypatched and
+# why those must stay defined directly in this file instead.
+from app.conversation.shared import _match_choice
+
 logger = logging.getLogger("conversation")
 
 _SHIFT_FALLBACK = ["Morning", "Afternoon", "Evening"]
@@ -72,19 +80,6 @@ _DOCUMENT_TRIGGERS = (
         "prescription_not_available", "prescription_delivered",
     ),
 )
-
-
-def _match_choice(input_type: str, input_value: str, valid_ids: list[str]) -> str | None:
-    """Accepts a button/list tap, or plain text typed by hand matching one of the choices —
-    interactive messages can scroll out of easy reach, typing 'confirm' should still work."""
-    if input_type in ("button_reply", "list_reply") and input_value in valid_ids:
-        return input_value
-    if input_type == "text":
-        normalized = input_value.strip().lower()
-        for valid in valid_ids:
-            if normalized == valid.lower():
-                return valid
-    return None
 
 
 def _parse_details(text: str, expected: int) -> list[str] | None:
