@@ -92,6 +92,25 @@ async def has_pending_appointment(phone: str, preferred_date: date_type) -> bool
         return await cur.fetchone() is not None
 
 
+async def get_upcoming_active_appointment(phone: str) -> tuple[bool, str | None]:
+    """Check if the user has any active booked/pending appointments on or after today,
+    returning a tuple: (has_active, active_date_str)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.cursor() as cur:
+        await cur.execute(
+            "SELECT TOP 1 preferred_date FROM dbo.pending_appointments "
+            "WHERE phone_number = ? AND status IN ('pending', 'booked') AND preferred_date >= CAST(GETDATE() AS DATE) "
+            "ORDER BY preferred_date ASC",
+            (phone,),
+        )
+        row = await cur.fetchone()
+        if row:
+            date_val = row[0]
+            date_str = date_val.strftime("%Y-%m-%d") if hasattr(date_val, "strftime") else str(date_val)
+            return True, date_str
+        return False, None
+
+
 async def create_pending_appointment(
     phone: str,
     preferred_date: date_type,

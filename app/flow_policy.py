@@ -40,7 +40,9 @@ future one) is expected to check it BEFORE trusting its own local state.
 # "Prioritize NLU global intents" block already treats as always-available -- this
 # module doesn't invent a new contract, it just makes the existing one enforceable
 # from outside conversation.py too.
-GLOBAL_INTENTS = {"cancel_appointment", "navigate_back", "greeting"}
+from app.nlu_config import INTENT_REGISTRY
+
+GLOBAL_INTENTS = {k for k, v in INTENT_REGISTRY.items() if v["is_global"]}
 
 # A global override still has to be reasonably confident about what it heard -- a
 # low-confidence guess of "greeting" on an ambiguous message shouldn't be allowed to

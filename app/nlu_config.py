@@ -3,4 +3,5 @@ from app.listener.nlu_config import (
     VALID_ENTITIES,
     VALID_INTENTS,
     VALID_LANGUAGES,
+    INTENT_REGISTRY,
 )

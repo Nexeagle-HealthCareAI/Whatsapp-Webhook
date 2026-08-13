@@ -9,15 +9,12 @@ from app.config import settings
 
 logger = logging.getLogger("intent_router")
 
+from app.nlu_config import INTENT_REGISTRY
+
 REQUIRED_ENTITIES = {
-    "book_appointment": [("doctor_name", "specialty"), "datetime"],  # doctor_name OR specialty, AND datetime
-    "check_availability": [("doctor_name", "specialty")],
-    "cancel_appointment": [],  # resolved via DB lookup
-    "reschedule_appointment": ["datetime"],
-    "change_selection": ["new_doctor_name"],
-    "ask_pricing": [("doctor_name", "specialty")],
-    "describe_symptom": ["symptom"],
-    "provide_location": ["location"],
+    k: v["required_entities"]
+    for k, v in INTENT_REGISTRY.items()
+    if v["required_entities"] or k == "cancel_appointment"
 }
 
 # Per-language follow-up copy. Keyed the same way as app/i18n.py (en/hi/hg/bn) so this stays
@@ -85,7 +82,9 @@ _CONFIDENCE_SCORE = {"high": 0.9, "medium": 0.75, "low": 0.3}
 # These are exactly the intents where the raw NLU confidence must actually gate
 # execution, since misreading e.g. "nahi... cancel jaisa kuch nahi bola" as
 # cancel_appointment would otherwise wipe a booking on a single low-confidence guess.
-_NO_SLOT_SAFETY_NET = {"cancel_appointment", "navigate_back", "greeting"}
+_NO_SLOT_SAFETY_NET = {
+    k for k, v in INTENT_REGISTRY.items() if not v["has_slot_safety_net"] and k != "out_of_scope"
+}
 
 
 def _proceed_confidence(intent: str, current_turn_confidence: str | None) -> float:
@@ -298,20 +297,9 @@ async def route_intent(
     if current_intent == "book_appointment" and not awaiting_clarification and not resolved_clarification_this_turn:
         # Check active booked/pending appointments for this user in the DB
         has_active = False
-        active_date_str = ""
+        active_date_str = None
         try:
-            pool = await db.get_pool()
-            async with pool.acquire() as conn, conn.cursor() as cur:
-                await cur.execute(
-                    "SELECT TOP 1 preferred_date FROM dbo.pending_appointments "
-                    "WHERE phone_number = ? AND status IN ('pending', 'booked') AND preferred_date >= CAST(GETDATE() AS DATE) "
-                    "ORDER BY preferred_date ASC",
-                    (wa_id,)
-                )
-                row = await cur.fetchone()
-                if row:
-                    has_active = True
-                    active_date_str = row[0].strftime("%Y-%m-%d") if hasattr(row[0], "strftime") else str(row[0])
+            has_active, active_date_str = await db.get_upcoming_active_appointment(wa_id)
         except Exception as exc:
             logger.error("DB check for active appointments failed: %s", exc)
 

@@ -7,19 +7,65 @@ entity types, aur few-shot examples define hain jo Sarvam AI (ya kisi
 cycle nahi chahiye, prompt edit karo aur turant effect dikhega.
 """
 
-VALID_INTENTS = [
-    "greeting",
-    "book_appointment",
-    "check_availability",
-    "cancel_appointment",
-    "ask_pricing",
-    "change_selection",
-    "reschedule_appointment",
-    "navigate_back",
-    "provide_location",
-    "describe_symptom",
-    "out_of_scope",
-]
+INTENT_REGISTRY = {
+    "greeting": {
+        "is_global": True,
+        "has_slot_safety_net": False,
+        "required_entities": [],
+    },
+    "book_appointment": {
+        "is_global": False,
+        "has_slot_safety_net": True,
+        "required_entities": [("doctor_name", "specialty"), "datetime"],
+    },
+    "check_availability": {
+        "is_global": False,
+        "has_slot_safety_net": True,
+        "required_entities": [("doctor_name", "specialty")],
+    },
+    "cancel_appointment": {
+        "is_global": True,
+        "has_slot_safety_net": False,
+        "required_entities": [],
+    },
+    "ask_pricing": {
+        "is_global": False,
+        "has_slot_safety_net": True,
+        "required_entities": [("doctor_name", "specialty")],
+    },
+    "change_selection": {
+        "is_global": False,
+        "has_slot_safety_net": True,
+        "required_entities": ["new_doctor_name"],
+    },
+    "reschedule_appointment": {
+        "is_global": False,
+        "has_slot_safety_net": True,
+        "required_entities": ["datetime"],
+    },
+    "navigate_back": {
+        "is_global": True,
+        "has_slot_safety_net": False,
+        "required_entities": [],
+    },
+    "provide_location": {
+        "is_global": False,
+        "has_slot_safety_net": True,
+        "required_entities": ["location"],
+    },
+    "describe_symptom": {
+        "is_global": False,
+        "has_slot_safety_net": True,
+        "required_entities": ["symptom"],
+    },
+    "out_of_scope": {
+        "is_global": False,
+        "has_slot_safety_net": False,
+        "required_entities": [],
+    },
+}
+
+VALID_INTENTS = list(INTENT_REGISTRY.keys())
 
 VALID_ENTITIES = [
     "doctor_name",
