@@ -790,6 +790,16 @@ def test_doctor_search_matching_and_formatting():
         ]
     city_index.get_all_doctors = mock_get_all_doctors
 
+    # _search_doctors_flow also calls city_index.get_index() (to extract a city name typed
+    # inline in the query, e.g. "Radha in Kishanganj") -- an empty index is fine here since
+    # both sub-tests below already provide city/GPS directly in context rather than relying
+    # on that extraction, but the real (unmocked) call would otherwise hit the network and
+    # get caught by _search_doctors_flow's own try/except, silently returning zero matches.
+    original_get_index = city_index.get_index
+    async def mock_get_index(*args, **kwargs):
+        return {}
+    city_index.get_index = mock_get_index
+
     rendered_doctors = []
     original_render_doctor_list = conversation._render_doctor_list
     async def mock_render_doctor_list(client, phone, context, doctors, current_step=None):
@@ -810,6 +820,7 @@ def test_doctor_search_matching_and_formatting():
         check(rendered_doctors[0]["doctorId"] == "2", "should be Dr. Radha Kapoor in Mumbai")
     finally:
         city_index.get_all_doctors = original_get_all_doctors
+        city_index.get_index = original_get_index
         conversation._render_doctor_list = original_render_doctor_list
 
 
@@ -1430,16 +1441,21 @@ def test_wit_nlu_integration():
                 {"doctorId": "6", "fullName": "Dr. Avinash Senior", "city": "Kishanganj", "latitude": 26.1, "longitude": 87.9}
             ]
         city_index.get_all_doctors = mock_get_docs
-        
+        original_get_index = city_index.get_index
+        async def mock_get_index(*a, **kw):
+            return {}
+        city_index.get_index = mock_get_index
+
         asyncio.run(db_mock.save_conversation_state("123", "choosing_doctor", {"lang": "en", "city": "Kishanganj"}))
         asyncio.run(conversation.handle_message(mock_client, "123", "User", "text", "Sorry dr Avinash tha"))
-        
+
         state = asyncio.run(db_mock.get_conversation_state("123"))
         check(state is not None, "entity state should exist")
         check(state["current_step"] == "choosing_doctor", "should transition to choosing_doctor after listing matches")
         check(state["context"].get("search_doctor_query") == "Avinash", "should set search query to Avinash")
-        
+
         city_index.get_all_doctors = original_get_all_doctors
+        city_index.get_index = original_get_index
 
         # 4. Test change selection without doctor name
         sent_texts.clear()
@@ -1699,6 +1715,10 @@ def test_failed_hot_swap_clears_stale_doctor_and_reprompts():
     async def mock_get_all_doctors(force_refresh=False):
         return [{"doctorId": "old_id", "fullName": "Dr. Old Doctor", "city": "Kishanganj"}]
     conversation.city_index.get_all_doctors = mock_get_all_doctors
+    original_get_index = conversation.city_index.get_index
+    async def mock_get_index(*a, **kw):
+        return {}
+    conversation.city_index.get_index = mock_get_index
 
     try:
         asyncio.run(db_mock.save_conversation_state("hs1", "choosing_slot", {
@@ -1747,6 +1767,7 @@ def test_failed_hot_swap_clears_stale_doctor_and_reprompts():
         conversation.whatsapp_client.send_buttons = original_send_buttons
         conversation.nlu_client.classify_message = original_classify
         conversation.city_index.get_all_doctors = original_get_all_doctors
+        conversation.city_index.get_index = original_get_index
 
 
 def test_single_match_message_includes_full_details():
@@ -2112,6 +2133,11 @@ def test_first_message_doctor_name_resolves_without_waiting_for_location():
     original_get_all_doctors = conversation.city_index.get_all_doctors
     conversation.city_index.get_all_doctors = mock_get_all_doctors
 
+    async def mock_get_index(*a, **kw):
+        return {}
+    original_get_index = conversation.city_index.get_index
+    conversation.city_index.get_index = mock_get_index
+
     async def mock_get_offered_slots(doctor_id, lang):
         from datetime import date
         return [{"date": date(2026, 8, 12), "is_today": True, "shift_name": "Morning", "button_id": "slot_today_morning", "label": "Morning (Today)"}]
@@ -2146,6 +2172,7 @@ def test_first_message_doctor_name_resolves_without_waiting_for_location():
         conversation.whatsapp_client.send_location_request = original_send_loc_req
         conversation.nlu_client.classify_message = original_classify
         conversation.city_index.get_all_doctors = original_get_all_doctors
+        conversation.city_index.get_index = original_get_index
         conversation._get_offered_slots = original_get_offered_slots
 
 
@@ -2220,6 +2247,11 @@ def test_sarvam_language_confidence_upgrade_skips_confirm_step():
     original_get_all_doctors = conversation.city_index.get_all_doctors
     conversation.city_index.get_all_doctors = mock_get_all_doctors
 
+    async def mock_get_index(*a, **kw):
+        return {}
+    original_get_index = conversation.city_index.get_index
+    conversation.city_index.get_index = mock_get_index
+
     async def mock_get_offered_slots(doctor_id, lang):
         return [{"date": date(2026, 8, 12), "is_today": True, "shift_name": "Morning", "button_id": "slot_today_morning", "label": "Morning (Today)"}]
 
@@ -2271,6 +2303,7 @@ def test_sarvam_language_confidence_upgrade_skips_confirm_step():
         conversation.whatsapp_client.send_flow = original_send_flow
         conversation.nlu_client.classify_message = original_classify
         conversation.city_index.get_all_doctors = original_get_all_doctors
+        conversation.city_index.get_index = original_get_index
         conversation._get_offered_slots = original_get_offered_slots
 
 
