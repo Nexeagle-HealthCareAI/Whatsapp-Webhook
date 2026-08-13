@@ -714,48 +714,13 @@ async def handle_message(
                     return
 
     try:
-        if current_step == "choosing_language":
-            await _handle_choosing_language(client, phone, input_type, input_value, context)
-        elif current_step == "confirming_language":
-            await _handle_confirming_language(client, phone, input_type, input_value, context)
-        elif current_step == "choosing_location":
-            await _handle_choosing_location(client, phone, input_type, input_value, context)
-        elif current_step == "choosing_search_mode":
-            await _handle_choosing_search_mode(client, phone, input_type, input_value, context)
-        elif current_step == "awaiting_symptom":
-            await _handle_awaiting_symptom(client, phone, input_type, input_value, context)
-        elif current_step == "awaiting_doctor_name":
-            await _handle_awaiting_doctor_name(client, phone, input_type, input_value, context)
-        elif current_step == "choosing_specialty_group":
-            await _handle_choosing_specialty_group(client, phone, input_type, input_value, context)
-        elif current_step == "choosing_specialty":
-            await _handle_choosing_specialty(client, phone, input_type, input_value, context)
-        elif current_step == "choosing_sort":
-            await _handle_choosing_sort(client, phone, input_type, input_value, context)
-        elif current_step == "confirming_wider_search":
-            await _handle_confirming_wider_search(client, phone, input_type, input_value, context)
-        elif current_step == "choosing_doctor":
-            await _handle_choosing_doctor(client, phone, input_type, input_value, context)
-        elif current_step == "choosing_hospital_from_search":
-            await _handle_choosing_hospital_from_search(client, phone, input_type, input_value, context)
-        elif current_step == "choosing_slot":
-            await _handle_choosing_slot(client, phone, input_type, input_value, context)
-        elif current_step == "awaiting_patient_details":
-            await _handle_awaiting_patient_details(client, phone, input_type, input_value, context)
-        elif current_step == "confirming":
-            await _handle_confirming(client, phone, sender_name, input_type, input_value, context)
-        elif current_step == "choosing_appointment_to_cancel":
-            await _handle_choosing_appointment_to_cancel(client, phone, input_type, input_value, context)
-        elif current_step == "choosing_appointment_to_reschedule":
-            await _handle_choosing_appointment_to_reschedule(client, phone, input_type, input_value, context)
-        elif current_step == "confirming_appointment_cancel":
-            await _handle_confirming_appointment_cancel(client, phone, input_type, input_value, context)
-        elif current_step == "confirming_appointment_reschedule":
-            await _handle_confirming_appointment_reschedule(client, phone, input_type, input_value, context)
-        elif current_step == "checkin_awaiting_location":
-            await _handle_checkin_awaiting_location(client, phone, input_type, input_value, context)
-        elif current_step == "checkin_choosing_appointment":
-            await _handle_checkin_choosing_appointment(client, phone, input_type, input_value, context)
+        step_config = STEP_REGISTRY.get(current_step)
+        if step_config:
+            handler = step_config["handler"]
+            if current_step == "confirming":
+                await handler(client, phone, sender_name, input_type, input_value, context)
+            else:
+                await handler(client, phone, input_type, input_value, context)
         else:
             # No state (new/returning user) or an unrecognized step — restart cleanly
             # rather than leave the conversation stuck.
@@ -1293,90 +1258,15 @@ async def _transition_to(phone: str, next_step: str, context: dict, current_step
 
 
 async def _trigger_step_prompt(client: httpx.AsyncClient, phone: str, step: str, context: dict) -> None:
-    lang = context.get("lang")
-    if step == "choosing_language":
-        await _start(client, phone)
-    elif step == "confirming_language":
-        guess_lang = context.get("guess_lang", "en")
-        prompt = t("confirm_lang_prompt", guess_lang)
-        buttons = [
-            ("lang_confirm_yes", t("confirm_yes", guess_lang)),
-            ("lang_confirm_change", t("confirm_change", guess_lang))
-        ]
-        await whatsapp_client.send_buttons(client, phone, prompt, buttons)
-    elif step == "choosing_location":
-        booking = _get_or_create_clipboard(context)
-        if booking["location"]["status"] == "notfound":
-            query = booking["location"]["raw"] or ""
-            await whatsapp_client.send_text(client, phone, t("location_not_found", lang, query=query))
-        await _send_location_request(client, phone, context)
-    elif step == "choosing_search_mode":
-        await _send_search_mode_prompt(client, phone, context)
-    elif step == "awaiting_symptom":
-        await whatsapp_client.send_text(client, phone, t("symptom_ask", lang))
-    elif step == "awaiting_doctor_name":
-        await whatsapp_client.send_text(client, phone, t("doctor_name_ask", lang))
-    elif step == "choosing_specialty_group":
-        await _send_specialty_list(client, phone, context)
-    elif step == "choosing_specialty":
-        group_members = context.get("specialty_groups", {})
-        rows = [_specialty_row(s) for s in group_members.values()]
-        await whatsapp_client.send_list(
-            client, phone, t("specialty_list_prompt", lang), t("specialty_list_button", lang),
-            rows, t("specialty_group_section", lang),
-        )
-    elif step == "choosing_sort":
-        await _send_sort_prompt(client, phone, context, context.get("specialty_category"))
-    elif step == "choosing_doctor":
-        docs = list(context.get("doctor_options", {}).values())
-        if docs:
-            await _render_doctor_list(client, phone, context, docs)
-        else:
-            await _send_search_mode_prompt(client, phone, context)
-    elif step == "choosing_slot":
-        await _send_slot_options(client, phone, context)
-    elif step == "awaiting_patient_details":
-        await _send_patient_details_flow(client, phone, context)
-    elif step == "confirming":
-        fee = context.get("doctor_fee")
-        await whatsapp_client.send_buttons(
-            client, phone,
-            t(
-                "confirm_prompt", lang,
-                patient=_patient_line(context, lang),
-                doctor=context.get("doctor_name", "-"),
-                where=_clinic_line(context, lang),
-                when=f"{context.get('date_label', '')}, {context.get('shift_label', '')}",
-                fee=f"{fee:.0f}" if fee is not None else "-",
-            ),
-            [
-                ("confirm", t("confirm_btn", lang)),
-                ("update_details", t("update_details_btn", lang)),
-                ("cancel", t("cancel_btn", lang)),
-            ],
-        )
-    elif step in ("choosing_appointment_to_cancel", "choosing_appointment_to_reschedule"):
-        options = context.get("appt_action_options", {})
-        if options:
-            await _send_appointment_choice_list(client, phone, lang, options)
-    elif step in ("confirming_appointment_cancel", "confirming_appointment_reschedule"):
-        action = context.get("appt_action", "cancel")
-        appt = context.get("appt_action_detail", {})
-        await _send_appointment_confirm_prompt(client, phone, lang, action, appt, context.get("appt_action_new_date"))
-    elif step == "checkin_awaiting_location":
-        await whatsapp_client.send_location_request(
-            client, phone, t("checkin_location_prompt", lang, hospital_name=context.get("checkin_hospital_name"))
-        )
-    elif step == "checkin_choosing_appointment":
-        rows = [
-            (appt_id, c.get("doctorName") or "Doctor", c.get("startAt") or "")
-            for appt_id, c in context.get("checkin_options", {}).items()
-        ]
-        if rows:
-            await whatsapp_client.send_list(
-                client, phone, t("checkin_choose_appointment", lang), t("checkin_choose_button", lang), rows,
-            )
+    step_config = STEP_REGISTRY.get(step)
+    if step_config and "prompt" in step_config:
+        try:
+            await step_config["prompt"](client, phone, context)
+        except Exception as exc:
+            logger.error("Failed to trigger step prompt for %s: %s", step, exc)
+            await _start(client, phone)
     else:
+        logger.warning("Unrecognized step prompt %s, falling back to _start", step)
         await _start(client, phone)
 
 
@@ -1544,3 +1434,195 @@ async def _handle_confirming_appointment_reschedule(client, phone, input_type, i
     else:
         await whatsapp_client.send_text(client, phone, result.get("message") or t("reschedule_appointment_failed", lang))
     await db.clear_conversation_state(phone)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Central Step Prompt Helpers and Registry (OCP Dispatch Consolidation)
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _prompt_confirming_language(client, phone, context):
+    guess_lang = context.get("guess_lang", "en")
+    prompt = t("confirm_lang_prompt", guess_lang)
+    buttons = [
+        ("lang_confirm_yes", t("confirm_yes", guess_lang)),
+        ("lang_confirm_change", t("confirm_change", guess_lang))
+    ]
+    await whatsapp_client.send_buttons(client, phone, prompt, buttons)
+
+
+async def _prompt_choosing_location(client, phone, context):
+    booking = _get_or_create_clipboard(context)
+    if booking["location"]["status"] == "notfound":
+        query = booking["location"]["raw"] or ""
+        await whatsapp_client.send_text(client, phone, t("location_not_found", context.get("lang"), query=query))
+    await _send_location_request(client, phone, context)
+
+
+async def _prompt_awaiting_symptom(client, phone, context):
+    await whatsapp_client.send_text(client, phone, t("symptom_ask", context.get("lang")))
+
+
+async def _prompt_awaiting_doctor_name(client, phone, context):
+    await whatsapp_client.send_text(client, phone, t("doctor_name_ask", context.get("lang")))
+
+
+async def _prompt_choosing_specialty(client, phone, context):
+    lang = context.get("lang")
+    group_members = context.get("specialty_groups", {})
+    rows = [_specialty_row(s) for s in group_members.values()]
+    await whatsapp_client.send_list(
+        client, phone, t("specialty_list_prompt", lang), t("specialty_list_button", lang),
+        rows, t("specialty_group_section", lang),
+    )
+
+
+async def _prompt_choosing_sort(client, phone, context):
+    await _send_sort_prompt(client, phone, context, context.get("specialty_category"))
+
+
+async def _prompt_choosing_doctor(client, phone, context):
+    docs = list(context.get("doctor_options", {}).values())
+    if docs:
+        await _render_doctor_list(client, phone, context, docs)
+    else:
+        await _send_search_mode_prompt(client, phone, context)
+
+
+async def _prompt_confirming(client, phone, context):
+    lang = context.get("lang")
+    fee = context.get("doctor_fee")
+    await whatsapp_client.send_buttons(
+        client, phone,
+        t(
+            "confirm_prompt", lang,
+            patient=_patient_line(context, lang),
+            doctor=context.get("doctor_name", "-"),
+            where=_clinic_line(context, lang),
+            when=f"{context.get('date_label', '')}, {context.get('shift_label', '')}",
+            fee=f"{fee:.0f}" if fee is not None else "-",
+        ),
+        [
+            ("confirm", t("confirm_btn", lang)),
+            ("update_details", t("update_details_btn", lang)),
+            ("cancel", t("cancel_btn", lang)),
+        ],
+    )
+
+
+async def _prompt_appointment_choice(client, phone, context):
+    options = context.get("appt_action_options", {})
+    if options:
+        await _send_appointment_choice_list(client, phone, context.get("lang"), options)
+
+
+async def _prompt_appointment_confirm(client, phone, context):
+    lang = context.get("lang")
+    action = context.get("appt_action", "cancel")
+    appt = context.get("appt_action_detail", {})
+    await _send_appointment_confirm_prompt(client, phone, lang, action, appt, context.get("appt_action_new_date"))
+
+
+async def _prompt_checkin_location(client, phone, context):
+    await whatsapp_client.send_location_request(
+        client, phone, t("checkin_location_prompt", context.get("lang"), hospital_name=context.get("checkin_hospital_name"))
+    )
+
+
+async def _prompt_checkin_appointment(client, phone, context):
+    lang = context.get("lang")
+    rows = [
+        (appt_id, c.get("doctorName") or "Doctor", c.get("startAt") or "")
+        for appt_id, c in context.get("checkin_options", {}).items()
+    ]
+    if rows:
+        await whatsapp_client.send_list(
+            client, phone, t("checkin_choose_appointment", lang), t("checkin_choose_button", lang), rows,
+        )
+
+
+STEP_REGISTRY = {
+    "choosing_language": {
+        "handler": _handle_choosing_language,
+        "prompt": lambda client, phone, context: _start(client, phone),
+    },
+    "confirming_language": {
+        "handler": _handle_confirming_language,
+        "prompt": _prompt_confirming_language,
+    },
+    "choosing_location": {
+        "handler": _handle_choosing_location,
+        "prompt": _prompt_choosing_location,
+    },
+    "choosing_search_mode": {
+        "handler": _handle_choosing_search_mode,
+        "prompt": _send_search_mode_prompt,
+    },
+    "awaiting_symptom": {
+        "handler": _handle_awaiting_symptom,
+        "prompt": _prompt_awaiting_symptom,
+    },
+    "awaiting_doctor_name": {
+        "handler": _handle_awaiting_doctor_name,
+        "prompt": _prompt_awaiting_doctor_name,
+    },
+    "choosing_specialty_group": {
+        "handler": _handle_choosing_specialty_group,
+        "prompt": _send_specialty_list,
+    },
+    "choosing_specialty": {
+        "handler": _handle_choosing_specialty,
+        "prompt": _prompt_choosing_specialty,
+    },
+    "choosing_sort": {
+        "handler": _handle_choosing_sort,
+        "prompt": _prompt_choosing_sort,
+    },
+    "confirming_wider_search": {
+        "handler": _handle_confirming_wider_search,
+        "prompt": lambda client, phone, context: None,
+    },
+    "choosing_doctor": {
+        "handler": _handle_choosing_doctor,
+        "prompt": _prompt_choosing_doctor,
+    },
+    "choosing_hospital_from_search": {
+        "handler": _handle_choosing_hospital_from_search,
+        "prompt": lambda client, phone, context: _start(client, phone),
+    },
+    "choosing_slot": {
+        "handler": _handle_choosing_slot,
+        "prompt": _send_slot_options,
+    },
+    "awaiting_patient_details": {
+        "handler": _handle_awaiting_patient_details,
+        "prompt": _send_patient_details_flow,
+    },
+    "confirming": {
+        "handler": _handle_confirming,
+        "prompt": _prompt_confirming,
+    },
+    "choosing_appointment_to_cancel": {
+        "handler": _handle_choosing_appointment_to_cancel,
+        "prompt": _prompt_appointment_choice,
+    },
+    "choosing_appointment_to_reschedule": {
+        "handler": _handle_choosing_appointment_to_reschedule,
+        "prompt": _prompt_appointment_choice,
+    },
+    "confirming_appointment_cancel": {
+        "handler": _handle_confirming_appointment_cancel,
+        "prompt": _prompt_appointment_confirm,
+    },
+    "confirming_appointment_reschedule": {
+        "handler": _handle_confirming_appointment_reschedule,
+        "prompt": _prompt_appointment_confirm,
+    },
+    "checkin_awaiting_location": {
+        "handler": _handle_checkin_awaiting_location,
+        "prompt": _prompt_checkin_location,
+    },
+    "checkin_choosing_appointment": {
+        "handler": _handle_checkin_choosing_appointment,
+        "prompt": _prompt_checkin_appointment,
+    },
+}
