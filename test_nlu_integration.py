@@ -87,6 +87,16 @@ class MockDB:
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
         return mock_pool
 
+    async def get_upcoming_active_appointment(self, phone):
+        # intent_router.py now delegates to this db.py function instead of running its
+        # own inline SQL (SOLID rebuild Phase 3) -- the mock has to speak the same
+        # interface, or intent_router's broad `except Exception` silently swallows the
+        # AttributeError and defaults to "no active appointment", masking this test's
+        # whole scenario instead of failing loudly.
+        if self.has_active_appt:
+            return True, self.active_appt_date
+        return False, None
+
 db_mock = MockDB()
 
 def test_classify_message_wrapper():
