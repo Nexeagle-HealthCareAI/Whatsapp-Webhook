@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 .venv/
 .claude/
+.DS_Store
+.ipynb_checkpoints/
+anaconda_projects/
