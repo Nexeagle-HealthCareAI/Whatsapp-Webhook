@@ -6,8 +6,8 @@ from pydantic import BaseModel
 
 from app import db, i18n
 from app.config import settings
-from app.redis_client import get_redis
-from app.whatsapp_client import send_text
+from app.messengers.redis_client import get_redis
+from app.messengers.whatsapp_client import send_text
 
 logger = logging.getLogger("webhook.hms_events")
 router = APIRouter()

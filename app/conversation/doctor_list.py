@@ -11,7 +11,7 @@ names tests reassign directly, and _send_doctor_list/_render_doctor_list touch
 db/whatsapp_client and would need the lazy-import discipline (see
 docs/architecture.md) to move safely. Not attempted in this phase.
 """
-from app.geo import haversine_km
+from app.decision_maker.geo import haversine_km
 
 
 def _doctor_fee(doctor: dict) -> float:

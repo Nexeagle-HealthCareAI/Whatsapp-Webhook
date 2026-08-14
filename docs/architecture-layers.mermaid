@@ -1,0 +1,135 @@
+flowchart TB
+    META(["Meta WhatsApp\nCloud API"])
+
+    subgraph L1["🚪 Layer 1 · FRONT DOOR — webhook.py, worker.py"]
+        direction LR
+        WH["webhook.py\nverify HMAC, dedupe (SET NX),\nparse message, enqueue"]
+        WK["worker.py\nhandle_job: dedupe again,\nhand off to the Conductor"]
+        WH -->|"Redis queue"| WK
+    end
+
+    subgraph L2["👂 Layer 2 · LISTENER — nlu_client.py, nlu_validator.py, nlu_config.py, model_config.py"]
+        NLU["classify_message()\nvalidate_nlu_response()\nVALID_INTENTS / VALID_LANGUAGES"]
+    end
+
+    SARVAM(["Sarvam AI\n(LLM)"])
+
+    subgraph L3["⚖️ Layer 3 · REFEREE — intent_router.py, flow_policy.py"]
+        IR["route_intent()\nRedis nlu:session:&lt;wa_id&gt;\nmulti-turn slot memory"]
+        FP["flow_policy.is_global_override()\ncancel / back / greeting\nalways win the turn"]
+        FP -.->|"clear_session() first"| IR
+    end
+
+    subgraph L4["🧭 Layer 4 · CONDUCTOR — app/conversation/__init__.py"]
+        HM["handle_message()\n_step_for_action()\n_trigger_step_prompt()\n_advance_booking_flow()"]
+    end
+
+    subgraph L5["🛠️ Layer 5 · SPECIALISTS — app/conversation/*.py (9 files)"]
+        direction LR
+        DH1["language.py\nlocation.py\ndoctor_search.py"]
+        DH2["specialty_browsing.py\ndoctor_list.py\nslot_selection.py"]
+        DH3["patient_details.py\nbooking_confirmation.py\ncheckin.py"]
+    end
+
+    subgraph L6["🧠 Layer 6 · DECISION MAKER (pure, zero I/O) — booking_slots.py, resolver.py, geo.py"]
+        DEC["next_action() clipboard priority walk\nresolve_doctor / resolve_location_*\nhaversine_km"]
+    end
+
+    subgraph L7["📡 Layer 7 · MESSENGERS — hms_client.py, whatsapp_client.py, db.py, redis_client.py, symptom_client.py, city_index.py"]
+        direction LR
+        AD1["hms_client.py\nwhatsapp_client.py"]
+        AD2["db.py\nredis_client.py"]
+        AD3["symptom_client.py\ncity_index.py"]
+    end
+
+    HMS[("1HMS gateway API")]
+    SQL[("SQL Server")]
+    REDIS_EXT[("Redis")]
+    NEW(["NexEagleWebsite\nsymptom-routing API"])
+
+    %% Cross-cutting concerns — hexagon shape + separate colour family, drawn OUTSIDE the linear flow on purpose
+    SAFETY{{"🚨 SAFETY GUARD\napp/safety.py\nchecks every message\nBEFORE the Listener"}}
+    I18N{{"🌐 TRANSLATOR\napp/i18n.py\nevery user-facing\nstring, 4 languages"}}
+    CONFIG{{"⚙️ SETTINGS BOOK\napp/config.py\nread by 11 files"}}
+
+    %% ==================================================================================
+    %% MAIN PIPELINE — one message's straight-line journey, numbered 1 -> 9 so it can be
+    %% narrated step by step. Thick solid arrows only; nothing else on the diagram is
+    %% numbered, so the numbers always mean "the main road," never a side trip.
+    %% ==================================================================================
+    META ==>|"1 · incoming message"| WH
+    WK ==>|"2"| HM
+    HM ==>|"3"| L2
+    L2 ==>|"4 · raw guess"| L3
+    L3 ==>|"5 · routed intent"| L4
+    L4 ==>|"6"| L5
+    L5 ==>|"7"| L6
+    L5 ==>|"8"| L7
+    L7 ==>|"9 · reply"| META
+
+    %% ==================================================================================
+    %% SHORTCUTS — the Conductor and Decision Maker sometimes call the next layer directly
+    %% without going through every layer in between (e.g. a QR-code trigger skips straight
+    %% from the Conductor to a Messenger). Real, but NOT the common path, so: dotted, no
+    %% number, so it never gets mistaken for a missed step in the main count above.
+    %% ==================================================================================
+    L4 -.->|"shortcut, some steps"| L6
+    L4 -.->|"shortcut, some steps"| L7
+    L6 -.->|"shortcut, some steps"| L7
+
+    %% ==================================================================================
+    %% EXTERNAL ROUND-TRIPS — every one of these is a REQUEST that gets a RESPONSE back
+    %% (an LLM completion, a JSON body, DB rows, a Redis value). Drawn as ONE double-headed
+    %% arrow so "call out, get an answer back" reads as a single relationship, never as a
+    %% one-way, fire-and-forget hand-off with the answer going nowhere.
+    %% ==================================================================================
+    L2 <==>|"ask Sarvam to classify →\n← intent + entities back"| SARVAM
+    L7 <==>|"fetch doctors/specialties →\n← JSON response back"| HMS
+    L7 <==>|"read/write appointment →\n← rows back"| SQL
+    L7 <==>|"session/dedupe keys →\n← value back"| REDIS_EXT
+    L7 <==>|"route symptom →\n← specialty labels back"| NEW
+
+    %% ==================================================================================
+    %% CROSS-CUTTING — dotted, because these are CONSULTED, not handed work to move along.
+    %% ==================================================================================
+    HM -.->|"checks first,\nevery message"| SAFETY
+    L5 -.->|"t(key, lang)"| I18N
+    L4 -.->|"t(key, lang)"| I18N
+    L1 -.-> CONFIG
+    L2 -.-> CONFIG
+    L7 -.-> CONFIG
+
+    %% ---- Legend, so the arrow styles above don't need to be explained verbally ----
+    subgraph LEGEND["Legend"]
+        direction LR
+        LEG_A["Step N"] ==>|"solid + numbered =\nthe ONE main pipeline"| LEG_B["Step N+1"]
+        LEG_C["Layer"] -.->|"dotted = a shortcut,\nor a cross-cutting lookup"| LEG_D["Layer / concern"]
+        LEG_E["Layer"] <==>|"double-headed =\ncalls out AND gets\na response back"| LEG_F["External system"]
+    end
+
+    %% Sequential layers: a deliberate colour progression (blue -> purple) so the flow
+    %% order is visible at a glance, without reading a single label.
+    style L1 fill:#cfe3ff,stroke:#1f5fa8,stroke-width:2px,color:#0b2e52
+    style L2 fill:#cdeaf7,stroke:#0f7ea3,stroke-width:2px,color:#0b3c4d
+    style L3 fill:#cdf0e0,stroke:#2f8f6e,stroke-width:2px,color:#0e4030
+    style L4 fill:#d8f0c2,stroke:#5f8a1f,stroke-width:2px,color:#2c3d0e
+    style L5 fill:#f5eab0,stroke:#b7950b,stroke-width:2px,color:#4d3f05
+    style L6 fill:#f7ddb5,stroke:#c2650b,stroke-width:2px,color:#4d2803
+    style L7 fill:#e3d3f5,stroke:#7a3fb8,stroke-width:2px,color:#3a1a52
+
+    %% Cross-cutting: same alert-ish family, visually separate from the rainbow above
+    style SAFETY fill:#ffb3b3,stroke:#b3362c,stroke-width:2px,color:#4d0f0a
+    style I18N fill:#f8d7a0,stroke:#b8722a,stroke-width:2px,color:#4d2e0a
+    style CONFIG fill:#e0e0e0,stroke:#666666,stroke-width:2px,color:#2b2b2b
+
+    %% External systems: grey, stadium/cylinder shapes so "outside our code" is visible
+    %% at a glance, without one big enclosing box that would drag connecting lines across
+    %% the whole diagram — each one sits right next to the layer that actually calls it.
+    style META fill:#eeeeee,stroke:#999999,color:#2b2b2b
+    style SARVAM fill:#eeeeee,stroke:#999999,color:#2b2b2b
+    style HMS fill:#eeeeee,stroke:#999999,color:#2b2b2b
+    style SQL fill:#eeeeee,stroke:#999999,color:#2b2b2b
+    style REDIS_EXT fill:#eeeeee,stroke:#999999,color:#2b2b2b
+    style NEW fill:#eeeeee,stroke:#999999,color:#2b2b2b
+
+    style LEGEND fill:#ffffff,stroke:#cccccc,color:#2b2b2b

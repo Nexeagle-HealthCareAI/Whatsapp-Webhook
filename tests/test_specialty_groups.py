@@ -16,6 +16,8 @@ import os
 import sys
 import types
 
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 # Stub aioodbc before importing app.* — the native ODBC driver isn't needed for these checks
 # and isn't present outside the Docker image.
 _fake = types.ModuleType("aioodbc")
@@ -62,9 +64,10 @@ os.environ.setdefault("INTERNAL_EVENTS_TOKEN", "test")
 
 from datetime import date, timedelta  # noqa: E402
 
-from app import city_index, conversation, i18n, nlu_client  # noqa: E402
+from app import conversation, i18n, nlu_client  # noqa: E402
 from app.config import settings  # noqa: E402
-from app.whatsapp_client import (  # noqa: E402
+from app.messengers import city_index  # noqa: E402
+from app.messengers.whatsapp_client import (  # noqa: E402
     _MAX_BUTTON_TITLE,
     _MAX_LIST_ROWS,
     _MAX_ROW_DESC,
@@ -347,7 +350,7 @@ def test_radius_bands_are_ordered_and_capped():
 def test_mislabelled_doctor_falls_outside_every_band():
     """The Delhi-coordinate record labelled 'Kishanganj' must sit outside the widest band,
     so it's excluded by ordinary distance rather than by any special-case rule."""
-    from app.geo import haversine_km
+    from app.decision_maker.geo import haversine_km
 
     distance = haversine_km(26.10, 87.93, 28.7, 77.3)
     widest = settings.doctor_search_radii_km[-1]
@@ -825,7 +828,7 @@ def test_doctor_search_matching_and_formatting():
 
 
 def test_extract_location_from_query():
-    from app.resolver import extract_location_from_query
+    from app.decision_maker.resolver import extract_location_from_query
     index = {"Kishanganj": [], "Purnea": [], "Delhi NCR": []}
     
     city, cleaned = extract_location_from_query("doctor Sharma in Kishanganj", index)

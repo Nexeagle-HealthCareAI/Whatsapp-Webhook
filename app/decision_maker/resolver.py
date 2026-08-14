@@ -25,9 +25,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.city_index import match_typed_city, nearest_city
+from app.decision_maker.city_resolver import match_typed_city, nearest_city
 from app.config import settings
-from app.geo import haversine_km
+from app.decision_maker.geo import haversine_km
 
 
 @dataclass

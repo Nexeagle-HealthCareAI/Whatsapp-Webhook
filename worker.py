@@ -4,9 +4,10 @@ import logging
 
 import httpx
 
-from app import city_index, conversation, db
+from app import conversation, db
 from app.config import settings
-from app.redis_client import get_redis
+from app.messengers import city_index
+from app.messengers.redis_client import get_redis
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("worker")

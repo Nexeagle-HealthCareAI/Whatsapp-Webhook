@@ -14,9 +14,12 @@ Teen categories test hoti hain:
 """
 
 import os
+import sys
 import requests
 import json
 import time
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from app.nlu_config import SYSTEM_PROMPT, VALID_INTENTS, VALID_ENTITIES
 from app.nlu_validator import validate_nlu_response

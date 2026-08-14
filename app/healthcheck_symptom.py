@@ -1,6 +1,6 @@
 import asyncio
 
-from app import symptom_client
+from app.messengers import symptom_client
 
 
 async def check() -> None:

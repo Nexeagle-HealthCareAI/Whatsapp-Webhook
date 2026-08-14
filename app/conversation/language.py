@@ -18,7 +18,7 @@ import re
 from uuid import uuid4
 
 from app.i18n import LANGUAGE_LABELS, LANG_PROMPT, t
-from app import booking_slots
+from app.decision_maker import booking_slots
 from app.conversation.shared import _match_choice
 from app.types import ConversationContext
 

@@ -7,12 +7,15 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from app import booking_slots, city_index, db, hms_client, i18n, symptom_client, whatsapp_client
-from app.resolver import match_doctor_by_query as _match_doctor_by_query
-from app.resolver import resolve_doctor
+from app import db, i18n
+from app.messengers import city_index, hms_client, symptom_client, whatsapp_client
+from app.decision_maker import booking_slots
+from app.decision_maker.resolver import match_doctor_by_query as _match_doctor_by_query
+from app.decision_maker.resolver import resolve_doctor
 from app.config import settings
-from app.hms_client import HmsApiError
-from app import nlu_client, intent_router, safety, flow_policy
+from app.messengers.hms_client import HmsApiError
+from app import nlu_client, safety
+from app.referee import intent_router, flow_policy
 from app.model_config import PRIMARY_NLU
 from app.i18n import LANGUAGE_LABELS, LANG_PROMPT, t
 from app.types import ConversationContext

@@ -27,7 +27,7 @@ from datetime import date, timedelta
 import httpx
 
 from app import db, i18n
-from app.whatsapp_client import send_text
+from app.messengers.whatsapp_client import send_text
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("scheduler")

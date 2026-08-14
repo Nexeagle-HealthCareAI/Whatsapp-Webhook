@@ -39,7 +39,7 @@ sys.modules.setdefault("redis", _fake_redis_mod)
 sys.modules.setdefault("redis.asyncio", _fake_redis_mod.asyncio)
 
 # Setup path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__))))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # Set test environment
 os.environ.setdefault("WHATSAPP_TOKEN", "test")
@@ -50,7 +50,8 @@ os.environ.setdefault("SQLSERVER_CONN_STRING", "test")
 os.environ.setdefault("INTERNAL_EVENTS_TOKEN", "test")
 
 # Import system under test
-from app import nlu_client, intent_router, db, flow_policy
+from app import nlu_client, db
+from app.referee import intent_router, flow_policy
 from app.config import settings
 
 failures = []

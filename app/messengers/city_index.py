@@ -11,8 +11,8 @@ from typing import Any
 import httpx
 
 from app.config import settings
-from app.redis_client import get_redis
-from app.city_resolver import build_from_doctors, nearest_city, cities_within, match_typed_city
+from app.messengers.redis_client import get_redis
+from app.decision_maker.city_resolver import build_from_doctors, nearest_city, cities_within, match_typed_city
 
 logger = logging.getLogger("city_index")
 

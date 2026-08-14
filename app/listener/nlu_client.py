@@ -7,7 +7,7 @@ from app.config import settings
 from app.listener.model_config import FALLBACK_NLU, PRIMARY_NLU
 from app.listener.nlu_config import SYSTEM_PROMPT
 from app.listener.nlu_validator import validate_nlu_response
-from app.normalizer import normalize_datetime_to_date, normalize_time_of_day
+from app.decision_maker.normalizer import normalize_datetime_to_date, normalize_time_of_day
 
 logger = logging.getLogger("nlu_client")
 

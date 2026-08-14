@@ -1,13 +1,17 @@
 """
-Sanity checks for app/resolver.py — pure decision logic (0/1/N cardinality), no real
-network or DB. Stubs aioodbc/redis the same way test_specialty_groups.py does, since
-resolver.py imports app.city_index which otherwise pulls in real redis/aioodbc at
-import time. Run directly: python3 test_resolver.py
+Sanity checks for app/decision_maker/resolver.py — pure decision logic (0/1/N
+cardinality), no real network or DB. resolver.py itself has zero I/O dependency (it
+imports match_typed_city/nearest_city from app.decision_maker.city_resolver, a sibling
+pure module, not from the Messenger-layer app.messengers.city_index) -- these stubs are
+kept as a defensive belt-and-suspenders in case that ever changes, matching
+test_specialty_groups.py's convention. Run directly: python3 tests/test_resolver.py
 """
 
 import os
 import sys
 import types
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 _fake_odbc = types.ModuleType("aioodbc")
 _fake_odbc.Pool = object
@@ -33,7 +37,7 @@ for _key in [
 ]:
     os.environ.setdefault(_key, "test")
 
-from app.resolver import resolve_doctor, resolve_location_from_gps, resolve_location_from_text  # noqa: E402
+from app.decision_maker.resolver import resolve_doctor, resolve_location_from_gps, resolve_location_from_text  # noqa: E402
 
 failures = []
 

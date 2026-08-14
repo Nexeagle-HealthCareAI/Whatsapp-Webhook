@@ -2,9 +2,9 @@ import json
 import logging
 import time
 import re
-from app.redis_client import get_redis
+from app.messengers.redis_client import get_redis
 from app import db, nlu_client
-from app.normalizer import normalize_datetime_to_date
+from app.decision_maker.normalizer import normalize_datetime_to_date
 from app.config import settings
 
 logger = logging.getLogger("intent_router")

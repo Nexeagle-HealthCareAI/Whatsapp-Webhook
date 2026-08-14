@@ -7,7 +7,7 @@ import time
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 
 from app.config import settings
-from app.redis_client import get_redis
+from app.messengers.redis_client import get_redis
 
 logger = logging.getLogger("webhook.whatsapp_ingest")
 router = APIRouter()

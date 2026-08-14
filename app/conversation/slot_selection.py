@@ -20,7 +20,7 @@ stay as plain same-module calls.
 import logging
 from datetime import time
 
-from app import booking_slots
+from app.decision_maker import booking_slots
 from app.i18n import t
 from app.conversation.shared import _match_choice
 

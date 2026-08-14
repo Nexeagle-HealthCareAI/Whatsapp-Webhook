@@ -2,7 +2,7 @@ import logging
 
 from fastapi import FastAPI
 
-from app.webhook import router as webhook_router
+from app.front_door import router as webhook_router
 
 logging.basicConfig(level=logging.INFO)
 

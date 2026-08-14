@@ -22,9 +22,9 @@ docs/architecture.md for the full explanation.
 """
 import re
 
-from app import hms_client
-from app import booking_slots
-from app.hms_client import HmsApiError
+from app.messengers import hms_client
+from app.decision_maker import booking_slots
+from app.messengers.hms_client import HmsApiError
 from app.i18n import t
 from app.conversation.doctor_list import _doctor_fee
 

@@ -4,6 +4,8 @@ import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.config import settings
+from app.decision_maker.symptom_matcher import match_category  # noqa: F401 -- re-exported so
+# `symptom_client.match_category(...)` keeps working at every existing call site unchanged.
 
 logger = logging.getLogger("symptom_client")
 
@@ -71,20 +73,3 @@ async def route_symptom(query: str) -> list[str]:
         if label and label not in labels:
             labels.append(label)
     return labels
-
-
-def match_category(label: str, available_categories: list[str]) -> str | None:
-    """Matches a router label like "Cardiologist (Heart)" against the live
-    PatientFacingCategory list from hms_client.list_specialties() — the router's dataset
-    targets that taxonomy conceptually, but isn't guaranteed to match the exact string
-    (e.g. the parenthetical qualifier), so this is a best-effort match, not an exact lookup."""
-    target = label.split("(")[0].strip().lower()
-    if not target:
-        return None
-    for category in available_categories:
-        if category.lower() == target:
-            return category
-    for category in available_categories:
-        if target in category.lower() or category.lower() in target:
-            return category
-    return None

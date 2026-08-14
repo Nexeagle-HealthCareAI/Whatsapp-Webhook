@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Response
 from fastapi.responses import RedirectResponse
 
-from app import hms_client
+from app.messengers import hms_client
 from app.config import settings
-from app.routes.qr_handlers import (
+from app.front_door.qr_handlers import (
     CheckinRedirectHandler,
     DoctorBookingRedirectHandler,
     DocumentRedirectHandler,

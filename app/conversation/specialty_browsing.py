@@ -15,7 +15,8 @@ docstring for why. Calls between functions that both live in THIS file
 (_send_specialty_list, _send_sort_prompt, _handle_awaiting_symptom) stay as plain
 same-module calls.
 """
-from app import hms_client, i18n, symptom_client
+from app import i18n
+from app.messengers import hms_client, symptom_client
 from app.i18n import t
 from app.conversation.shared import _match_choice
 from app.conversation.doctor_search import _is_doctor_search_query

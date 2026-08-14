@@ -5,9 +5,9 @@ from urllib.parse import quote
 from fastapi import Response
 from fastapi.responses import RedirectResponse
 
-from app import hms_client
+from app.messengers import hms_client
 from app.config import settings
-from app.hms_client import HmsApiError
+from app.messengers.hms_client import HmsApiError
 
 logger = logging.getLogger("webhook.qr_handlers")
 

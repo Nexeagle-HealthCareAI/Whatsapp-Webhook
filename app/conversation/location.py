@@ -17,7 +17,8 @@ _get_or_create_clipboard, _advance_booking_flow, _transition_to), goes through a
 function-body-local `from app import conversation` + `conversation.<name>(...)`.
 See docs/architecture.md and app/conversation/checkin.py's module docstring.
 """
-from app import booking_slots, city_index
+from app.messengers import city_index
+from app.decision_maker import booking_slots
 from app.i18n import t
 from app.types import ConversationContext
 

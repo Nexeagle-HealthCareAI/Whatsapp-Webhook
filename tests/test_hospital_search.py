@@ -57,7 +57,7 @@ _fake_redis_mod.asyncio.Redis = MockRedis
 sys.modules.setdefault("redis", _fake_redis_mod)
 sys.modules.setdefault("redis.asyncio", _fake_redis_mod.asyncio)
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__))))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 for _key in [
     "WHATSAPP_TOKEN", "WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_VERIFY_TOKEN",
@@ -66,7 +66,7 @@ for _key in [
     os.environ.setdefault(_key, "test")
 
 from app import conversation  # noqa: E402
-from app.resolver import match_hospital_by_query  # noqa: E402
+from app.decision_maker.resolver import match_hospital_by_query  # noqa: E402
 
 failures = []
 

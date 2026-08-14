@@ -18,10 +18,10 @@ calls.
 """
 import re
 
-from app import city_index, hms_client
+from app.messengers import city_index, hms_client
 from app.i18n import t
-from app.resolver import resolve_doctor, extract_location_from_query, match_hospital_by_query
-from app import booking_slots
+from app.decision_maker.resolver import resolve_doctor, extract_location_from_query, match_hospital_by_query
+from app.decision_maker import booking_slots
 
 
 def _is_doctor_search_query(text: str) -> bool:

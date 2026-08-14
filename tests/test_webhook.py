@@ -2,6 +2,8 @@ import os
 import sys
 import types
 
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 # Stub aioodbc before importing app.* — the native ODBC driver isn't needed for these checks
 _fake = types.ModuleType("aioodbc")
 _fake.Pool = object
@@ -59,9 +61,10 @@ import time
 
 from fastapi.testclient import TestClient
 
-from app import main, hms_client
+from app import main
 from app.config import settings
-from app.hms_client import HmsApiError
+from app.messengers import hms_client
+from app.messengers.hms_client import HmsApiError
 
 client = TestClient(main.app)
 failures = []

@@ -1,6 +1,6 @@
 import logging
 from typing import Any
-from app.geo import haversine_km
+from app.decision_maker.geo import haversine_km
 
 logger = logging.getLogger("city_resolver")
 
