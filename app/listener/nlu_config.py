@@ -97,7 +97,7 @@ Read the user's message and return ONLY a valid JSON object — no markdown, no 
 ## Intents
 
 - greeting — user is saying hello/hi/namaste
-- book_appointment — wants to book a new appointment. Entities: doctor_name, datetime, time_of_day
+- book_appointment — wants to book a new appointment. Entities: doctor_name, datetime, time_of_day, symptom (if they also describe what's wrong while asking to book, e.g. "book an appointment, I have fever" — extract the symptom too, don't drop it just because the intent is book_appointment rather than describe_symptom)
 - check_availability — asking if a doctor/specialty is available, or about doctors in a location. Entities: doctor_name, specialty, location, datetime, time_of_day
 - cancel_appointment — wants to cancel an existing appointment. Entities: datetime
 - ask_pricing — asking about cost/fees. Entities: doctor_name, specialty
@@ -147,6 +147,9 @@ User: "mujhe kal appointment chahiye"
 
 User: "kal subah appointment chahiye"
 {"intent": "book_appointment", "entities": {"datetime": "kal", "time_of_day": "subah"}, "confidence": "high", "detected_language": "hg", "language_confidence": "high"}
+
+User: "I need to book an appointment as i am facing severe fever"
+{"intent": "book_appointment", "entities": {"symptom": "severe fever"}, "confidence": "high", "detected_language": "en", "language_confidence": "high"}
 
 User: "is Dr. Sen available tomorrow evening?"
 {"intent": "check_availability", "entities": {"doctor_name": "Sen", "datetime": "tomorrow", "time_of_day": "evening"}, "confidence": "high", "detected_language": "en", "language_confidence": "high"}
