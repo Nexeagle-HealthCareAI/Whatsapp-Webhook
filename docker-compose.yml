@@ -67,6 +67,27 @@ services:
       # and every message silently falls back to out_of_scope (see nlu_logs).
       SARVAM_API_KEY: "${SARVAM_API_KEY}"
 
+  sender:
+    build: .
+    container_name: booking-sender
+    restart: unless-stopped
+    command: ["python", "sender.py"]
+    depends_on:
+      - redis
+    # Drains app/messengers/outbound_queue.py's whatsapp:outbox at a steady, Meta-safe
+    # pace -- functionally only needs Redis and the WhatsApp send credentials.
+    # SQLSERVER_CONN_STRING/INTERNAL_EVENTS_TOKEN are still required below because
+    # app.config.Settings validates every required field at import time, even ones this
+    # process never touches. See sender.py / app/messengers/outbound_queue.py.
+    environment:
+      WHATSAPP_TOKEN: "${WHATSAPP_TOKEN}"
+      WHATSAPP_PHONE_NUMBER_ID: "${WHATSAPP_PHONE_NUMBER_ID}"
+      WHATSAPP_VERIFY_TOKEN: "${WHATSAPP_VERIFY_TOKEN}"
+      WHATSAPP_APP_SECRET: "${WHATSAPP_APP_SECRET}"
+      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
+      SQLSERVER_CONN_STRING: "${SQLSERVER_CONN_STRING}"
+      INTERNAL_EVENTS_TOKEN: "${INTERNAL_EVENTS_TOKEN}"
+
   scheduler:
     build: .
     container_name: booking-scheduler

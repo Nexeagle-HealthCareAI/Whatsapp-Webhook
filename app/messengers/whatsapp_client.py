@@ -3,6 +3,8 @@ import logging
 import httpx
 
 from app.config import settings
+from app.messengers import outbound_queue
+from app.messengers.redis_client import get_redis
 
 logger = logging.getLogger("whatsapp_client")
 
@@ -32,8 +34,11 @@ async def _send(client: httpx.AsyncClient, payload: dict) -> httpx.Response:
 
 
 async def send_text(client: httpx.AsyncClient, to: str, body: str) -> None:
-    await _send(
-        client,
+    # `client` is unused here -- kept only so every existing call site keeps working
+    # unchanged. The actual HTTP call now happens later, in sender.py, with its own
+    # client. See app/messengers/outbound_queue.py for why.
+    await outbound_queue.enqueue(
+        get_redis(),
         {"messaging_product": "whatsapp", "to": to, "text": {"body": body}},
     )
 
@@ -42,7 +47,10 @@ async def send_typing_indicator(client: httpx.AsyncClient, message_id: str) -> N
     """Marks the inbound message read and shows "typing…" to the sender — one combined
     call (per Meta's Cloud API), not two. Meta dismisses the indicator once we actually
     reply or after 25s, whichever comes first. Best-effort: a failure here shouldn't stop
-    the reply itself, so callers should swallow exceptions from this rather than propagate."""
+    the reply itself, so callers should swallow exceptions from this rather than propagate.
+
+    Sent directly, NOT through outbound_queue.py — an indicator that shows up after the
+    reply it was supposed to precede is worse than no indicator at all."""
     await _send(
         client,
         {
@@ -80,8 +88,8 @@ async def send_list(
     """rows: list of (id, title) or (id, title, description) — id is what comes back as
     list_reply.id on selection."""
     section_rows = [_row_dict(row) for row in rows[:_MAX_LIST_ROWS]]
-    await _send(
-        client,
+    await outbound_queue.enqueue(
+        get_redis(),
         {
             "messaging_product": "whatsapp",
             "to": to,
@@ -106,8 +114,8 @@ async def send_buttons(
         {"type": "reply", "reply": {"id": btn_id, "title": title[:_MAX_BUTTON_TITLE]}}
         for btn_id, title in buttons[:_MAX_BUTTONS]
     ]
-    await _send(
-        client,
+    await outbound_queue.enqueue(
+        get_redis(),
         {
             "messaging_product": "whatsapp",
             "to": to,
@@ -129,8 +137,8 @@ async def send_location_request(client: httpx.AsyncClient, to: str, body_text: s
     share; a true silent auto-detect isn't something Meta's platform (or basic consent
     practice) permits. Patients who'd rather not share GPS can just reply with a typed
     city/area name instead — handled as free text alongside this in conversation.py."""
-    await _send(
-        client,
+    await outbound_queue.enqueue(
+        get_redis(),
         {
             "messaging_product": "whatsapp",
             "to": to,
@@ -149,8 +157,8 @@ async def send_location(
 ) -> None:
     """Sends a droppable map pin — used at booking confirmation so the patient has the
     clinic's location without needing to ask reception for directions."""
-    await _send(
-        client,
+    await outbound_queue.enqueue(
+        get_redis(),
         {
             "messaging_product": "whatsapp",
             "to": to,
@@ -172,7 +180,11 @@ async def send_document(
     this is only ever called from inside an active 24h conversation window (the patient just
     sent us a message to trigger it). Used for the QR-scan pull flows (DISCHARGE/RX/RXV
     codes in conversation.py) — distinct from the template-based pushes easyHMSAPI's own
-    IWhatsAppMessagingService sends directly on upload. Returns True if successful."""
+    IWhatsAppMessagingService sends directly on upload. Returns True if successful.
+
+    Sent directly, NOT through outbound_queue.py — the caller (app/conversation/checkin.py)
+    branches on this return value immediately, sending a fallback text message if the
+    document send failed. A queued send can't answer "did it work" synchronously."""
     document: dict = {"link": url, "filename": filename}
     if caption:
         document["caption"] = caption
@@ -198,7 +210,11 @@ async def send_flow(
     flow_token: str,
     initial_data: dict | None = None,
 ) -> bool:
-    """Sends a standalone WhatsApp Flow interactive message. Returns True if successful."""
+    """Sends a standalone WhatsApp Flow interactive message. Returns True if successful.
+
+    Sent directly, NOT through outbound_queue.py — same reason as send_document above:
+    app/conversation/__init__.py's caller checks this return value immediately and falls
+    back to a plain text prompt if the Flow send failed."""
     parameters = {
         "flow_message_version": "3",
         "flow_token": flow_token,

@@ -92,5 +92,14 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     nlu_confidence_threshold: float = 0.75
 
+    # Outbound WhatsApp send pacing (app/messengers/outbound_queue.py, sender.py). Meta's
+    # own Cloud API throughput ceiling is commonly cited around 80 messages/sec per business
+    # phone number — sending faster than that gets some messages rate-limited (HTTP 429).
+    # Kept a little under that documented figure on purpose, not right at the edge: this
+    # number is shared across every conversation happening at once, and other traffic to the
+    # same number (template sends, 1HMS event pushes) isn't accounted for here.
+    whatsapp_send_rate_limit: int = 70
+    whatsapp_send_max_attempts: int = 5
+
 
 settings = Settings()
