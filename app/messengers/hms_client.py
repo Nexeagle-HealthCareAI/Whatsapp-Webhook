@@ -1,5 +1,6 @@
 import logging
 from datetime import date as date_type
+from functools import lru_cache
 from typing import Any
 
 import httpx
@@ -21,6 +22,16 @@ class HmsApiError(Exception):
     """easyHMSAPI's public API returned success:false or an HTTP error status."""
 
 
+@lru_cache
+def _get_client() -> httpx.AsyncClient:
+    """One shared, reused connection to 1HMS for the process's whole lifetime, instead of a
+    fresh TCP+TLS handshake on every single call — same lazy-singleton pattern as
+    app.messengers.redis_client.get_redis(). Default timeout is 10s (matching most calls
+    below); the handful of calls that need longer (booking, cancel/reschedule, check-in)
+    override it per-request instead of per-client."""
+    return httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=10)
+
+
 def _headers() -> dict[str, str]:
     headers = {"Accept": "application/json"}
     if settings.hms_api_key:
@@ -30,8 +41,8 @@ def _headers() -> dict[str, str]:
 
 @_retry_network_errors
 async def list_specialties() -> list[dict[str, Any]]:
-    async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=10) as client:
-        response = await client.get("/public/specialties", headers=_headers())
+    client = _get_client()
+    response = await client.get("/public/specialties", headers=_headers())
     response.raise_for_status()
     data = response.json()
     if not data.get("success", True):
@@ -44,8 +55,8 @@ async def list_hospitals() -> list[dict[str, Any]]:
     """Platform-wide, publicly-listed hospitals -- resolver.match_hospital_by_query fuzzy-matches
     a patient's free text against this list. There's no bulk hospital-listing endpoint elsewhere
     in this file (get_hospital_by_code is a single exact-code lookup only)."""
-    async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=10) as client:
-        response = await client.get("/public/hospitals", headers=_headers())
+    client = _get_client()
+    response = await client.get("/public/hospitals", headers=_headers())
     response.raise_for_status()
     data = response.json()
     if not data.get("success", True):
@@ -66,8 +77,8 @@ async def list_doctors(
     params: dict[str, Any] = {"specialtyCategory": specialty_category, "pageSize": page_size}
     if city:
         params["city"] = city
-    async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=10) as client:
-        response = await client.get("/public/doctors", params=params, headers=_headers())
+    client = _get_client()
+    response = await client.get("/public/doctors", params=params, headers=_headers())
     response.raise_for_status()
     data = response.json()
     if not data.get("success", True):
@@ -83,8 +94,8 @@ async def list_doctors_at_hospital(hospital_id: str, page_size: int = 10) -> lis
     specialty_category optional on it, so every existing list_doctors call site keeps its
     current (required-specialty) contract unchanged."""
     params: dict[str, Any] = {"hospitalId": hospital_id, "pageSize": page_size}
-    async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=10) as client:
-        response = await client.get("/public/doctors", params=params, headers=_headers())
+    client = _get_client()
+    response = await client.get("/public/doctors", params=params, headers=_headers())
     response.raise_for_status()
     data = response.json()
     if not data.get("success", True):
@@ -95,10 +106,10 @@ async def list_doctors_at_hospital(hospital_id: str, page_size: int = 10) -> lis
 @_retry_network_errors
 async def get_doctor_availability(doctor_id: str, on_date: date_type) -> dict[str, Any]:
     params = {"date": on_date.isoformat()}
-    async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=10) as client:
-        response = await client.get(
-            f"/public/doctors/{doctor_id}/availability", params=params, headers=_headers()
-        )
+    client = _get_client()
+    response = await client.get(
+        f"/public/doctors/{doctor_id}/availability", params=params, headers=_headers()
+    )
     response.raise_for_status()
     return response.json()
 
@@ -131,8 +142,8 @@ async def book_appointment(
         "preferredDate": preferred_date.isoformat(),
         "reason": reason,
     }
-    async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=15) as client:
-        response = await client.post("/public/appointments", json=body, headers=_headers())
+    client = _get_client()
+    response = await client.post("/public/appointments", json=body, headers=_headers(), timeout=15)
     if response.status_code >= 500:
         response.raise_for_status()
     data = response.json()
@@ -148,8 +159,8 @@ async def get_appointment(appointment_id: str) -> dict[str, Any]:
     still live before offering it as a cancel/reschedule candidate (staff could have
     changed/cancelled it from the hospital side since this bot last touched it). Returns the raw
     dict; success:false (e.g. unknown id) is a normal outcome here, not raised."""
-    async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=10) as client:
-        response = await client.get(f"/public/appointments/{appointment_id}", headers=_headers())
+    client = _get_client()
+    response = await client.get(f"/public/appointments/{appointment_id}", headers=_headers())
     if response.status_code >= 500:
         response.raise_for_status()
     return response.json()
@@ -167,10 +178,10 @@ async def cancel_appointment(
     the API's own `message` (e.g. "already cancelled", or the generic "not found" a mobile
     mismatch also returns) to relay back to the patient, not just a pass/fail."""
     body: dict[str, Any] = {"mobile": mobile, "reason": reason}
-    async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=15) as client:
-        response = await client.patch(
-            f"/public/appointments/{appointment_id}/cancel", json=body, headers=_headers()
-        )
+    client = _get_client()
+    response = await client.patch(
+        f"/public/appointments/{appointment_id}/cancel", json=body, headers=_headers(), timeout=15
+    )
     if response.status_code >= 500:
         response.raise_for_status()
     return response.json()
@@ -191,10 +202,10 @@ async def reschedule_appointment(
     body: dict[str, Any] = {"mobile": mobile, "toApptDate": to_date.isoformat()}
     if to_time:
         body["toStartAt"] = f"{to_date.isoformat()}T{to_time}:00"
-    async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=15) as client:
-        response = await client.patch(
-            f"/public/appointments/{appointment_id}/reschedule", json=body, headers=_headers()
-        )
+    client = _get_client()
+    response = await client.patch(
+        f"/public/appointments/{appointment_id}/reschedule", json=body, headers=_headers(), timeout=15
+    )
     if response.status_code >= 500:
         response.raise_for_status()
     return response.json()
@@ -205,8 +216,8 @@ async def get_hospital_by_code(hospital_code: str) -> dict[str, Any]:
     """Resolves a scanned OPD QR code to a hospital. Raises HmsApiError (never returns a
     falsy/empty dict) if the code doesn't resolve — callers should treat that as "this QR
     isn't valid" rather than distinguishing 404 from other failures."""
-    async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=10) as client:
-        response = await client.get(f"/public/hospitals/by-code/{hospital_code}", headers=_headers())
+    client = _get_client()
+    response = await client.get(f"/public/hospitals/by-code/{hospital_code}", headers=_headers())
     if response.status_code == 404:
         raise HmsApiError("Hospital code not found")
     response.raise_for_status()
@@ -225,10 +236,8 @@ async def _resolve_public_redirect(path: str, not_found_message: str) -> str:
     following it, since callers need the URL itself to hand to WhatsApp's send_document, not
     the bytes. Raises HmsApiError (never returns a falsy/empty string) on anything
     unresolved, matching get_hospital_by_code's posture."""
-    async with httpx.AsyncClient(
-        base_url=settings.hms_api_base_url, timeout=10, follow_redirects=False
-    ) as client:
-        response = await client.get(path, headers=_headers())
+    client = _get_client()
+    response = await client.get(path, headers=_headers(), follow_redirects=False)
     if response.status_code in (301, 302, 303, 307, 308):
         location = response.headers.get("location")
         if location:
@@ -271,8 +280,8 @@ async def get_doctor_by_id(doctor_id: str) -> dict[str, Any]:
     as list_doctors' entries (both come from the same /public/doctors data). Raises
     HmsApiError if the id doesn't resolve (deleted, delisted, or never existed) -- callers
     should treat that as "this doctor isn't bookable right now"."""
-    async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=10) as client:
-        response = await client.get(f"/public/doctors/{doctor_id}", headers=_headers())
+    client = _get_client()
+    response = await client.get(f"/public/doctors/{doctor_id}", headers=_headers())
     if response.status_code == 404:
         raise HmsApiError("Doctor not found")
     response.raise_for_status()
@@ -293,8 +302,8 @@ async def resolve_checkin(
     and then call issue_queue_token() for the chosen one, same as a regular success:false
     with no candidates means "too far" or "nothing found today" (see `message`)."""
     body = {"hospitalId": hospital_id, "mobile": mobile, "latitude": latitude, "longitude": longitude}
-    async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=15) as client:
-        response = await client.post("/public/checkin/resolve", json=body, headers=_headers())
+    client = _get_client()
+    response = await client.post("/public/checkin/resolve", json=body, headers=_headers(), timeout=15)
     if response.status_code >= 500:
         response.raise_for_status()
     return response.json()
@@ -306,8 +315,8 @@ async def issue_queue_token(appointment_id: str, latitude: float, longitude: flo
     once the patient has disambiguated which of several today's appointments they meant
     (see resolve_checkin's `candidates` case)."""
     body = {"appointmentId": appointment_id, "latitude": latitude, "longitude": longitude}
-    async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=15) as client:
-        response = await client.post("/public/tokens", json=body, headers=_headers())
+    client = _get_client()
+    response = await client.post("/public/tokens", json=body, headers=_headers(), timeout=15)
     if response.status_code >= 500:
         response.raise_for_status()
     return response.json()
@@ -338,7 +347,7 @@ async def record_lead(
             "mobile": mobile,
             "patientName": patient_name,
         }
-        async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=10) as client:
-            await client.post("/public/leads", json=body, headers=_headers())
+        client = _get_client()
+        await client.post("/public/leads", json=body, headers=_headers())
     except Exception:
         logger.warning("Failed to record lead (%s) for hospital %s", lead_type, hospital_id, exc_info=True)

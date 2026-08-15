@@ -1,4 +1,5 @@
 import logging
+from functools import lru_cache
 
 import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
@@ -15,6 +16,14 @@ _retry_network_errors = retry(
     wait=wait_exponential(multiplier=0.5, min=0.5, max=2),
     reraise=True,
 )
+
+
+@lru_cache
+def _get_client() -> httpx.AsyncClient:
+    """One shared, reused connection for the process's whole lifetime, instead of a fresh
+    TCP+TLS handshake on every route_symptom() call -- same lazy-singleton pattern as
+    app.messengers.hms_client._get_client() and redis_client.get_redis()."""
+    return httpx.AsyncClient(base_url=settings.symptom_api_base_url, timeout=10)
 
 # Reachable in dev at nexeagle-website-dev's own /api/search/parse, NOT the standalone
 # NLP service's /route-symptom directly (that's not exposed/reachable this way in this
@@ -62,8 +71,8 @@ async def route_symptom(query: str) -> list[str]:
     """Returns internal specialist labels (e.g. "Cardiologist (Heart)") translated from
     NexEagleWebsite's specialtyId slugs — see _SPECIALTY_ID_TO_LABEL above for why an extra
     translation step is needed here, unlike calling the NLP model directly."""
-    async with httpx.AsyncClient(base_url=settings.symptom_api_base_url, timeout=10) as client:
-        response = await client.post("/api/search/parse", json={"query": query})
+    client = _get_client()
+    response = await client.post("/api/search/parse", json={"query": query})
     response.raise_for_status()
     data = response.json()
     slugs = data.get("specialtyIds") or ([data["specialtyId"]] if data.get("specialtyId") else [])

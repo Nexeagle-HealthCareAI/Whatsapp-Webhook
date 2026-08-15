@@ -6,6 +6,7 @@ actually match, WITHOUT hard-coding a town list — the index is built from 1HMS
 
 import json
 import logging
+from functools import lru_cache
 from typing import Any
 
 import httpx
@@ -19,6 +20,16 @@ logger = logging.getLogger("city_index")
 _REDIS_KEY = "booking:city_index"
 
 
+@lru_cache
+def _get_client() -> httpx.AsyncClient:
+    """One shared, reused connection for the process's whole lifetime -- same
+    lazy-singleton pattern as app.messengers.hms_client/symptom_client. Lower-impact fix
+    here than in those two files, since _fetch_all_doctors already reuses one client
+    across all its paged requests within a single call -- this only saves the handshake
+    *across* separate cache-miss events (roughly once a day), not within one."""
+    return httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=30)
+
+
 def _headers() -> dict[str, str]:
     headers = {"Accept": "application/json"}
     if settings.hms_api_key:
@@ -30,24 +41,24 @@ async def _fetch_all_doctors() -> list[dict[str, Any]]:
     """Pages through the whole public doctor directory. Only ever called on a cache miss
     (once a day in practice), never on the hot path of a normal booking — see get_index."""
     doctors: list[dict[str, Any]] = []
-    async with httpx.AsyncClient(base_url=settings.hms_api_base_url, timeout=30) as client:
-        for page in range(1, settings.city_index_max_pages + 1):
-            response = await client.get(
-                "/public/doctors",
-                params={"page": page, "pageSize": settings.city_index_page_size},
-                headers=_headers(),
-            )
-            response.raise_for_status()
-            batch = response.json().get("doctors", [])
-            doctors.extend(batch)
-            if len(batch) < settings.city_index_page_size:
-                break
-        else:
-            logger.warning(
-                "Stopped building city index at the %d-page cap — some cities may be missing. "
-                "Raise CITY_INDEX_MAX_PAGES if the doctor directory has grown.",
-                settings.city_index_max_pages,
-            )
+    client = _get_client()
+    for page in range(1, settings.city_index_max_pages + 1):
+        response = await client.get(
+            "/public/doctors",
+            params={"page": page, "pageSize": settings.city_index_page_size},
+            headers=_headers(),
+        )
+        response.raise_for_status()
+        batch = response.json().get("doctors", [])
+        doctors.extend(batch)
+        if len(batch) < settings.city_index_page_size:
+            break
+    else:
+        logger.warning(
+            "Stopped building city index at the %d-page cap — some cities may be missing. "
+            "Raise CITY_INDEX_MAX_PAGES if the doctor directory has grown.",
+            settings.city_index_max_pages,
+        )
     return doctors
 
 
