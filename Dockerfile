@@ -25,6 +25,7 @@ COPY app ./app
 COPY worker.py .
 COPY scheduler.py .
 COPY sender.py .
+COPY conversation_logger.py .
 
 EXPOSE 8001
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]

@@ -3,12 +3,14 @@ import json
 import logging
 import re
 from datetime import date, datetime, timedelta
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import httpx
 
 from app import db, i18n
-from app.messengers import city_index, hms_client, symptom_client, whatsapp_client
+from app.messengers import city_index, conversation_log_queue, hms_client, symptom_client, whatsapp_client
+from app.messengers.redis_client import get_redis
 from app.decision_maker import booking_slots
 from app.decision_maker.resolver import match_doctor_by_query as _match_doctor_by_query
 from app.decision_maker.resolver import resolve_doctor
@@ -265,6 +267,13 @@ async def handle_message(
     state = await db.get_conversation_state(phone)
     current_step = state["current_step"] if state else None
     context = state["context"] if state else {}
+    # Assigned here (not only in language.py's _start) so even a brand-new patient's very
+    # first message -- before language selection has run at all -- has a session_id to log
+    # under. See app/messengers/conversation_log_queue.py for what this feeds.
+    context.setdefault("session_id", str(uuid4()))
+    await conversation_log_queue.log_event(
+        get_redis(), context["session_id"], phone, "in", input_type, input_value, current_step
+    )
     # OPD QR check-in / discharge-summary & prescription QR pull / per-doctor booking QR:
     # deterministic commands from a QR scan (GET /c, /d, /rx, /rxv, /doc in webhook.py), not
     # natural language — intercepted before language detection/NLU/the clipboard even
@@ -1257,6 +1266,7 @@ async def _handle_confirming(client, phone, sender_name, input_type, input_value
 
     hms_appointment_id = result.get("appointmentId") or ""
     await db.mark_appointment_booked(row_id, hms_appointment_id)
+    await conversation_log_queue.log_conversion(get_redis(), context.get("session_id"), str(row_id))
 
     await whatsapp_client.send_text(client, phone, t("booked_success", lang, patient_name=patient_name))
 
@@ -1277,6 +1287,13 @@ async def _transition_to(phone: str, next_step: str, context: ConversationContex
             history.pop(0)
     new_context = {**context, "_history": history}
     await db.save_conversation_state(phone, next_step, new_context)
+    # Every step change in the whole conversation goes through this one function, which is
+    # what makes it the single hook needed to capture the bot's side of the journey -- see
+    # app/messengers/conversation_log_queue.py's module docstring for why step-level is
+    # logged here instead of every individual whatsapp_client send call.
+    await conversation_log_queue.log_event(
+        get_redis(), context.get("session_id"), phone, "out", "step", next_step, next_step
+    )
 
 
 async def _trigger_step_prompt(client: httpx.AsyncClient, phone: str, step: str, context: ConversationContext) -> None:

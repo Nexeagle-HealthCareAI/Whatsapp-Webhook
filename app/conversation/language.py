@@ -151,7 +151,10 @@ async def _start(client, phone: str, init_context: ConversationContext | None = 
         "Languages",
     )
     ctx = init_context or {}
-    ctx["session_id"] = str(uuid4())
+    # Usually already set by handle_message's top-of-turn assignment (see
+    # app/messengers/conversation_log_queue.py) -- setdefault so a fresh restart with no
+    # prior context (the _trigger_step_prompt fallback calls _start with none) still gets one.
+    ctx.setdefault("session_id", str(uuid4()))
     await conversation._transition_to(phone, "choosing_language", ctx, None)
 
 

@@ -118,6 +118,35 @@ BEGIN
 END
 GO
 
+-- One row per conversation session (session_id from app/conversation/language.py's _start,
+-- carried through context for the session's whole lifetime) -- NOT one row per message.
+-- transcript_json accumulates every inbound message (full content) and every step the bot
+-- moved the patient to, via JSON_MODIFY 'append $' from conversation_logger.py -- that
+-- process is the only writer, so the read-modify-write JSON append never races against
+-- itself. appointment_id stays NULL until the booking actually completes; a session with no
+-- appointment_id is, by definition, one the patient started and did not finish -- no separate
+-- "abandoned" flag needed, and no risk of it going stale/desyncing from the real outcome.
+--
+-- Deliberately populated OFF the request path: app/messengers/conversation_log_queue.py just
+-- LPUSHes a small job (sub-millisecond) from the inbound-message and step-transition hooks;
+-- conversation_logger.py (its own process, same convention as worker.py/sender.py) is what
+-- actually writes here. A patient's reply is never slowed down by a SQL Server round-trip.
+IF OBJECT_ID('dbo.conversation_sessions') IS NULL
+BEGIN
+    CREATE TABLE dbo.conversation_sessions (
+        session_id NVARCHAR(100) NOT NULL PRIMARY KEY,
+        phone_number NVARCHAR(20) NOT NULL,
+        started_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+        last_activity_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+        last_step NVARCHAR(50) NULL,
+        appointment_id UNIQUEIDENTIFIER NULL,
+        transcript_json NVARCHAR(MAX) NULL
+    );
+    CREATE INDEX IX_conversation_sessions_phone
+        ON dbo.conversation_sessions(phone_number, last_activity_at DESC);
+END
+GO
+
 -- Logger table for tracking NLU brain requests, parses, and accuracy metrics
 IF OBJECT_ID('dbo.nlu_logs') IS NULL
 BEGIN
