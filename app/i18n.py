@@ -304,10 +304,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "bn": "অনুগ্রহ করে রোগীর বিবরণ এই বিন্যাসে পাঠান: নাম, বয়স, লিঙ্গ, অভিভাবক (ঐচ্ছিক) (যেমন 'Riya, 8, Female, Rajesh' অথবা শুধু 'Riya, 8, Female')।",
     },
     "patient_details_flow_cta": {
-        "en": "Fill Form",
-        "hi": "विवरण भरें",
-        "hg": "Form bharein",
-        "bn": "ফর্ম পূরণ করুন",
+        "en": "Book Appointment",
+        "hi": "अपॉइंटमेंट बुक करें",
+        "hg": "Book Appointment",
+        "bn": "বুক করুন",
     },
     "patient_details_invalid": {
         "en": "Please fill Name, Age and Gender correctly (Guardian is optional) — e.g. 'Riya, 8, Female, Rajesh' or just 'Riya, 8, Female'.",

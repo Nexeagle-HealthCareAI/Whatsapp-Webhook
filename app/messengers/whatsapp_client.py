@@ -43,6 +43,20 @@ async def send_text(client: httpx.AsyncClient, to: str, body: str) -> None:
     )
 
 
+async def send_text_direct(client: httpx.AsyncClient, to: str, body: str) -> None:
+    """Same message as send_text, but sent immediately instead of through outbound_queue.py.
+
+    Use this only when the caller sends a directly-sent message (send_flow/send_document)
+    right afterwards in the same turn and the two must arrive in that order — a queued
+    send_text can sit behind the rate limiter while a direct send races ahead of it, so the
+    two arrive out of order on the patient's phone. Everywhere else, prefer plain send_text
+    so the message goes through the shared rate limit like the rest of outbound traffic."""
+    await _send(
+        client,
+        {"messaging_product": "whatsapp", "to": to, "text": {"body": body}},
+    )
+
+
 async def send_typing_indicator(client: httpx.AsyncClient, message_id: str) -> None:
     """Marks the inbound message read and shows "typing…" to the sender — one combined
     call (per Meta's Cloud API), not two. Meta dismisses the indicator once we actually

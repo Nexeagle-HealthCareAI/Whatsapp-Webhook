@@ -587,6 +587,7 @@ def test_finalize_slot_selection_always_stores_a_date_string():
     conversation.db = MockDB()
     
     original_send_text = conversation.whatsapp_client.send_text
+    original_send_text_direct = conversation.whatsapp_client.send_text_direct
     original_send_buttons = conversation.whatsapp_client.send_buttons
     original_send_location = conversation.whatsapp_client.send_location_request
     original_send_list = conversation.whatsapp_client.send_list
@@ -594,6 +595,7 @@ def test_finalize_slot_selection_always_stores_a_date_string():
     async def mock_nop(*args, **kwargs):
         pass
     conversation.whatsapp_client.send_text = mock_nop
+    conversation.whatsapp_client.send_text_direct = mock_nop
     conversation.whatsapp_client.send_buttons = mock_nop
     conversation.whatsapp_client.send_location_request = mock_nop
     conversation.whatsapp_client.send_list = mock_nop
@@ -612,6 +614,7 @@ def test_finalize_slot_selection_always_stores_a_date_string():
         conversation._send_patient_details_flow = original
         conversation.db = original_db
         conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_text_direct = original_send_text_direct
         conversation.whatsapp_client.send_buttons = original_send_buttons
         conversation.whatsapp_client.send_location_request = original_send_location
         conversation.whatsapp_client.send_list = original_send_list
@@ -859,7 +862,9 @@ def test_safety_triage_interception():
         sent_messages.append((phone, text))
     
     original_send_text = conversation.whatsapp_client.send_text
+    original_send_text_direct = conversation.whatsapp_client.send_text_direct
     conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_text_direct = mock_send_text
     
     class MockDB:
         def __init__(self):
@@ -883,6 +888,7 @@ def test_safety_triage_interception():
         check("Emergency Warning: Agar aapko" in sent_messages[0][1], "should contain Hinglish warning text")
     finally:
         conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_text_direct = original_send_text_direct
         conversation.db = original_db
 
 
@@ -1073,6 +1079,7 @@ def test_first_message_nlu_symptom_routing():
         sent_lists.append((text, rows))
 
     original_send_text = conversation.whatsapp_client.send_text
+    original_send_text_direct = conversation.whatsapp_client.send_text_direct
     original_send_buttons = conversation.whatsapp_client.send_buttons
     original_send_list = conversation.whatsapp_client.send_list
     original_send_loc = conversation.whatsapp_client.send_location_request
@@ -1081,6 +1088,7 @@ def test_first_message_nlu_symptom_routing():
         pass
         
     conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_text_direct = mock_send_text
     conversation.whatsapp_client.send_buttons = mock_send_buttons
     conversation.whatsapp_client.send_list = mock_send_list
     conversation.whatsapp_client.send_location_request = mock_send_location_request
@@ -1127,6 +1135,7 @@ def test_first_message_nlu_symptom_routing():
         conversation.symptom_client.route_symptom = original_route_symptom
         conversation.hms_client.list_specialties = original_list_specialties
         conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_text_direct = original_send_text_direct
         conversation.whatsapp_client.send_buttons = original_send_buttons
         conversation.whatsapp_client.send_list = original_send_list
         conversation.whatsapp_client.send_location_request = original_send_loc
@@ -1167,10 +1176,12 @@ def test_high_confidence_language_bypass():
         pass
 
     original_send_text = conversation.whatsapp_client.send_text
+    original_send_text_direct = conversation.whatsapp_client.send_text_direct
     original_send_buttons = conversation.whatsapp_client.send_buttons
     original_send_loc = conversation.whatsapp_client.send_location_request
 
     conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_text_direct = mock_send_text
     conversation.whatsapp_client.send_buttons = mock_send_buttons
     conversation.whatsapp_client.send_location_request = mock_send_loc
 
@@ -1196,6 +1207,7 @@ def test_high_confidence_language_bypass():
         conversation.db = original_db
         conversation.nlu_client.classify_message = original_classify
         conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_text_direct = original_send_text_direct
         conversation.whatsapp_client.send_buttons = original_send_buttons
         conversation.whatsapp_client.send_location_request = original_send_loc
 
@@ -1246,9 +1258,11 @@ def test_three_search_modes_flow():
 
     sent_messages = []
     original_send_text = conversation.whatsapp_client.send_text
+    original_send_text_direct = conversation.whatsapp_client.send_text_direct
     async def mock_send_text(client, to, text):
         sent_messages.append(text)
     conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_text_direct = mock_send_text
 
     try:
         context = {"lang": "en"}
@@ -1260,6 +1274,7 @@ def test_three_search_modes_flow():
     finally:
         conversation.db = original_db
         conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_text_direct = original_send_text_direct
 
 
 def test_language_confirmation_flow():
@@ -1294,6 +1309,7 @@ def test_language_confirmation_flow():
     sent_lists = []
 
     original_send_text = conversation.whatsapp_client.send_text
+    original_send_text_direct = conversation.whatsapp_client.send_text_direct
     original_send_buttons = conversation.whatsapp_client.send_buttons
     original_send_location = conversation.whatsapp_client.send_location_request
     original_send_list = conversation.whatsapp_client.send_list
@@ -1308,6 +1324,7 @@ def test_language_confirmation_flow():
         sent_lists.append((text, button_label, rows, section_title))
 
     conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_text_direct = mock_send_text
     conversation.whatsapp_client.send_buttons = mock_send_buttons
     conversation.whatsapp_client.send_location_request = mock_send_location
     conversation.whatsapp_client.send_list = mock_send_list
@@ -1342,6 +1359,7 @@ def test_language_confirmation_flow():
     finally:
         conversation.db = original_db
         conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_text_direct = original_send_text_direct
         conversation.whatsapp_client.send_buttons = original_send_buttons
         conversation.whatsapp_client.send_location_request = original_send_location
         conversation.whatsapp_client.send_list = original_send_list
@@ -1389,6 +1407,7 @@ def test_wit_nlu_integration():
     sent_lists = []
 
     original_send_text = conversation.whatsapp_client.send_text
+    original_send_text_direct = conversation.whatsapp_client.send_text_direct
     original_send_buttons = conversation.whatsapp_client.send_buttons
     original_send_list = conversation.whatsapp_client.send_list
 
@@ -1400,6 +1419,7 @@ def test_wit_nlu_integration():
         sent_lists.append((text, button_label, rows, section_title))
 
     conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_text_direct = mock_send_text
     conversation.whatsapp_client.send_buttons = mock_send_buttons
     conversation.whatsapp_client.send_list = mock_send_list
 
@@ -1491,6 +1511,7 @@ def test_wit_nlu_integration():
     finally:
         conversation.db = original_db
         conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_text_direct = original_send_text_direct
         conversation.whatsapp_client.send_buttons = original_send_buttons
         conversation.whatsapp_client.send_list = original_send_list
         conversation.nlu_client.classify_message = original_classify
@@ -1526,6 +1547,7 @@ def test_previously_dropped_intents_now_handled():
     sent_texts = []
     sent_lists = []
     original_send_text = conversation.whatsapp_client.send_text
+    original_send_text_direct = conversation.whatsapp_client.send_text_direct
     original_send_buttons = conversation.whatsapp_client.send_buttons
     original_send_list = conversation.whatsapp_client.send_list
     async def mock_send_text(client, to, text):
@@ -1535,6 +1557,7 @@ def test_previously_dropped_intents_now_handled():
     async def mock_send_list(client, to, text, button_label, rows, section_title="Options"):
         sent_lists.append((text, button_label, rows, section_title))
     conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_text_direct = mock_send_text
     conversation.whatsapp_client.send_buttons = mock_send_buttons
     conversation.whatsapp_client.send_list = mock_send_list
 
@@ -1617,6 +1640,7 @@ def test_previously_dropped_intents_now_handled():
     finally:
         conversation.db = original_db
         conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_text_direct = original_send_text_direct
         conversation.whatsapp_client.send_buttons = original_send_buttons
         conversation.whatsapp_client.send_list = original_send_list
         conversation.nlu_client.classify_message = original_classify
@@ -1716,12 +1740,14 @@ def test_failed_hot_swap_clears_stale_doctor_and_reprompts():
     sent_texts = []
     sent_buttons = []
     original_send_text = conversation.whatsapp_client.send_text
+    original_send_text_direct = conversation.whatsapp_client.send_text_direct
     original_send_buttons = conversation.whatsapp_client.send_buttons
     async def mock_send_text(client, to, text):
         sent_texts.append(text)
     async def mock_send_buttons(client, to, text, buttons):
         sent_buttons.append((text, buttons))
     conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_text_direct = mock_send_text
     conversation.whatsapp_client.send_buttons = mock_send_buttons
 
     # datetime included so intent_router's REQUIRED_ENTITIES check for book_appointment
@@ -1788,6 +1814,7 @@ def test_failed_hot_swap_clears_stale_doctor_and_reprompts():
         conversation.db = original_db
         conversation.intent_router.db = original_router_db
         conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_text_direct = original_send_text_direct
         conversation.whatsapp_client.send_buttons = original_send_buttons
         conversation.nlu_client.classify_message = original_classify
         conversation.city_index.get_all_doctors = original_get_all_doctors
@@ -1812,7 +1839,9 @@ def test_single_match_message_includes_full_details():
         sent.append(text)
 
     original_send_text = conversation.whatsapp_client.send_text
+    original_send_text_direct = conversation.whatsapp_client.send_text_direct
     conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_text_direct = mock_send_text
 
     async def mock_advance(client, phone, context, booking):
         pass
@@ -1839,6 +1868,7 @@ def test_single_match_message_includes_full_details():
     finally:
         conversation.db = original_db
         conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_text_direct = original_send_text_direct
         conversation._advance_booking_flow = original_advance
 
 
@@ -1947,8 +1977,10 @@ def test_symptom_and_specialty_open_with_one_combined_location_message():
         sent_loc_reqs.append(text)
 
     original_send_text = conversation.whatsapp_client.send_text
+    original_send_text_direct = conversation.whatsapp_client.send_text_direct
     original_send_loc = conversation.whatsapp_client.send_location_request
     conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_text_direct = mock_send_text
     conversation.whatsapp_client.send_location_request = mock_send_loc_req
 
     async def mock_list_specialties():
@@ -1996,6 +2028,7 @@ def test_symptom_and_specialty_open_with_one_combined_location_message():
         conversation.db = original_db
         conversation.intent_router.db = original_router_db
         conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_text_direct = original_send_text_direct
         conversation.whatsapp_client.send_location_request = original_send_loc
         conversation.hms_client.list_specialties = original_list_specialties
         conversation.symptom_client.route_symptom = original_route_symptom
@@ -2024,8 +2057,10 @@ def test_radius_auto_widens_without_confirm_tap():
         sent_buttons.append((text, buttons))
 
     original_send_text = conversation.whatsapp_client.send_text
+    original_send_text_direct = conversation.whatsapp_client.send_text_direct
     original_send_buttons = conversation.whatsapp_client.send_buttons
     conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_text_direct = mock_send_text
     conversation.whatsapp_client.send_buttons = mock_send_buttons
 
     original_fetch_near = conversation._fetch_doctors_near
@@ -2066,6 +2101,7 @@ def test_radius_auto_widens_without_confirm_tap():
     finally:
         conversation.db = original_db
         conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_text_direct = original_send_text_direct
         conversation.whatsapp_client.send_buttons = original_send_buttons
         conversation._fetch_doctors_near = original_fetch_near
         conversation._safe_city_index = original_safe_index
@@ -2131,10 +2167,12 @@ def test_first_message_doctor_name_resolves_without_waiting_for_location():
         raise AssertionError(f"location must not be requested for a single resolved match, got: {text!r}")
 
     original_send_text = conversation.whatsapp_client.send_text
+    original_send_text_direct = conversation.whatsapp_client.send_text_direct
     original_send_buttons = conversation.whatsapp_client.send_buttons
     original_send_flow = conversation.whatsapp_client.send_flow
     original_send_loc_req = conversation.whatsapp_client.send_location_request
     conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_text_direct = mock_send_text
     conversation.whatsapp_client.send_buttons = mock_send_buttons
     conversation.whatsapp_client.send_flow = mock_send_flow
     conversation.whatsapp_client.send_location_request = mock_send_location_request
@@ -2191,6 +2229,7 @@ def test_first_message_doctor_name_resolves_without_waiting_for_location():
         conversation.db = original_db
         conversation.intent_router.db = original_router_db
         conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_text_direct = original_send_text_direct
         conversation.whatsapp_client.send_buttons = original_send_buttons
         conversation.whatsapp_client.send_flow = original_send_flow
         conversation.whatsapp_client.send_location_request = original_send_loc_req
@@ -2255,9 +2294,11 @@ def test_sarvam_language_confidence_upgrade_skips_confirm_step():
         return True
 
     original_send_text = conversation.whatsapp_client.send_text
+    original_send_text_direct = conversation.whatsapp_client.send_text_direct
     original_send_buttons = conversation.whatsapp_client.send_buttons
     original_send_flow = conversation.whatsapp_client.send_flow
     conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_text_direct = mock_send_text
     conversation.whatsapp_client.send_buttons = mock_send_buttons
     conversation.whatsapp_client.send_flow = mock_send_flow
 
@@ -2323,6 +2364,7 @@ def test_sarvam_language_confidence_upgrade_skips_confirm_step():
         conversation.db = original_db
         conversation.intent_router.db = original_router_db
         conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_text_direct = original_send_text_direct
         conversation.whatsapp_client.send_buttons = original_send_buttons
         conversation.whatsapp_client.send_flow = original_send_flow
         conversation.nlu_client.classify_message = original_classify
@@ -2385,9 +2427,11 @@ def test_first_message_symptom_resolves_to_combined_message_not_generic_location
         sent_loc_reqs.append(text)
 
     original_send_text = conversation.whatsapp_client.send_text
+    original_send_text_direct = conversation.whatsapp_client.send_text_direct
     original_send_buttons = conversation.whatsapp_client.send_buttons
     original_send_loc = conversation.whatsapp_client.send_location_request
     conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_text_direct = mock_send_text
     conversation.whatsapp_client.send_buttons = mock_send_buttons
     conversation.whatsapp_client.send_location_request = mock_send_loc_req
 
@@ -2441,6 +2485,7 @@ def test_first_message_symptom_resolves_to_combined_message_not_generic_location
         conversation.db = original_db
         conversation.intent_router.db = original_router_db
         conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_text_direct = original_send_text_direct
         conversation.whatsapp_client.send_buttons = original_send_buttons
         conversation.whatsapp_client.send_location_request = original_send_loc
         conversation.hms_client.list_specialties = original_list_specialties
@@ -2541,9 +2586,11 @@ def test_guardian_is_optional_in_patient_details():
         pass  # isolate from the re-prompt Flow/buttons rendering, not what's under test here
 
     original_send_text = conversation.whatsapp_client.send_text
+    original_send_text_direct = conversation.whatsapp_client.send_text_direct
     original_advance = conversation._advance_booking_flow
     original_send_flow_prompt = conversation._send_patient_details_flow
     conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_text_direct = mock_send_text
     conversation._advance_booking_flow = mock_advance_booking_flow
     conversation._send_patient_details_flow = mock_send_patient_details_flow
 
@@ -2579,6 +2626,7 @@ def test_guardian_is_optional_in_patient_details():
         check(len(sent_texts) == 1, f"missing gender should still be rejected, got {sent_texts!r}")
     finally:
         conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_text_direct = original_send_text_direct
         conversation._advance_booking_flow = original_advance
         conversation._send_patient_details_flow = original_send_flow_prompt
 
@@ -2634,8 +2682,10 @@ def test_unresolved_location_reprompts_instead_of_silently_advancing():
         sent_loc_reqs.append(text)
 
     original_send_text = conversation.whatsapp_client.send_text
+    original_send_text_direct = conversation.whatsapp_client.send_text_direct
     original_send_loc = conversation.whatsapp_client.send_location_request
     conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_text_direct = mock_send_text
     conversation.whatsapp_client.send_location_request = mock_send_loc_req
 
     mock_client = object()
@@ -2663,6 +2713,7 @@ def test_unresolved_location_reprompts_instead_of_silently_advancing():
     finally:
         conversation.db = original_db
         conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_text_direct = original_send_text_direct
         conversation.whatsapp_client.send_location_request = original_send_loc
 
 

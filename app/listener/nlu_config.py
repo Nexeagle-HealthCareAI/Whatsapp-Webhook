@@ -16,7 +16,12 @@ INTENT_REGISTRY = {
     "book_appointment": {
         "is_global": False,
         "has_slot_safety_net": True,
-        "required_entities": [("doctor_name", "specialty"), "datetime"],
+        # datetime isn't required up front -- the booking flow always asks for day/shift as
+        # its own dedicated step once the doctor is resolved, so asking here too was a
+        # redundant, premature question. Same as check_availability/ask_pricing below, which
+        # never required it. If the patient does mention a date, it's still opportunistically
+        # captured and pre-fills that later step -- see handle_message's pref_date handling.
+        "required_entities": [("doctor_name", "specialty")],
     },
     "check_availability": {
         "is_global": False,

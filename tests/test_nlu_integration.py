@@ -115,27 +115,20 @@ def test_classify_message_wrapper():
 
 def test_multi_turn_slot_filling():
     print("\n--- Running Multi-Turn Slot-Filling Tests ---")
-    # Turn 1: "appointment chahiye" -> missing doctor/specialty AND datetime
+    # Turn 1: "appointment chahiye" -> missing doctor/specialty
     res1 = {"intent": "book_appointment", "confidence": "high", "entities": {}}
     routed1 = asyncio.run(intent_router.route_intent("user_1", res1, "appointment chahiye"))
     check(routed1.action == "ask_followup", "Turn 1 action must be ask_followup")
-    check("specialty" in routed1.followup_prompt or "doctor" in routed1.followup_prompt, 
+    check("specialty" in routed1.followup_prompt or "doctor" in routed1.followup_prompt,
           "Turn 1 prompt should ask for doctor or specialty")
 
-    # Turn 2: "gyno" -> still missing datetime
+    # Turn 2: "gyno" -> book_appointment no longer requires datetime up front (the booking
+    # flow always collects day/shift as its own dedicated step later), so specialty alone
+    # satisfies every required slot and this proceeds straight to business logic.
     res2 = {"intent": "check_availability", "confidence": "low", "entities": {"specialty": "gyno"}}
     routed2 = asyncio.run(intent_router.route_intent("user_1", res2, "gyno"))
-    check(routed2.action == "ask_followup", "Turn 2 action must be ask_followup")
-    check("datetime" in routed2.followup_prompt or "kab" in routed2.followup_prompt, 
-          "Turn 2 prompt should ask for datetime")
-
-    # Turn 3: "kal" -> all required slots filled
-    res3 = {"intent": "book_appointment", "confidence": "low", "entities": {"datetime": "kal"}}
-    routed3 = asyncio.run(intent_router.route_intent("user_1", res3, "kal"))
-    check(routed3.action == "proceed_to_business_logic", "Turn 3 action must proceed to business logic")
-    check(routed3.entities.get("specialty") == "gyno", "Entities must preserve specialty gyno from previous turn")
-    check(routed3.entities.get("datetime") == "kal" or routed3.entities.get("datetime") is not None, 
-          "Entities must preserve datetime")
+    check(routed2.action == "proceed_to_business_logic", "Turn 2 action must proceed to business logic")
+    check(routed2.entities.get("specialty") == "gyno", "Entities must preserve specialty gyno from previous turn")
 
 def test_booking_vs_reschedule_ambiguity():
     print("\n--- Running Reschedule vs Book Ambiguity Tests ---")
@@ -208,8 +201,11 @@ def test_confidence_gate_on_zero_slot_intents():
 
 def test_nlu_confidence_gate_rejection():
     print("\n--- Running NLU Confidence Gate Rejection Tests ---")
-    low_conf_incomplete = {"intent": "book_appointment", "confidence": "low", "entities": {"specialty": "gyno"}}
-    routed = asyncio.run(intent_router.route_intent("user_conf_4", low_conf_incomplete, "gyno"))
+    # Genuinely incomplete under book_appointment's current requirements (doctor_name or
+    # specialty) -- specialty alone no longer qualifies as "incomplete" since datetime was
+    # dropped from the requirement, see app/listener/nlu_config.py.
+    low_conf_incomplete = {"intent": "book_appointment", "confidence": "low", "entities": {}}
+    routed = asyncio.run(intent_router.route_intent("user_conf_4", low_conf_incomplete, "book appointment"))
     
     check(routed.intent == "out_of_scope", "low-confidence incomplete intent must be overridden to out_of_scope")
     check(routed.entities == {}, "low-confidence incomplete intent must have its entities cleared")
@@ -272,17 +268,22 @@ def test_legitimate_multi_turn_still_merges_with_matching_step():
 
 def test_short_datetime_reply_recovered_when_nlu_returns_out_of_scope():
     print("\n--- Running Short Datetime-Reply Recovery Test (live-reported bug) ---")
-    # Live-reported: "hi, i have to book appointment with Dr, Radha" -> router asks for a
-    # date -> patient replies just "today" -> router asks the SAME question again, forever.
-    # Root cause: Sarvam classifies a bare "today" (no surrounding context reaching the
-    # model) as out_of_scope with empty entities -- there's nothing for the merge logic to
-    # pick up, so the missing "datetime" slot never gets filled no matter how many times the
-    # patient answers correctly.
+    # Originally reported against book_appointment ("hi, i have to book appointment with Dr,
+    # Radha" -> router asks for a date -> patient replies just "today" -> router asks the SAME
+    # question again, forever). book_appointment no longer asks for datetime up front (the
+    # booking flow collects day/shift as its own dedicated step later, so asking here was
+    # redundant -- see app/listener/nlu_config.py), so that exact scenario can't recur for
+    # book_appointment. reschedule_appointment still requires datetime up front, so it's used
+    # here to keep covering the actual mechanism under test: recovering a short, context-free
+    # "today"-style reply that Sarvam classifies as out_of_scope with empty entities, since
+    # there's otherwise nothing for the merge logic to pick up and the follow-up would repeat
+    # forever. normalize_datetime_to_date only matches a short, unambiguous set of literal
+    # date phrasings, so running it unconditionally on the raw text is safe.
     db_mock.has_active_appt = False
     wa_id = "user_short_datetime_1"
 
-    turn1 = {"intent": "book_appointment", "confidence": "high", "entities": {"doctor_name": "Radha"}}
-    routed1 = asyncio.run(intent_router.route_intent(wa_id, turn1, "hi, i have to book appointment with Dr, Radha"))
+    turn1 = {"intent": "reschedule_appointment", "confidence": "high", "entities": {}}
+    routed1 = asyncio.run(intent_router.route_intent(wa_id, turn1, "I need to reschedule my appointment"))
     check(routed1.action == "ask_followup", "turn 1 should ask for the missing datetime")
     check("date" in routed1.followup_prompt.lower(), f"turn 1 prompt should ask for a date, got {routed1.followup_prompt!r}")
 
@@ -291,9 +292,8 @@ def test_short_datetime_reply_recovered_when_nlu_returns_out_of_scope():
     routed2 = asyncio.run(intent_router.route_intent(wa_id, turn2, "today"))
     check(
         routed2.action == "proceed_to_business_logic",
-        f"turn 2 ('today') must complete the booking instead of re-asking, got action={routed2.action!r} entities={routed2.entities!r}",
+        f"turn 2 ('today') must complete the reschedule instead of re-asking, got action={routed2.action!r} entities={routed2.entities!r}",
     )
-    check(routed2.entities.get("doctor_name") == "Radha", "doctor_name from turn 1 must survive")
     check(routed2.entities.get("datetime"), f"'today' should have been recovered as a datetime, got {routed2.entities!r}")
 
 

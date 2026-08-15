@@ -951,7 +951,10 @@ async def _render_doctor_list(
             "doctor_match_found_detailed", lang,
             doctor=context["doctor_name"], details=_doctor_row_description(d, context),
         )
-        await whatsapp_client.send_text(client, phone, info_msg)
+        # Direct send, not queued: _advance_booking_flow below sends the patient-details
+        # Flow prompt directly too (send_flow bypasses the queue), so a queued send here
+        # can lose the race and arrive after it — see send_text_direct's docstring.
+        await whatsapp_client.send_text_direct(client, phone, info_msg)
         booking_slots.fill(booking, "doctor", {"id": d["doctorId"], "fullName": context["doctor_name"]}, raw=context["doctor_name"], source="user")
         await _advance_booking_flow(client, phone, context, booking)
         return
