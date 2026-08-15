@@ -15,6 +15,8 @@ docstring for why. Calls between functions that both live in THIS file
 (_send_specialty_list, _send_sort_prompt, _handle_awaiting_symptom) stay as plain
 same-module calls.
 """
+import asyncio
+
 from app import i18n
 from app.messengers import hms_client, symptom_client
 from app.i18n import t
@@ -133,8 +135,12 @@ async def _handle_awaiting_symptom(client, phone, input_type, input_value, conte
         await conversation.whatsapp_client.send_text(client, phone, t("symptom_text_required", lang))
         return
 
-    labels = await symptom_client.route_symptom(input_value)
-    categories = [s["category"] for s in await hms_client.list_specialties()]
+    # Independent fetches -- run concurrently instead of sequentially, same reasoning
+    # as doctor_search.py's city_index calls.
+    labels, specialties = await asyncio.gather(
+        symptom_client.route_symptom(input_value), hms_client.list_specialties()
+    )
+    categories = [s["category"] for s in specialties]
     matched_category = next(
         (m for m in (symptom_client.match_category(label, categories) for label in labels) if m),
         None,

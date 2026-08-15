@@ -16,6 +16,7 @@ _handle_choosing_hospital_from_search, _handle_awaiting_doctor_name ->
 _search_doctors_flow/_handle_doctor_search_miss) stay as plain same-module
 calls.
 """
+import asyncio
 import re
 
 from app.messengers import city_index, hms_client
@@ -86,8 +87,11 @@ async def _search_doctors_flow(client, phone: str, context: dict, current_step: 
 
     lang = context.get("lang")
     try:
-        all_docs = await city_index.get_all_doctors()
-        index = await city_index.get_index()
+        # Independent fetches (neither's result feeds the other) -- run concurrently
+        # instead of sequentially. Barely matters on a cache hit (city_index.py caches
+        # both for city_index_ttl_seconds), but on a cache miss (once a day, or right
+        # after a deploy) this halves the wait instead of paying both fetches back to back.
+        all_docs, index = await asyncio.gather(city_index.get_all_doctors(), city_index.get_index())
     except Exception as exc:
         conversation.logger.error("Failed to fetch data for search: %s", exc)
         return False
