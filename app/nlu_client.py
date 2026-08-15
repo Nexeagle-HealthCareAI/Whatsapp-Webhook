@@ -3,6 +3,7 @@ from app.listener.nlu_client import (
     STEP_GOALS,
     STEP_PROMPT_SYSTEM,
     classify_message,
+    disambiguate_specialty,
     generate_conversational_response,
     generate_step_prompt,
 )

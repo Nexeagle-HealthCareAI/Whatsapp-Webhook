@@ -17,12 +17,39 @@ same-module calls.
 """
 import asyncio
 
-from app import i18n
+from app import i18n, nlu_client
 from app.messengers import hms_client, symptom_client
 from app.i18n import t
 from app.conversation.shared import _match_choice
 from app.conversation.doctor_search import _is_doctor_search_query
 from app.types import ConversationContext
+
+
+async def resolve_specialty_category(client, query: str, categories: list[str]) -> str | None:
+    """The one place every specialty/symptom-label match happens. Tries the fast, free,
+    deterministic match first (symptom_client.match_category) -- covers correct spelling
+    and shorthand ("gyno", "cardio") since those are substrings of the real category name.
+    Only when that finds nothing (typically a misspelling like "kardio"/"cardeo") does it
+    ask the Listener's AI to pick from the real category list -- see
+    nlu_client.disambiguate_specialty for why that's safe (closed-set choice, not free
+    generation). The AI's answer is re-validated here against `categories` before being
+    trusted at all -- it can only ever return something that was already a real, valid
+    option, never something invented.
+
+    nlu_client is safe to call directly here (not via the lazy `conversation.` pattern) --
+    only ever attribute-patched in tests (conversation.nlu_client.classify_message = ...),
+    never reassigned wholesale, same as hms_client."""
+    matched = symptom_client.match_category(query, categories)
+    if matched:
+        return matched
+
+    ai_guess = await nlu_client.disambiguate_specialty(client, query, categories)
+    if not ai_guess:
+        return None
+    for category in categories:
+        if category.lower() == ai_guess.lower():
+            return category
+    return None
 
 
 def _specialty_row(specialty: dict) -> tuple[str, str, str]:
@@ -141,10 +168,11 @@ async def _handle_awaiting_symptom(client, phone, input_type, input_value, conte
         symptom_client.route_symptom(input_value), hms_client.list_specialties()
     )
     categories = [s["category"] for s in specialties]
-    matched_category = next(
-        (m for m in (symptom_client.match_category(label, categories) for label in labels) if m),
-        None,
-    )
+    matched_category = None
+    for label in labels:
+        matched_category = await resolve_specialty_category(client, label, categories)
+        if matched_category:
+            break
 
     if not matched_category:
         await conversation.whatsapp_client.send_text(client, phone, t("symptom_no_match", lang))

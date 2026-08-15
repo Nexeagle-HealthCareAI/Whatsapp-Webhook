@@ -293,3 +293,36 @@ async def _query_sarvam_retry(
         except Exception:
             pass
     return None
+
+
+async def disambiguate_specialty(client: httpx.AsyncClient, query: str, valid_categories: list[str]) -> str | None:
+    """Fallback for when a deterministic string match (symptom_client.match_category)
+    finds nothing -- typically because the patient misspelled the specialty ("kardio",
+    "cardeo" for "cardio"). Asks the model to PICK one of the real, already-known-valid
+    categories, never to invent one -- deliberately a closed-set choice, not free
+    generation, so it can't hallucinate a specialty that doesn't exist in this clinic's
+    actual list. The caller (app.conversation.specialty_browsing.resolve_specialty_category)
+    re-validates the answer against valid_categories before trusting it regardless -- same
+    "never trust a raw LLM answer" discipline as everywhere else this bot talks to Sarvam.
+
+    Only called when the fast, free, deterministic match already failed, so this stays off
+    the hot path -- the extra latency/cost is paid only for the rare misspelled case."""
+    if not valid_categories:
+        return None
+    options = "\n".join(f"- {c}" for c in valid_categories)
+    system_prompt = (
+        "A patient typed a medical specialty, possibly misspelled or shortened. Pick the ONE "
+        "option below that they most likely meant. Reply with that option's exact text and "
+        "nothing else -- no explanation, no punctuation. If none of the options are a "
+        "reasonable match, reply with exactly: none\n\n"
+        f"Options:\n{options}"
+    )
+    answer = await _query_llm_text(
+        client, system_prompt, f'Patient typed: "{query}"', PRIMARY_NLU, timeout=3.0
+    )
+    if not answer:
+        return None
+    answer = answer.strip()
+    if answer.lower() == "none":
+        return None
+    return answer

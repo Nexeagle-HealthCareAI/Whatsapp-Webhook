@@ -36,7 +36,7 @@ from app.conversation.specialty_browsing import (
     _specialty_row, _groups_with_live_categories,
     _send_search_mode_prompt, _handle_choosing_search_mode, _handle_awaiting_symptom,
     _send_specialty_list, _handle_choosing_specialty_group, _handle_choosing_specialty,
-    _send_sort_prompt, _handle_choosing_sort,
+    _send_sort_prompt, _handle_choosing_sort, resolve_specialty_category,
 )
 from app.conversation.doctor_list import (
     _doctor_fee, _doctor_rating, _doctor_distance_km, _sort_doctors,
@@ -343,7 +343,7 @@ async def handle_message(
                 if spec_name:
                     categories = await hms_client.list_specialties()
                     category_list = [c["category"] for c in categories]
-                    matched = symptom_client.match_category(spec_name, category_list)
+                    matched = await resolve_specialty_category(client, spec_name, category_list)
                     if matched:
                         new_context["pending_specialty"] = matched
                         new_context["pending_specialty_is_symptom"] = False
@@ -352,10 +352,11 @@ async def handle_message(
                     labels = await symptom_client.route_symptom(sym_name)
                     categories = await hms_client.list_specialties()
                     category_list = [c["category"] for c in categories]
-                    matched = next(
-                        (m for m in (symptom_client.match_category(label, category_list) for label in labels) if m),
-                        None
-                    )
+                    matched = None
+                    for label in labels:
+                        matched = await resolve_specialty_category(client, label, category_list)
+                        if matched:
+                            break
                     if matched:
                         new_context["pending_specialty"] = matched
                         new_context["pending_specialty_is_symptom"] = True
@@ -525,7 +526,7 @@ async def handle_message(
             elif spec_name:
                 categories = await hms_client.list_specialties()
                 category_list = [c["category"] for c in categories]
-                matched = symptom_client.match_category(spec_name, category_list)
+                matched = await resolve_specialty_category(client, spec_name, category_list)
                 if matched:
                     new_context["pending_specialty"] = matched
                     new_context["pending_specialty_is_symptom"] = False
@@ -554,10 +555,11 @@ async def handle_message(
                 labels = await symptom_client.route_symptom(sym_name)
                 categories = await hms_client.list_specialties()
                 category_list = [c["category"] for c in categories]
-                matched = next(
-                    (m for m in (symptom_client.match_category(label, category_list) for label in labels) if m),
-                    None
-                )
+                matched = None
+                for label in labels:
+                    matched = await resolve_specialty_category(client, label, category_list)
+                    if matched:
+                        break
                 if matched:
                     new_context["pending_specialty"] = matched
                     new_context["pending_specialty_is_symptom"] = True
@@ -641,7 +643,7 @@ async def handle_message(
             elif spec_name:
                 categories = await hms_client.list_specialties()
                 category_list = [c["category"] for c in categories]
-                matched = symptom_client.match_category(spec_name, category_list)
+                matched = await resolve_specialty_category(client, spec_name, category_list)
                 doctors = await hms_client.list_doctors(matched, page_size=50, city=context.get("city")) if matched else []
                 fees = sorted({_doctor_fee(d) for d in doctors if _doctor_fee(d) != float("inf")})
                 if fees:
