@@ -1699,10 +1699,19 @@ def test_failed_hot_swap_clears_stale_doctor_and_reprompts():
             pass
         async def update_last_nlu_log_correctness(self, *args, **kwargs):
             pass
+        async def get_upcoming_active_appointment(self, phone):
+            # intent_router.route_intent()'s book_appointment path checks this before
+            # proceeding -- without a working mock here it hits the real (stubbed-to-fail)
+            # aioodbc pool and now correctly aborts with action="error" instead of silently
+            # proceeding, which would stop this scenario before it ever reaches the
+            # hot-swap logic under test.
+            return False, None
 
     db_mock = MockDB()
     original_db = conversation.db
     conversation.db = db_mock
+    original_router_db = conversation.intent_router.db
+    conversation.intent_router.db = db_mock
 
     sent_texts = []
     sent_buttons = []
@@ -1777,6 +1786,7 @@ def test_failed_hot_swap_clears_stale_doctor_and_reprompts():
         check("search_doctor_query" not in state["context"], "book_appointment miss should clear the abandoned query")
     finally:
         conversation.db = original_db
+        conversation.intent_router.db = original_router_db
         conversation.whatsapp_client.send_text = original_send_text
         conversation.whatsapp_client.send_buttons = original_send_buttons
         conversation.nlu_client.classify_message = original_classify

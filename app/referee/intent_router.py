@@ -60,7 +60,7 @@ class RoutedResult:
         self, action: str, intent: str, entities: dict, followup_prompt: str | None = None,
         confidence: float = 0.9,
     ):
-        self.action = action  # "ask_followup" or "proceed_to_business_logic"
+        self.action = action  # "ask_followup", "proceed_to_business_logic", or "error"
         self.intent = intent
         self.entities = entities
         self.followup_prompt = followup_prompt
@@ -295,13 +295,19 @@ async def route_intent(
 
     # 4. Check for active upcoming appointment conflict (Only if all slots are present for book_appointment)
     if current_intent == "book_appointment" and not awaiting_clarification and not resolved_clarification_this_turn:
-        # Check active booked/pending appointments for this user in the DB
-        has_active = False
-        active_date_str = None
+        # Check active booked/pending appointments for this user in the DB. A patient with a
+        # real active appointment MUST be asked to clarify (new booking vs. reschedule) before
+        # a second one gets created — so a failed check here can never be quietly treated as
+        # "no active appointment found," or a DB hiccup turns into a real duplicate booking.
+        # Not retried inline either: this runs synchronously inside one patient's live turn,
+        # so a retry loop here is retry latency the patient feels directly, against a database
+        # that may still be under the exact same load a moment later. Failing loud instead —
+        # tell the patient, stop here, let them re-send — is safer than guessing.
         try:
             has_active, active_date_str = await db.get_upcoming_active_appointment(wa_id)
         except Exception as exc:
-            logger.error("DB check for active appointments failed: %s", exc)
+            logger.error("DB check for active appointments failed, aborting rather than guessing: %s", exc)
+            return RoutedResult(action="error", intent=current_intent, entities=current_entities)
 
         if has_active:
             # Persist clarification state and ask clarifying question

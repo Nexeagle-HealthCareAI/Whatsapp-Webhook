@@ -67,6 +67,7 @@ class MockDB:
     def __init__(self):
         self.has_active_appt = False
         self.active_appt_date = "2026-08-10"
+        self.active_appt_check_should_fail = False
 
     async def get_pool(self):
         from unittest.mock import MagicMock, AsyncMock
@@ -94,6 +95,8 @@ class MockDB:
         # interface, or intent_router's broad `except Exception` silently swallows the
         # AttributeError and defaults to "no active appointment", masking this test's
         # whole scenario instead of failing loudly.
+        if self.active_appt_check_should_fail:
+            raise RuntimeError("simulated DB outage")
         if self.has_active_appt:
             return True, self.active_appt_date
         return False, None
@@ -159,6 +162,25 @@ def test_booking_vs_reschedule_ambiguity():
     check(routed_new.action == "proceed_to_business_logic", "Choosing new booking should proceed")
     check(routed_new.intent == "book_appointment", "Intent should remain book_appointment")
 
+    db_mock.has_active_appt = False
+
+
+def test_active_appointment_check_failure_aborts_instead_of_guessing():
+    print("\n--- Running Active-Appointment DB-Failure Tests ---")
+    # If the active-appointment lookup itself fails (DB outage, pool exhaustion under
+    # load, ...), route_intent must NOT silently assume "no active appointment" and let
+    # a book_appointment through -- that would risk a real duplicate booking, worst
+    # exactly when the DB is already under heavy load. It must fail loud instead: return
+    # action="error" and let the caller tell the patient to try again.
+    db_mock.active_appt_check_should_fail = True
+    try:
+        nlu_val = {"intent": "book_appointment", "confidence": "high", "entities": {"specialty": "gyno", "datetime": "2026-08-11"}}
+        routed = asyncio.run(intent_router.route_intent("user_db_failure", nlu_val, "book gynecology for tomorrow"))
+        check(routed.action == "error", "a failed active-appointment check must return action='error', not proceed")
+        check(routed.action != "proceed_to_business_logic", "a failed DB check must never silently let booking through")
+    finally:
+        db_mock.active_appt_check_should_fail = False
+
 def test_confidence_gate_on_zero_slot_intents():
     print("\n--- Running Confidence Gate Tests (cancel/back/greeting) ---")
     # cancel_appointment has no REQUIRED_ENTITIES check (maps to []), so nothing else
@@ -178,7 +200,7 @@ def test_confidence_gate_on_zero_slot_intents():
     # already means every slot passed that check across however many turns it took, so this
     # must report a safe confidence even when the single message that filled the last slot
     # was itself low-confidence (this is exactly turn 3 of test_multi_turn_slot_filling).
-    db_mock.has_active_appt = False  # test_booking_vs_reschedule_ambiguity leaves this True
+    db_mock.has_active_appt = False  # belt-and-suspenders reset; test_booking_vs_reschedule_ambiguity also resets this itself now
     low_conf_but_slots_filled = {"intent": "book_appointment", "confidence": "low", "entities": {"specialty": "gyno", "datetime": "kal"}}
     routed = asyncio.run(intent_router.route_intent("user_conf_3", low_conf_but_slots_filled, "kal"))
     check(routed.action == "proceed_to_business_logic", "slot-filled book_appointment proceeds")
@@ -365,6 +387,7 @@ if __name__ == "__main__":
     test_classify_message_wrapper()
     test_multi_turn_slot_filling()
     test_booking_vs_reschedule_ambiguity()
+    test_active_appointment_check_failure_aborts_instead_of_guessing()
     test_confidence_gate_on_zero_slot_intents()
     test_nlu_confidence_gate_rejection()
     test_stale_session_discarded_on_step_mismatch()

@@ -60,6 +60,12 @@ from app.conversation.checkin import (
     _handle_document_trigger, _handle_doctor_booking_trigger, _handle_checkin_trigger,
     _handle_checkin_awaiting_location, _handle_checkin_choosing_appointment, _finish_checkin,
 )
+from app.conversation.appointment_actions import (
+    _start_appointment_action_flow,
+    _handle_choosing_appointment_to_cancel, _handle_choosing_appointment_to_reschedule,
+    _handle_confirming_appointment_cancel, _handle_confirming_appointment_reschedule,
+    _prompt_appointment_choice, _prompt_appointment_confirm,
+)
 
 logger = logging.getLogger("conversation")
 
@@ -400,7 +406,14 @@ async def handle_message(
                 else:
                     await whatsapp_client.send_text(client, phone, routed.followup_prompt)
                 return
-            
+
+            if routed.action == "error":
+                # intent_router couldn't safely verify this patient doesn't already have an
+                # active appointment (see its own comment) -- rather than silently letting a
+                # booking through unchecked, tell the patient and stop here.
+                await whatsapp_client.send_text(client, phone, t("error_hms", lang or "en"))
+                return
+
             # 3. Flatten NLU result so downstream business logic remains completely untouched
             nlu_result = {
                 "intent": routed.intent,
@@ -1275,169 +1288,11 @@ async def _trigger_step_prompt(client: httpx.AsyncClient, phone: str, step: str,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Cancel / reschedule an EXISTING, already-booked appointment (as opposed to
-# _handle_confirming's "cancel" choice, which only ever abandons an in-progress NEW booking).
-# Entry point is _start_appointment_action_flow, triggered by the cancel_appointment /
-# reschedule_appointment intents above. Real, hard-to-reverse, billing-affecting actions once
-# they reach hms_client — always confirmed via a Yes/No button before the actual API call, never
-# fired straight off a single NLU-classified message.
+# Cancel / reschedule an EXISTING, already-booked appointment now lives in
+# app/conversation/appointment_actions.py -- extracted out of this file (SOLID rebuild,
+# Layer 4 review). _start_appointment_action_flow is still called directly from
+# handle_message above; the rest is only reached via STEP_REGISTRY below.
 # ─────────────────────────────────────────────────────────────────────────────
-
-async def _start_appointment_action_flow(
-    client, phone, context, current_step, action: str, new_date_str: str | None = None
-) -> None:
-    lang = context.get("lang")
-
-    local_candidates = await db.get_booked_appointments_for_phone(phone)
-    live_candidates: dict[str, dict] = {}
-    for c in local_candidates:
-        appt_id = c["hms_appointment_id"]
-        try:
-            detail = await hms_client.get_appointment(appt_id)
-        except HmsApiError:
-            continue
-        appt = detail.get("appointment") if detail.get("success") else None
-        if appt and appt.get("statusCode") not in ("CANCELLED", "COMPLETED"):
-            live_candidates[appt_id] = appt
-
-    if not live_candidates:
-        await whatsapp_client.send_text(client, phone, t("no_active_appointment", lang))
-        await db.clear_conversation_state(phone)
-        return
-
-    if len(live_candidates) == 1:
-        appt_id, appt = next(iter(live_candidates.items()))
-        await _confirm_appointment_action(client, phone, context, current_step, action, appt_id, appt, new_date_str)
-        return
-
-    # More than one live appointment booked through this bot — disambiguate first, same UX as
-    # _handle_checkin_awaiting_location's "candidates" case.
-    new_context = {
-        **context,
-        "appt_action": action,
-        "appt_action_options": live_candidates,
-        "appt_action_new_date": new_date_str,
-    }
-    step = "choosing_appointment_to_cancel" if action == "cancel" else "choosing_appointment_to_reschedule"
-    await _transition_to(phone, step, new_context, current_step)
-    await _send_appointment_choice_list(client, phone, lang, live_candidates)
-
-
-async def _send_appointment_choice_list(client, phone, lang: str | None, options: dict[str, dict]) -> None:
-    rows = [
-        (appt_id, appt.get("doctorName") or "Doctor", appt.get("apptDate") or "")
-        for appt_id, appt in options.items()
-    ]
-    await whatsapp_client.send_list(
-        client, phone, t("choose_appointment_prompt", lang), t("choose_appointment_button", lang), rows,
-    )
-
-
-async def _handle_choosing_appointment_to_cancel(client, phone, input_type, input_value, context) -> None:
-    await _handle_choosing_appointment_candidate(client, phone, input_type, input_value, context, action="cancel")
-
-
-async def _handle_choosing_appointment_to_reschedule(client, phone, input_type, input_value, context) -> None:
-    await _handle_choosing_appointment_candidate(client, phone, input_type, input_value, context, action="reschedule")
-
-
-async def _handle_choosing_appointment_candidate(client, phone, input_type, input_value, context, action: str) -> None:
-    lang = context.get("lang")
-    options = context.get("appt_action_options", {})
-    if input_type != "list_reply" or input_value not in options:
-        # Stale list (e.g. patient tapped an old message) — same guard as
-        # _handle_checkin_choosing_appointment.
-        await _send_appointment_choice_list(client, phone, lang, options)
-        return
-
-    appt_id = input_value
-    appt = options[appt_id]
-    await _confirm_appointment_action(
-        client, phone, context, "choosing_appointment_to_cancel" if action == "cancel" else "choosing_appointment_to_reschedule",
-        action, appt_id, appt, context.get("appt_action_new_date"),
-    )
-
-
-async def _confirm_appointment_action(
-    client, phone, context, current_step, action: str, appt_id: str, appt: dict, new_date_str: str | None
-) -> None:
-    lang = context.get("lang")
-    new_context = {
-        **context,
-        "appt_action": action,
-        "appt_action_id": appt_id,
-        "appt_action_detail": appt,
-        "appt_action_new_date": new_date_str,
-    }
-    new_context.pop("appt_action_options", None)
-    step = "confirming_appointment_cancel" if action == "cancel" else "confirming_appointment_reschedule"
-    await _transition_to(phone, step, new_context, current_step)
-    await _send_appointment_confirm_prompt(client, phone, lang, action, appt, new_date_str)
-
-
-async def _send_appointment_confirm_prompt(client, phone, lang: str | None, action: str, appt: dict, new_date_str: str | None) -> None:
-    if action == "cancel":
-        prompt = t(
-            "confirm_cancel_appointment_prompt", lang,
-            doctor=appt.get("doctorName", "-"), date=appt.get("apptDate", "-"),
-        )
-    else:
-        prompt = t(
-            "confirm_reschedule_appointment_prompt", lang,
-            doctor=appt.get("doctorName", "-"), old_date=appt.get("apptDate", "-"), new_date=new_date_str or "-",
-        )
-    await whatsapp_client.send_buttons(
-        client, phone, prompt,
-        [("confirm", t("confirm_btn", lang)), ("cancel", t("cancel_btn", lang))],
-    )
-
-
-async def _handle_confirming_appointment_cancel(client, phone, input_type, input_value, context) -> None:
-    lang = context.get("lang")
-    choice = _match_choice(input_type, input_value, ["confirm", "cancel"])
-    if choice is None:
-        await whatsapp_client.send_text(client, phone, t("confirm_choose_hint", lang))
-        return
-    if choice == "cancel":
-        await whatsapp_client.send_text(client, phone, t("appointment_action_aborted", lang))
-        await db.clear_conversation_state(phone)
-        return
-
-    appt_id = context["appt_action_id"]
-    result = await hms_client.cancel_appointment(appt_id, mobile=phone)
-    if result.get("success"):
-        await db.mark_appointment_cancelled_locally(appt_id)
-        await whatsapp_client.send_text(client, phone, result.get("message") or t("cancel_appointment_success", lang))
-    else:
-        await whatsapp_client.send_text(client, phone, result.get("message") or t("cancel_appointment_failed", lang))
-    await db.clear_conversation_state(phone)
-
-
-async def _handle_confirming_appointment_reschedule(client, phone, input_type, input_value, context) -> None:
-    lang = context.get("lang")
-    choice = _match_choice(input_type, input_value, ["confirm", "cancel"])
-    if choice is None:
-        await whatsapp_client.send_text(client, phone, t("confirm_choose_hint", lang))
-        return
-    if choice == "cancel":
-        await whatsapp_client.send_text(client, phone, t("appointment_action_aborted", lang))
-        await db.clear_conversation_state(phone)
-        return
-
-    appt_id = context["appt_action_id"]
-    new_date_str = context.get("appt_action_new_date")
-    if not new_date_str:
-        await whatsapp_client.send_text(client, phone, t("reschedule_appointment_failed", lang))
-        await db.clear_conversation_state(phone)
-        return
-
-    result = await hms_client.reschedule_appointment(appt_id, mobile=phone, to_date=date.fromisoformat(new_date_str))
-    if result.get("success"):
-        await db.mark_appointment_rescheduled_locally(appt_id, date.fromisoformat(new_date_str))
-        await whatsapp_client.send_text(client, phone, result.get("message") or t("reschedule_appointment_success", lang))
-    else:
-        await whatsapp_client.send_text(client, phone, result.get("message") or t("reschedule_appointment_failed", lang))
-    await db.clear_conversation_state(phone)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1511,19 +1366,6 @@ async def _prompt_confirming(client, phone, context):
             ("cancel", t("cancel_btn", lang)),
         ],
     )
-
-
-async def _prompt_appointment_choice(client, phone, context):
-    options = context.get("appt_action_options", {})
-    if options:
-        await _send_appointment_choice_list(client, phone, context.get("lang"), options)
-
-
-async def _prompt_appointment_confirm(client, phone, context):
-    lang = context.get("lang")
-    action = context.get("appt_action", "cancel")
-    appt = context.get("appt_action_detail", {})
-    await _send_appointment_confirm_prompt(client, phone, lang, action, appt, context.get("appt_action_new_date"))
 
 
 async def _prompt_checkin_location(client, phone, context):
