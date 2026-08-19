@@ -65,6 +65,8 @@ for _key in [
 
 from app import conversation  # noqa: E402
 from app.messengers.hms_client import HmsApiError  # noqa: E402
+from app.decision_maker import booking_slots  # noqa: E402
+from app.i18n import t  # noqa: E402
 
 failures = []
 
@@ -104,6 +106,7 @@ class _RecordingDb:
         self.cleared = False
         self.cancelled_locally: list[str] = []
         self.rescheduled_locally: list[tuple] = []
+        self.get_booked_calls = 0
 
     async def get_conversation_state(self, phone):
         return self._state
@@ -116,6 +119,7 @@ class _RecordingDb:
         self._state = None
 
     async def get_booked_appointments_for_phone(self, phone):
+        self.get_booked_calls += 1
         return self._booked
 
     async def mark_appointment_cancelled_locally(self, hms_appointment_id):
@@ -289,6 +293,60 @@ def test_confirming_reschedule_confirm_calls_hms_client_with_parsed_date():
     check(any("rescheduled successfully" in t for t in wa_mock.texts), "relays the API's own success message")
 
 
+def test_typed_cancel_with_in_progress_booking_abandons_it_not_a_real_appointment():
+    print("\n--- Typing 'cancel' mid-way through a NEW booking abandons it, doesn't touch a real appointment ---")
+    booking = booking_slots.empty()
+    booking_slots.fill(booking, "lang", "en", source="user")
+    booking_slots.fill(booking, "doctor", {"id": "d1", "fullName": "Dr. Avinash"}, raw="Avinash", source="user")
+    context = {"lang": "en", "booking": booking}
+    # A real, unrelated booked appointment exists -- if the fix regresses, this is what
+    # would get offered for cancellation instead of the in-progress booking being abandoned.
+    db_mock = _RecordingDb(
+        initial_state={"current_step": "awaiting_doctor_name", "context": context},
+        booked_appointments=[{"id": "row1", "hms_appointment_id": "appt-1", "preferred_date": "2026-08-20"}],
+    )
+    wa_mock = _RecordingWhatsApp()
+    nlu_result = {"intent": "cancel_appointment", "entities": {}, "confidence": "high", "detected_language": "en", "language_confidence": "high"}
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), \
+             patch.object(conversation, "whatsapp_client", wa_mock), \
+             patch.object(conversation.intent_router, "db", db_mock), \
+             patch.object(conversation.nlu_client, "classify_message", AsyncMock(return_value=nlu_result)):
+            async with httpx.AsyncClient() as client:
+                await conversation.handle_message(client, "919876543210", "User", "text", "cancel")
+
+    run(_run())
+    check(db_mock.get_booked_calls == 0, "never looks up real booked appointments -- the in-progress booking is what gets abandoned")
+    check(wa_mock.texts == [t("cancelled", "en")], f"sends the plain 'cancelled' message, not a real-appointment prompt, got {wa_mock.texts!r}")
+    check(db_mock.cleared is True, "clears conversation state")
+
+
+def test_typed_cancel_with_no_in_progress_booking_still_resolves_a_real_appointment():
+    print("\n--- Typing 'cancel' with nothing in progress still falls through to real-appointment cancel ---")
+    context = {"lang": "en", "booking": booking_slots.empty()}
+    db_mock = _RecordingDb(
+        initial_state={"current_step": None, "context": context},
+        booked_appointments=[{"id": "row1", "hms_appointment_id": "appt-1", "preferred_date": "2026-08-20"}],
+    )
+    wa_mock = _RecordingWhatsApp()
+    nlu_result = {"intent": "cancel_appointment", "entities": {}, "confidence": "high", "detected_language": "en", "language_confidence": "high"}
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), \
+             patch.object(conversation, "whatsapp_client", wa_mock), \
+             patch.object(conversation.intent_router, "db", db_mock), \
+             patch.object(conversation.nlu_client, "classify_message", AsyncMock(return_value=nlu_result)), \
+             patch.object(conversation.hms_client, "get_appointment", AsyncMock(return_value=_LIVE_APPT)):
+            async with httpx.AsyncClient() as client:
+                await conversation.handle_message(client, "919876543210", "User", "text", "cancel")
+
+    run(_run())
+    check(db_mock.get_booked_calls == 1, "looks up real booked appointments when nothing was in progress")
+    check(db_mock._state is not None and db_mock._state["current_step"] == "confirming_appointment_cancel",
+          "still offers to cancel the real appointment, same as before this fix")
+
+
 if __name__ == "__main__":
     test_no_active_appointment_sends_message_and_clears_state()
     test_single_live_appointment_goes_straight_to_confirmation()
@@ -298,6 +356,8 @@ if __name__ == "__main__":
     test_confirming_cancel_decline_does_not_call_hms_client()
     test_confirming_cancel_server_rejection_surfaces_message_without_crashing()
     test_confirming_reschedule_confirm_calls_hms_client_with_parsed_date()
+    test_typed_cancel_with_in_progress_booking_abandons_it_not_a_real_appointment()
+    test_typed_cancel_with_no_in_progress_booking_still_resolves_a_real_appointment()
 
     print(f"\n{'=' * 60}")
     if failures:

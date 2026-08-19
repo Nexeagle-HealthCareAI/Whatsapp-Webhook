@@ -454,10 +454,30 @@ async def handle_message(
         intent = nlu_result["intent"]
         
         if intent == "cancel_appointment":
-            # Resolved via DB lookup, not slot-filling (see intent_router.REQUIRED_ENTITIES) --
-            # finds this phone's live booked appointment(s) and asks for confirmation before
-            # actually cancelling anything real. Previously this just cleared local chat state
-            # and said "cancelled" without touching a real appointment at all.
+            # A patient typing "cancel" while mid-way through building a NEW, not-yet-booked
+            # appointment (doctor/date/shift/patient already chosen) means "abandon what I'm
+            # doing right now" -- same as the Cancel button on the final confirm screen
+            # (_handle_confirming). Without this check, typing "cancel" here fell straight
+            # into _start_appointment_action_flow below, which looks up REAL, already-booked
+            # appointments -- either hijacking into cancelling an unrelated real booking, or,
+            # if the patient has none, wiping their in-progress work with a confusing
+            # "no active appointment" message instead of a "cancelled" confirmation.
+            booking = context.get("booking") or {}
+            has_in_progress_booking = any(
+                booking.get(slot, {}).get("status") == "filled"
+                for slot in ("location", "doctor", "date", "shift", "patient")
+            )
+            if has_in_progress_booking:
+                await whatsapp_client.send_text(client, phone, t("cancelled", lang))
+                await db.clear_conversation_state(phone)
+                return
+
+            # Nothing in-progress to abandon -- this can only mean a real, already-booked
+            # appointment. Resolved via DB lookup, not slot-filling (see
+            # intent_router.REQUIRED_ENTITIES) -- finds this phone's live booked
+            # appointment(s) and asks for confirmation before actually cancelling anything
+            # real. Previously this just cleared local chat state and said "cancelled"
+            # without touching a real appointment at all.
             await _start_appointment_action_flow(client, phone, context, current_step, action="cancel")
             return
 

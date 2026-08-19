@@ -256,10 +256,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "bn": "ভাষা পরিবর্তন করুন",
     },
     "welcome_banner": {
-        "en": "Welcome! You can type 'cancel' or 'quit' to end this chat anytime, and 'back' to go back 1 step.",
-        "hi": "स्वागत है! आप किसी भी समय बातचीत खत्म करने के लिए 'cancel' या 'quit' टाइप कर सकते हैं, और 1 कदम पीछे जाने के लिए 'back' टाइप करें।",
-        "hg": "Welcome! Aap kabhi bhi chat khatam karne ke liye 'cancel' ya 'quit' type kar sakte hain, aur 1 step peeche jaane ke liye 'back' type karein.",
-        "bn": "স্বাগতম! আপনি যেকোনো সময় চ্যাট শেষ করতে 'cancel' বা 'quit' টাইপ করতে পারেন, এবং ১ ধাপ পিছিয়ে যেতে 'back' টাইপ করুন।",
+        "en": "Welcome! You can type 'quit' to end this chat anytime, and 'back' to go back 1 step.",
+        "hi": "स्वागत है! आप किसी भी समय बातचीत खत्म करने के लिए 'quit' टाइप कर सकते हैं, और 1 कदम पीछे जाने के लिए 'back' टाइप करें।",
+        "hg": "Welcome! Aap kabhi bhi chat khatam karne ke liye 'quit' type kar sakte hain, aur 1 step peeche jaane ke liye 'back' type karein.",
+        "bn": "স্বাগতম! আপনি যেকোনো সময় চ্যাট শেষ করতে 'quit' টাইপ করতে পারেন, এবং ১ ধাপ পিছিয়ে যেতে 'back' টাইপ করুন।",
     },
     "welcome_multilang": {
         "en": (
@@ -473,10 +473,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "bn": "আপনি কোন ডাক্তার বা বিশেষত্বের ফি জানতে চান?",
     },
     "instructions": {
-        "en": "Type 'cancel' or 'quit' to end this chat anytime (just send a new message to start again), and 'back' to go back 1 step.",
-        "hi": "आप किसी भी समय बातचीत खत्म करने के लिए 'cancel' या 'quit' टाइप कर सकते हैं (फिर से शुरू करने के लिए नया संदेश भेजें), और 1 कदम पीछे जाने के लिए 'back' टाइप करें।",
-        "hg": "Aap kabhi bhi chat khatam karne ke liye 'cancel' ya 'quit' type kar sakte hain (phir se shuru karne ke liye naya message bhejein), aur 1 step peeche jaane ke liye 'back' type karein.",
-        "bn": "আপনি যেকোনো সময় চ্যাট শেষ করতে 'cancel' বা 'quit' টাইপ করতে পারেন (আবার শুরু করতে নতুন বার্তা পাঠান), এবং ১ ধাপ পিছিয়ে যেতে 'back' টাইপ করুন।",
+        "en": "Type 'quit' to end this chat anytime (just send a new message to start again), and 'back' to go back 1 step.",
+        "hi": "आप किसी भी समय बातचीत खत्म करने के लिए 'quit' टाइप कर सकते हैं (फिर से शुरू करने के लिए नया संदेश भेजें), और 1 कदम पीछे जाने के लिए 'back' टाइप करें।",
+        "hg": "Aap kabhi bhi chat khatam karne ke liye 'quit' type kar sakte hain (phir se shuru karne ke liye naya message bhejein), aur 1 step peeche jaane ke liye 'back' type karein.",
+        "bn": "আপনি যেকোনো সময় চ্যাট শেষ করতে 'quit' টাইপ করতে পারেন (আবার শুরু করতে নতুন বার্তা পাঠান), এবং ১ ধাপ পিছিয়ে যেতে 'back' টাইপ করুন।",
     },
     "specialty_list_prompt": {
         "en": "Good — which of these fits best?",
