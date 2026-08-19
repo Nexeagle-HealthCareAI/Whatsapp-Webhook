@@ -48,6 +48,15 @@ class Settings(BaseSettings):
     # requires that calling the model directly wouldn't have needed.
     symptom_api_base_url: str = "http://host.docker.internal:82"
 
+    # Location-search API (app/messengers/location_client.py) — takes a typed place name and
+    # returns up to `limit` real, canonical matches (city/district/town, state, coordinates)
+    # so a typed city can be disambiguated the same way an ambiguous doctor/hospital name
+    # already is, instead of the old single-guess-or-nothing local match against 1HMS's own
+    # (much smaller) set of cities that happen to already have a doctor registered. Dev
+    # subdomain for now — the prod one (loc.nexeagle.com) is currently down (TLS handshake
+    # failing server-side); swap this once that's fixed, no code change needed either way.
+    location_api_base_url: str = "https://loc-dev.nexeagle.com"
+
     # City index (app/city_index.py) — maps a patient's shared GPS onto a city name that
     # /public/doctors?city= will match, built from 1HMS's own doctor data rather than a
     # hard-coded town list. Rebuilt at most once a day; the whole directory is paged through

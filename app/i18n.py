@@ -345,6 +345,18 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Hamein '{query}' naam se koi city nahi mili. Kripya location share karein ya sahi city ka naam type karein.",
         "bn": "আমরা '{query}' নামের কোনো शहर খুঁজে পাইনি। অনুগ্রহ করে অবস্থান শেয়ার করুন বা সঠিক শহরের নাম টাইপ করুন।",
     },
+    "location_match_list_prompt": {
+        "en": "We found a few places matching '{query}' — which one did you mean?",
+        "hi": "'{query}' से मिलती-जुलती कुछ जगहें मिलीं — आपका मतलब कौन सी है?",
+        "hg": "'{query}' se milti-julti kuch jagah mili — aapka matlab kaunsi hai?",
+        "bn": "'{query}' এর সাথে মিলে যায় এমন কয়েকটি জায়গা পাওয়া গেছে — আপনি কোনটি বোঝাতে চেয়েছেন?",
+    },
+    "location_match_list_button": {
+        "en": "Choose place",
+        "hi": "जगह चुनें",
+        "hg": "Jagah chunein",
+        "bn": "জায়গা বেছে নিন",
+    },
     "search_mode_prompt": {
         "en": "How would you like to find a doctor?",
         "hi": "आप डॉक्टर कैसे खोजना चाहेंगे?",

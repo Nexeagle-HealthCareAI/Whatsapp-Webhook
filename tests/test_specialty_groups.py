@@ -66,7 +66,7 @@ from datetime import date, timedelta  # noqa: E402
 
 from app import conversation, i18n, nlu_client  # noqa: E402
 from app.config import settings  # noqa: E402
-from app.messengers import city_index  # noqa: E402
+from app.messengers import city_index, location_client  # noqa: E402
 from app.messengers.whatsapp_client import (  # noqa: E402
     _MAX_BUTTON_TITLE,
     _MAX_LIST_ROWS,
@@ -1067,6 +1067,11 @@ def test_first_message_nlu_symptom_routing():
         return [{"category": "Gynaecologist"}]
     conversation.hms_client.list_specialties = mock_list_specialties
 
+    original_search_locations = location_client.search_locations
+    async def mock_search_locations(query, limit=5):
+        return [{"name": "Kishanganj", "type": "city", "state": "Bihar", "coordinates": None}]
+    location_client.search_locations = mock_search_locations
+
     sent_texts = []
     sent_buttons = []
     sent_lists = []
@@ -1134,6 +1139,7 @@ def test_first_message_nlu_symptom_routing():
         conversation.nlu_client.classify_message = original_classify
         conversation.symptom_client.route_symptom = original_route_symptom
         conversation.hms_client.list_specialties = original_list_specialties
+        location_client.search_locations = original_search_locations
         conversation.whatsapp_client.send_text = original_send_text
         conversation.whatsapp_client.send_text_direct = original_send_text_direct
         conversation.whatsapp_client.send_buttons = original_send_buttons
@@ -1598,6 +1604,11 @@ def test_previously_dropped_intents_now_handled():
         return {"Kishanganj": [[26.10, 87.95]], "Patna": [[25.61, 85.14]]}
     conversation.city_index.get_index = mock_get_index
 
+    original_search_locations = location_client.search_locations
+    async def mock_search_locations(query, limit=5):
+        return [{"name": "Kishanganj", "type": "city", "state": "Bihar", "coordinates": None}]
+    location_client.search_locations = mock_search_locations
+
     try:
         # 1. ask_pricing + a name matching exactly one doctor -> a fee, not a dropped message
         mock_nlu_val.update({"intent": "ask_pricing", "entities": {"doctor_name": "Manoj"}})
@@ -1649,6 +1660,7 @@ def test_previously_dropped_intents_now_handled():
         conversation.hms_client.list_doctors = original_list_doctors
         conversation.symptom_client.route_symptom = original_route_symptom
         conversation.city_index.get_index = original_get_index
+        location_client.search_locations = original_search_locations
 
 
 def test_data_bearing_steps_are_never_model_phrased():
@@ -2634,12 +2646,16 @@ def test_guardian_is_optional_in_patient_details():
 def test_unresolved_location_reprompts_instead_of_silently_advancing():
     """Live-reported bug: a generic booking request with no doctor/symptom/specialty named
     (e.g. "Mujhe kal subah appointment chahiye") correctly asks for location. But when the
-    typed city fails to resolve (e.g. "kishaganj", missing the 'n' in "Kishanganj" -- city_index
-    has no fuzzy/typo tolerance, see match_typed_city), the conversation silently jumped straight
-    to "Aap symptom ke hisaab se search karna chahte hain ya doctor ke naam se?" (choosing_search_mode)
-    with NO "couldn't find that city" message at all -- the patient had no idea their location
-    wasn't understood. Later, once a symptom/specialty search actually needed a location, the bot
+    typed city fails to resolve, the conversation silently jumped straight to "Aap symptom ke
+    hisaab se search karna chahte hain ya doctor ke naam se?" (choosing_search_mode) with NO
+    "couldn't find that city" message at all -- the patient had no idea their location wasn't
+    understood. Later, once a symptom/specialty search actually needed a location, the bot
     asked for it again, which read as a confusing duplicate ask for something already answered.
+
+    location_client.search_locations is mocked to return zero matches here -- the real
+    geocoder it now calls first (see app/conversation/location.py) is typo-tolerant enough
+    that a plain misspelling like "kishaganj" may well resolve on its own; this test is about
+    the "genuinely nothing matched" path specifically, not about how good the geocoder is.
 
     Root cause: booking_slots.next_action() correctly returns ("retry", "location") when the
     location slot is marked notfound, but _step_for_action had no case for action=="retry" with
@@ -2688,6 +2704,12 @@ def test_unresolved_location_reprompts_instead_of_silently_advancing():
     conversation.whatsapp_client.send_text_direct = mock_send_text
     conversation.whatsapp_client.send_location_request = mock_send_loc_req
 
+    async def mock_search_locations(query, limit=5):
+        return []
+
+    original_search_locations = location_client.search_locations
+    location_client.search_locations = mock_search_locations
+
     mock_client = object()
     try:
         # Fresh clipboard, lang already known, sitting on choosing_location -- exactly the
@@ -2715,6 +2737,7 @@ def test_unresolved_location_reprompts_instead_of_silently_advancing():
         conversation.whatsapp_client.send_text = original_send_text
         conversation.whatsapp_client.send_text_direct = original_send_text_direct
         conversation.whatsapp_client.send_location_request = original_send_loc
+        location_client.search_locations = original_search_locations
 
 
 if __name__ == "__main__":

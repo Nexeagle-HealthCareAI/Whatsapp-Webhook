@@ -33,7 +33,7 @@ from app.conversation.language import (
     _detect_language, _confirm_or_start_language, _start,
     _handle_choosing_language, _handle_confirming_language,
 )
-from app.conversation.location import _send_location_request, _resolve_city, _handle_choosing_location
+from app.conversation.location import _send_location_request, _resolve_city, _handle_choosing_location, _send_location_match_list
 from app.conversation.specialty_browsing import (
     _specialty_row, _groups_with_live_categories,
     _send_search_mode_prompt, _handle_choosing_search_mode, _handle_awaiting_symptom,
@@ -617,6 +617,14 @@ async def handle_message(
             if location_text:
                 new_context = {**context, "location_text": location_text}
                 new_context = await _resolve_city(new_context)
+                if new_context.get("location_options"):
+                    booking = _get_or_create_clipboard(new_context)
+                    booking_slots.mark_ambiguous(booking, "location", list(new_context["location_options"].keys()), raw=location_text)
+                    new_context["booking"] = booking
+                    await _transition_to(phone, "choosing_location", new_context, current_step)
+                    await _send_location_match_list(client, phone, new_context)
+                    return
+
                 if "booking" in new_context:
                     booking = _get_or_create_clipboard(new_context)
                     if new_context.get("city"):
@@ -1353,6 +1361,9 @@ async def _prompt_confirming_language(client, phone, context):
 
 async def _prompt_choosing_location(client, phone, context):
     booking = _get_or_create_clipboard(context)
+    if booking["location"]["status"] == "ambiguous":
+        await _send_location_match_list(client, phone, context)
+        return
     if booking["location"]["status"] == "notfound":
         query = booking["location"]["raw"] or ""
         await whatsapp_client.send_text(client, phone, t("location_not_found", context.get("lang"), query=query))
