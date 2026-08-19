@@ -5,6 +5,18 @@ Drains app/messengers/outbound_queue.py's whatsapp:outbox at a steady, Meta-safe
 its own process, same convention as worker.py (inbound) and scheduler.py (follow-ups).
 See app/messengers/outbound_queue.py for the durability/retry/backoff design this relies
 on; this file is just the loop that uses it.
+
+Jobs are dequeued in order but fired as independent concurrent tasks for throughput -- one
+slow/rate-limited HTTP round-trip to Meta must not stall every other message behind it. That
+concurrency has a real cost, though: nothing then guarantees the FIRST job's HTTP call
+actually *completes* before the second one's does, so two messages queued back-to-back for
+the same patient (e.g. a language-confirmation text immediately followed by the
+location-request prompt) could arrive on their phone out of order -- live-reported. main()'s
+per-recipient task chaining below fixes that: a job for a phone number that already has one
+in flight waits for it to finish first, so messages to the SAME recipient are strictly
+ordered, while different recipients' sends stay fully concurrent -- no throughput lost across
+the conversations that matter for the 70/sec rate limit, only serialized where it's actually
+needed.
 """
 
 import asyncio
@@ -62,6 +74,38 @@ async def _attempt_send(client: httpx.AsyncClient, redis, raw_job: str) -> None:
     await redis.lrem(PROCESSING_KEY, 1, raw_job)
 
 
+def dispatch_job(
+    client: httpx.AsyncClient,
+    redis,
+    raw_job: str,
+    last_task_per_phone: dict[str, asyncio.Task],
+    background_tasks: set[asyncio.Task],
+) -> asyncio.Task:
+    """Schedules one dequeued job, chaining it behind any still-in-flight send to the SAME
+    recipient (see module docstring) while leaving different recipients fully concurrent.
+    Mutates last_task_per_phone/background_tasks in place; returns the scheduled task."""
+    to = json.loads(raw_job).get("payload", {}).get("to")
+    prev_task = last_task_per_phone.get(to) if to else None
+
+    async def _run_in_order(prev: asyncio.Task | None = prev_task, job: str = raw_job) -> None:
+        if prev is not None:
+            try:
+                await prev
+            except Exception:
+                pass  # only waiting for it to finish, not chaining its failure
+        await _attempt_send(client, redis, job)
+
+    task = asyncio.create_task(_run_in_order())
+    background_tasks.add(task)
+    task.add_done_callback(background_tasks.discard)
+    if to:
+        last_task_per_phone[to] = task
+        task.add_done_callback(
+            lambda t, phone=to: last_task_per_phone.pop(phone, None) if last_task_per_phone.get(phone) is t else None
+        )
+    return task
+
+
 async def main() -> None:
     redis = get_redis()
     async with httpx.AsyncClient(timeout=10) as client:
@@ -70,7 +114,11 @@ async def main() -> None:
             OUTBOX_KEY,
             settings.whatsapp_send_rate_limit,
         )
-        background_tasks = set()
+        background_tasks: set[asyncio.Task] = set()
+        # Latest in-flight task per recipient -- see module docstring for why this exists.
+        # Pruned via each task's own done-callback, so this only ever holds entries for
+        # phones with a send genuinely still in flight, not every phone ever seen.
+        last_task_per_phone: dict[str, asyncio.Task] = {}
         while True:
             await promote_ready_delayed_jobs(redis)
 
@@ -82,9 +130,7 @@ async def main() -> None:
             if raw_job is None:
                 continue
 
-            task = asyncio.create_task(_attempt_send(client, redis, raw_job))
-            background_tasks.add(task)
-            task.add_done_callback(background_tasks.discard)
+            dispatch_job(client, redis, raw_job, last_task_per_phone, background_tasks)
 
 
 if __name__ == "__main__":
