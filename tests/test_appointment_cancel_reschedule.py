@@ -293,17 +293,51 @@ def test_confirming_reschedule_confirm_calls_hms_client_with_parsed_date():
     check(any("rescheduled successfully" in t for t in wa_mock.texts), "relays the API's own success message")
 
 
-def test_typed_cancel_with_in_progress_booking_abandons_it_not_a_real_appointment():
-    print("\n--- Typing 'cancel' mid-way through a NEW booking abandons it, doesn't touch a real appointment ---")
+def test_typed_cancel_prioritizes_a_real_appointment_over_a_leftover_in_progress_booking():
+    print("\n--- Typing 'cancel' with a real appointment on file always wins over stale in-progress-booking data ---")
+    # Live-reported bug: a long-abandoned draft booking (started once, never finished, never
+    # cleared) sitting in the clipboard was mistaken for something actively "in progress right
+    # now", so "cancel my appointment" answered with a generic "cancelled, start over" message
+    # instead of ever looking up the patient's real appointment. A real, locally-recorded
+    # appointment must always take priority, regardless of any leftover draft data.
     booking = booking_slots.empty()
     booking_slots.fill(booking, "lang", "en", source="user")
     booking_slots.fill(booking, "doctor", {"id": "d1", "fullName": "Dr. Avinash"}, raw="Avinash", source="user")
     context = {"lang": "en", "booking": booking}
-    # A real, unrelated booked appointment exists -- if the fix regresses, this is what
-    # would get offered for cancellation instead of the in-progress booking being abandoned.
     db_mock = _RecordingDb(
         initial_state={"current_step": "awaiting_doctor_name", "context": context},
         booked_appointments=[{"id": "row1", "hms_appointment_id": "appt-1", "preferred_date": "2026-08-20"}],
+    )
+    wa_mock = _RecordingWhatsApp()
+    nlu_result = {"intent": "cancel_appointment", "entities": {}, "confidence": "high", "detected_language": "en", "language_confidence": "high"}
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), \
+             patch.object(conversation, "whatsapp_client", wa_mock), \
+             patch.object(conversation.intent_router, "db", db_mock), \
+             patch.object(conversation.nlu_client, "classify_message", AsyncMock(return_value=nlu_result)), \
+             patch.object(conversation.hms_client, "get_appointment", AsyncMock(return_value=_LIVE_APPT)):
+            async with httpx.AsyncClient() as client:
+                await conversation.handle_message(client, "919876543210", "User", "text", "cancel")
+
+    run(_run())
+    check(db_mock.get_booked_calls == 1, "looks up real booked appointments even with a stale in-progress booking present")
+    check(
+        db_mock._state is not None and db_mock._state["current_step"] == "confirming_appointment_cancel",
+        f"offers to cancel the real appointment instead of just abandoning the draft, got {db_mock._state!r}",
+    )
+    check(t("cancelled", "en") not in wa_mock.texts, "must not silently answer with the generic abandon message when a real appointment exists")
+
+
+def test_typed_cancel_abandons_in_progress_booking_only_when_no_real_appointment_exists():
+    print("\n--- Typing 'cancel' mid-way through a NEW booking abandons it when there's no real appointment to check ---")
+    booking = booking_slots.empty()
+    booking_slots.fill(booking, "lang", "en", source="user")
+    booking_slots.fill(booking, "doctor", {"id": "d1", "fullName": "Dr. Avinash"}, raw="Avinash", source="user")
+    context = {"lang": "en", "booking": booking}
+    db_mock = _RecordingDb(
+        initial_state={"current_step": "awaiting_doctor_name", "context": context},
+        booked_appointments=[],
     )
     wa_mock = _RecordingWhatsApp()
     nlu_result = {"intent": "cancel_appointment", "entities": {}, "confidence": "high", "detected_language": "en", "language_confidence": "high"}
@@ -317,7 +351,6 @@ def test_typed_cancel_with_in_progress_booking_abandons_it_not_a_real_appointmen
                 await conversation.handle_message(client, "919876543210", "User", "text", "cancel")
 
     run(_run())
-    check(db_mock.get_booked_calls == 0, "never looks up real booked appointments -- the in-progress booking is what gets abandoned")
     check(wa_mock.texts == [t("cancelled", "en")], f"sends the plain 'cancelled' message, not a real-appointment prompt, got {wa_mock.texts!r}")
     check(db_mock.cleared is True, "clears conversation state")
 
@@ -356,7 +389,8 @@ if __name__ == "__main__":
     test_confirming_cancel_decline_does_not_call_hms_client()
     test_confirming_cancel_server_rejection_surfaces_message_without_crashing()
     test_confirming_reschedule_confirm_calls_hms_client_with_parsed_date()
-    test_typed_cancel_with_in_progress_booking_abandons_it_not_a_real_appointment()
+    test_typed_cancel_prioritizes_a_real_appointment_over_a_leftover_in_progress_booking()
+    test_typed_cancel_abandons_in_progress_booking_only_when_no_real_appointment_exists()
     test_typed_cancel_with_no_in_progress_booking_still_resolves_a_real_appointment()
 
     print(f"\n{'=' * 60}")

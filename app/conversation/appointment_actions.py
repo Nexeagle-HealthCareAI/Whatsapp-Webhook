@@ -35,13 +35,42 @@ from app.i18n import t
 from app.conversation.shared import _match_choice
 
 
+def _has_in_progress_booking(context) -> bool:
+    """True if the clipboard has any real progress on a NEW, not-yet-booked appointment
+    (location/doctor/date/shift/patient already chosen) -- used only to decide what a bare
+    "cancel" should abandon when there's no real appointment to check against instead. This
+    is deliberately private to this file: cancel/reschedule decision-making for an existing
+    appointment belongs entirely to this Specialist, not the Conductor (__init__.py), which
+    should only ever need to call _start_appointment_action_flow and nothing more."""
+    booking = context.get("booking") or {}
+    return any(
+        booking.get(slot, {}).get("status") == "filled"
+        for slot in ("location", "doctor", "date", "shift", "patient")
+    )
+
+
 async def _start_appointment_action_flow(
-    client, phone, context, current_step, action: str, new_date_str: str | None = None
+    client, phone, context, current_step, action: str, new_date_str: str | None = None,
 ) -> None:
+    """Entry point for the cancel_appointment / reschedule_appointment intents -- the
+    Conductor (handle_message in __init__.py) only ever routes the intent here, every actual
+    decision happens in this Specialist: whether a real appointment exists, whether to
+    disambiguate between several, and (for action=="cancel" specifically) whether a bare
+    "cancel" with no real appointment should instead abandon an in-progress draft booking.
+    Keeping all of that here, not split between here and the Conductor, is deliberate --
+    see _has_in_progress_booking above."""
     from app import conversation
 
     lang = context.get("lang")
 
+    # A real, already-booked appointment always takes priority over any leftover
+    # in-progress-booking clipboard data -- a patient asking to cancel almost always means
+    # "my real appointment", and a locally-recorded row is a strong, cheap (no HMS call yet)
+    # signal one might exist. Checking this FIRST fixed a live-reported bug: a stale,
+    # long-abandoned draft booking (started once, never finished, never cleared) was being
+    # mistaken for something actively "in progress right now", so "cancel my appointment"
+    # silently answered with a generic "cancelled, start over" message instead of ever
+    # looking up the patient's real appointment.
     local_candidates = await conversation.db.get_booked_appointments_for_phone(phone)
     live_candidates: dict[str, dict] = {}
     for c in local_candidates:
@@ -55,6 +84,16 @@ async def _start_appointment_action_flow(
             live_candidates[appt_id] = appt
 
     if not live_candidates:
+        # No real appointment at all. A patient typing "cancel" while mid-way through
+        # building a NEW, not-yet-booked appointment means "abandon what I'm doing right
+        # now" -- same as the Cancel button on the final confirm screen (_handle_confirming
+        # in __init__.py). Reschedule has no equivalent "abandon a draft" meaning, so this
+        # only applies to action == "cancel".
+        if action == "cancel" and _has_in_progress_booking(context):
+            await conversation.whatsapp_client.send_text(client, phone, t("cancelled", lang))
+            await conversation.db.clear_conversation_state(phone)
+            return
+
         await conversation.whatsapp_client.send_text(client, phone, t("no_active_appointment", lang))
         await conversation.db.clear_conversation_state(phone)
         return
