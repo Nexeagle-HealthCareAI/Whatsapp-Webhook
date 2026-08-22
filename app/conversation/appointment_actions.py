@@ -27,12 +27,33 @@ is therefore made via a function-body-local `from app import conversation` +
 same reasoning applied consistently across every sibling file.
 """
 
-from datetime import date
+from datetime import date, timedelta
 
 from app.messengers import hms_client
 from app.messengers.hms_client import HmsApiError
 from app.i18n import t
 from app.conversation.shared import _match_choice
+
+
+def _is_appointment_stale(appt: dict, clinic_today: date) -> bool:
+    """Defensive safety net alongside the statusCode check below: statusCode is 1HMS's own
+    live/cancellable signal and is trusted as the primary one, but if it's ever stale (not
+    yet flipped to COMPLETED even though the appointment's date has clearly passed), this
+    stops something from days ago still being offered for cancellation. A 1-day grace period
+    past the scheduled date, not an hours-precision cutoff -- this bot never learns an
+    appointment's real scheduled TIME (see hms_client.book_appointment's own docstring:
+    PreferredTime is deliberately left unset, the front desk picks the actual time), so
+    apptDate is date-only (always midnight on the wire) and an hour-level comparison against
+    it wouldn't be meaningful. Unparseable dates fail open (kept, not excluded) -- 1HMS's own
+    cancel endpoint is still the final, authoritative check once the patient actually confirms."""
+    raw = appt.get("apptDate")
+    if not raw:
+        return False
+    try:
+        appt_date = date.fromisoformat(raw[:10])
+    except (ValueError, TypeError):
+        return False
+    return appt_date < clinic_today - timedelta(days=1)
 
 
 def _has_in_progress_booking(context) -> bool:
@@ -71,6 +92,10 @@ async def _start_appointment_action_flow(
     # mistaken for something actively "in progress right now", so "cancel my appointment"
     # silently answered with a generic "cancelled, start over" message instead of ever
     # looking up the patient's real appointment.
+    # _clinic_now, not a naive UTC now() -- the Docker image sets no TZ, so date.today()
+    # there is the UTC date, which runs behind IST; see _clinic_now's own docstring.
+    clinic_today = conversation._clinic_now().date()
+
     local_candidates = await conversation.db.get_booked_appointments_for_phone(phone)
     live_candidates: dict[str, dict] = {}
     for c in local_candidates:
@@ -80,7 +105,7 @@ async def _start_appointment_action_flow(
         except HmsApiError:
             continue
         appt = detail.get("appointment") if detail.get("success") else None
-        if appt and appt.get("statusCode") not in ("CANCELLED", "COMPLETED"):
+        if appt and appt.get("statusCode") not in ("CANCELLED", "COMPLETED") and not _is_appointment_stale(appt, clinic_today):
             live_candidates[appt_id] = appt
 
     if not live_candidates:

@@ -9,6 +9,7 @@ import asyncio
 import os
 import sys
 import types
+from datetime import date, timedelta
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -129,8 +130,12 @@ class _RecordingDb:
         self.rescheduled_locally.append((hms_appointment_id, new_date))
 
 
-_LIVE_APPT = {"success": True, "appointment": {"appointmentId": "appt-1", "doctorName": "Dr. A", "apptDate": "2026-08-20", "statusCode": "FUTURE"}}
-_LIVE_APPT_2 = {"success": True, "appointment": {"appointmentId": "appt-2", "doctorName": "Dr. B", "apptDate": "2026-08-21", "statusCode": "FUTURE"}}
+# Dynamic, not hardcoded -- a fixed past date would eventually fall outside
+# _is_appointment_stale's 1-day grace window as real calendar time moves past it.
+_TOMORROW = (date.today() + timedelta(days=1)).isoformat()
+_DAY_AFTER = (date.today() + timedelta(days=2)).isoformat()
+_LIVE_APPT = {"success": True, "appointment": {"appointmentId": "appt-1", "doctorName": "Dr. A", "apptDate": _TOMORROW, "statusCode": "FUTURE"}}
+_LIVE_APPT_2 = {"success": True, "appointment": {"appointmentId": "appt-2", "doctorName": "Dr. B", "apptDate": _DAY_AFTER, "statusCode": "FUTURE"}}
 
 
 def test_no_active_appointment_sends_message_and_clears_state():
@@ -212,6 +217,51 @@ def test_cancelled_local_candidate_is_filtered_out_via_live_reverification():
     run(_run())
     check(len(wa_mock.texts) == 1, "treats it as having no active appointment")
     check(db_mock.cleared is True, "clears conversation state rather than confirming a cancel on an already-cancelled appointment")
+
+
+def test_appointment_more_than_a_day_past_its_date_is_excluded_even_if_status_is_stale():
+    print("\n--- statusCode stuck on FUTURE for a many-days-old appointment -- date-based safety net catches it ---")
+    # 1HMS's statusCode is the primary live/cancellable signal, but if it's ever stale (not
+    # flipped to COMPLETED even though the date has clearly passed), this date-level check is
+    # the defensive backstop -- a 1-day grace period, not hours, since apptDate is date-only.
+    long_past = (date.today() - timedelta(days=5)).isoformat()
+    db_mock = _RecordingDb(booked_appointments=[{"id": "row1", "hms_appointment_id": "appt-1", "preferred_date": long_past}])
+    wa_mock = _RecordingWhatsApp()
+    context = {"lang": "en"}
+    stuck = {"success": True, "appointment": {"appointmentId": "appt-1", "doctorName": "Dr. A", "apptDate": long_past, "statusCode": "FUTURE"}}
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), \
+             patch.object(conversation, "whatsapp_client", wa_mock), \
+             patch.object(conversation.hms_client, "get_appointment", AsyncMock(return_value=stuck)):
+            async with httpx.AsyncClient() as client:
+                await conversation._start_appointment_action_flow(client, "919876543210", context, None, action="cancel")
+
+    run(_run())
+    check(len(wa_mock.texts) == 1, "treats a many-days-old appointment as not active, even with statusCode still FUTURE")
+    check(db_mock.cleared is True, "clears conversation state")
+
+
+def test_appointment_from_yesterday_is_still_within_the_grace_window():
+    print("\n--- Yesterday's appointment is still offered -- the grace period isn't same-day only ---")
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    db_mock = _RecordingDb(booked_appointments=[{"id": "row1", "hms_appointment_id": "appt-1", "preferred_date": yesterday}])
+    wa_mock = _RecordingWhatsApp()
+    context = {"lang": "en"}
+    recent = {"success": True, "appointment": {"appointmentId": "appt-1", "doctorName": "Dr. A", "apptDate": yesterday, "statusCode": "FUTURE"}}
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), \
+             patch.object(conversation, "whatsapp_client", wa_mock), \
+             patch.object(conversation.hms_client, "get_appointment", AsyncMock(return_value=recent)):
+            async with httpx.AsyncClient() as client:
+                await conversation._start_appointment_action_flow(client, "919876543210", context, None, action="cancel")
+
+    run(_run())
+    check(
+        db_mock._state is not None and db_mock._state["current_step"] == "confirming_appointment_cancel",
+        f"yesterday's appointment is still within the 1-day grace period, got {db_mock._state!r}",
+    )
 
 
 def test_confirming_cancel_confirm_calls_hms_client_and_updates_local_status():
@@ -385,6 +435,8 @@ if __name__ == "__main__":
     test_single_live_appointment_goes_straight_to_confirmation()
     test_multiple_live_appointments_offers_disambiguation_list()
     test_cancelled_local_candidate_is_filtered_out_via_live_reverification()
+    test_appointment_more_than_a_day_past_its_date_is_excluded_even_if_status_is_stale()
+    test_appointment_from_yesterday_is_still_within_the_grace_window()
     test_confirming_cancel_confirm_calls_hms_client_and_updates_local_status()
     test_confirming_cancel_decline_does_not_call_hms_client()
     test_confirming_cancel_server_rejection_surfaces_message_without_crashing()
