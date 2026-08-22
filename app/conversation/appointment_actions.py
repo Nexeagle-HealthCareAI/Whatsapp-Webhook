@@ -226,18 +226,17 @@ async def _confirm_appointment_action(
     lang = context.get("lang")
 
     if action == "status":
-        # Read-only -- there's nothing to confirm, so no Yes/No button implying an action is
-        # about to happen. A plain "cancel my appointment?" Confirm/Cancel prompt here would
-        # be misleading for a patient who only asked whether they have a booking at all
-        # (check_my_appointment) -- live-reported.
-        await conversation.whatsapp_client.send_text(
-            client, phone, t(
-                "appointment_status_message", lang,
-                patient=appt.get("patient_name") or t("you", lang),
-                doctor=appt.get("doctor_name", "-"), date=appt.get("appt_date", "-"),
-            ),
-        )
-        await conversation.db.clear_conversation_state(phone)
+        # Read-only -- no Yes/No button implying an action is about to happen (a plain
+        # "cancel my appointment?" Confirm/Cancel prompt here would be misleading for a
+        # patient who only asked whether they have a booking at all -- live-reported). But
+        # the patient may well want to act on what they just saw, so the status message
+        # offers real next steps as buttons instead of leaving them to type a follow-up.
+        # State is kept (not cleared) so tapping one of those buttons works -- see
+        # _handle_viewing_appointment_status.
+        new_context = {**context, "appt_action_id": appt_id, "appt_action_detail": appt}
+        new_context.pop("appt_action_options", None)
+        await conversation._transition_to(phone, "viewing_appointment_status", new_context, current_step)
+        await _send_appointment_status(client, phone, lang, appt)
         return
 
     new_context = {
@@ -270,6 +269,84 @@ async def _send_appointment_confirm_prompt(client, phone, lang: str | None, acti
         client, phone, prompt,
         [("confirm", t("confirm_btn", lang)), ("cancel", t("cancel_btn", lang))],
     )
+
+
+async def _send_appointment_status(client, phone, lang: str | None, appt: dict) -> None:
+    from app import conversation
+
+    message = t(
+        "appointment_status_message", lang,
+        patient=appt.get("patient_name") or t("you", lang),
+        doctor=appt.get("doctor_name", "-"), date=appt.get("appt_date", "-"),
+    )
+    # "start_booking" reuses the exact button/handler already offered on the
+    # no-active-appointment screen (see __init__.py's handle_message) -- it's intercepted
+    # there regardless of conversation state, so no new handling is needed for it here.
+    await conversation.whatsapp_client.send_buttons(
+        client, phone, message,
+        [
+            ("cancel_this_appointment", t("cancel_appointment_btn", lang)),
+            ("update_this_appointment", t("update_appointment_btn", lang)),
+            ("start_booking", t("book_appointment_btn", lang)),
+        ],
+    )
+
+
+async def _handle_viewing_appointment_status(client, phone, input_type, input_value, context) -> None:
+    """Follow-up taps on the read-only status message (_send_appointment_status). Cancel
+    re-enters the exact same confirm-before-acting flow a direct cancel_appointment would --
+    tapping this button here IS the patient's explicit intent to cancel, unlike arriving at
+    check_my_appointment in the first place, so showing the Confirm/Cancel prompt now is
+    correct, not misleading."""
+    from app import conversation
+
+    lang = context.get("lang")
+    appt_id = context.get("appt_action_id")
+    appt = context.get("appt_action_detail")
+    if input_type != "button_reply" or not appt_id or not appt:
+        await _send_appointment_status(client, phone, lang, appt or {})
+        return
+
+    if input_value == "cancel_this_appointment":
+        await _confirm_appointment_action(client, phone, context, "viewing_appointment_status", "cancel", appt_id, appt, None)
+        return
+
+    if input_value == "update_this_appointment":
+        new_context = {**context, "appt_action_id": appt_id, "appt_action_detail": appt}
+        await conversation._transition_to(phone, "awaiting_reschedule_date", new_context, "viewing_appointment_status")
+        await conversation.whatsapp_client.send_text(client, phone, t("reschedule_new_date_prompt", lang))
+        return
+
+    # Stale tap or typed text -- re-show the same status + buttons rather than guess.
+    await _send_appointment_status(client, phone, lang, appt)
+
+
+async def _handle_awaiting_reschedule_date(client, phone, input_type, input_value, context) -> None:
+    from app.decision_maker.normalizer import normalize_datetime_to_date
+    from app import conversation
+
+    lang = context.get("lang")
+    appt_id = context.get("appt_action_id")
+    appt = context.get("appt_action_detail")
+
+    new_date_str = normalize_datetime_to_date(input_value.strip()) if input_type == "text" and input_value.strip() else None
+    if not new_date_str:
+        await conversation.whatsapp_client.send_text(client, phone, t("reschedule_date_not_understood", lang))
+        return
+
+    await _confirm_appointment_action(client, phone, context, "awaiting_reschedule_date", "reschedule", appt_id, appt, new_date_str)
+
+
+async def _prompt_viewing_appointment_status(client, phone, context) -> None:
+    appt = context.get("appt_action_detail")
+    if appt:
+        await _send_appointment_status(client, phone, context.get("lang"), appt)
+
+
+async def _prompt_awaiting_reschedule_date(client, phone, context) -> None:
+    from app import conversation
+
+    await conversation.whatsapp_client.send_text(client, phone, t("reschedule_new_date_prompt", context.get("lang")))
 
 
 async def _handle_confirming_appointment_cancel(client, phone, input_type, input_value, context) -> None:

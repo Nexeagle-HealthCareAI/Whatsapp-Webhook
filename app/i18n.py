@@ -891,10 +891,38 @@ _STRINGS: dict[str, dict[str, str]] = {
         # appointment" -- {patient} falls back to t("you", lang) ("You") when no name was
         # captured at booking time, and "You has" is a verb-agreement bug that phrasing would
         # hit; this construction reads correctly either way, with a real name or the fallback.
-        "en": "Yes, there's an upcoming appointment for {patient} with {doctor} on {date}. Send \"cancel my appointment\" if you'd like to cancel it.",
-        "hi": "जी हाँ, {patient} के लिए {doctor} के साथ {date} को एक आने वाली अपॉइंटमेंट है। रद्द करने के लिए \"cancel my appointment\" भेजें।",
-        "hg": "Ji haan, {patient} ke liye {doctor} ke saath {date} ko ek upcoming appointment hai. Cancel karne ke liye \"cancel my appointment\" bhejein.",
-        "bn": "হ্যাঁ, {patient}-এর জন্য {doctor}-এর সাথে {date} তারিখে একটি আসন্ন অ্যাপয়েন্টমেন্ট আছে। বাতিল করতে \"cancel my appointment\" পাঠান।",
+        # No trailing "type X to do Y" instruction -- this now always ships with buttons (see
+        # _send_appointment_status) that make the available actions self-explanatory; typing
+        # still works too (cancel_appointment is a global intent regardless of this prompt),
+        # just isn't spelled out here anymore since it'd be redundant with the buttons.
+        "en": "Yes, there's an upcoming appointment for {patient} with {doctor} on {date}.",
+        "hi": "जी हाँ, {patient} के लिए {doctor} के साथ {date} को एक आने वाली अपॉइंटमेंट है।",
+        "hg": "Ji haan, {patient} ke liye {doctor} ke saath {date} ko ek upcoming appointment hai.",
+        "bn": "হ্যাঁ, {patient}-এর জন্য {doctor}-এর সাথে {date} তারিখে একটি আসন্ন অ্যাপয়েন্টমেন্ট আছে।",
+    },
+    "cancel_appointment_btn": {
+        "en": "Cancel Appointment",
+        "hi": "रद्द करें",
+        "hg": "Cancel Appointment",
+        "bn": "বাতিল করুন",
+    },
+    "update_appointment_btn": {
+        "en": "Update Appointment",
+        "hi": "अपडेट करें",
+        "hg": "Update Appointment",
+        "bn": "আপডেট করুন",
+    },
+    "reschedule_new_date_prompt": {
+        "en": "Which date would you like to move it to? (e.g. today, tomorrow, or a specific date)",
+        "hi": "आप इसे किस तारीख पर ले जाना चाहते हैं? (जैसे: आज, कल या कोई खास तारीख)",
+        "hg": "Aap ise kis date par move karna chahte hain? (jaise: aaj, kal ya koi specific date)",
+        "bn": "আপনি এটি কোন তারিখে সরাতে চান? (যেমন: আজ, আগামীকাল বা নির্দিষ্ট তারিখ)",
+    },
+    "reschedule_date_not_understood": {
+        "en": "Sorry, I couldn't understand that date. Please try again (e.g. today, tomorrow, or a specific date).",
+        "hi": "क्षमा करें, वह तारीख समझ नहीं आई। कृपया फिर से कोशिश करें (जैसे: आज, कल या कोई खास तारीख)।",
+        "hg": "Sorry, wo date samajh nahi aayi. Kripya phir se try karein (jaise: aaj, kal ya koi specific date).",
+        "bn": "দুঃখিত, তারিখটি বুঝতে পারিনি। অনুগ্রহ করে আবার চেষ্টা করুন (যেমন: আজ, আগামীকাল বা নির্দিষ্ট তারিখ)।",
     },
     "appointment_action_aborted": {
         "en": "No changes made. Send any message if you need anything else.",

@@ -68,7 +68,9 @@ from app.conversation.appointment_actions import (
     _handle_choosing_appointment_to_cancel, _handle_choosing_appointment_to_reschedule,
     _handle_choosing_appointment_to_view,
     _handle_confirming_appointment_cancel, _handle_confirming_appointment_reschedule,
+    _handle_viewing_appointment_status, _handle_awaiting_reschedule_date,
     _prompt_appointment_choice, _prompt_appointment_confirm,
+    _prompt_viewing_appointment_status, _prompt_awaiting_reschedule_date,
 )
 
 logger = logging.getLogger("conversation")
@@ -1541,6 +1543,14 @@ STEP_REGISTRY = {
     "confirming_appointment_reschedule": {
         "handler": _handle_confirming_appointment_reschedule,
         "prompt": _prompt_appointment_confirm,
+    },
+    "viewing_appointment_status": {
+        "handler": _handle_viewing_appointment_status,
+        "prompt": _prompt_viewing_appointment_status,
+    },
+    "awaiting_reschedule_date": {
+        "handler": _handle_awaiting_reschedule_date,
+        "prompt": _prompt_awaiting_reschedule_date,
     },
     "checkin_awaiting_location": {
         "handler": _handle_checkin_awaiting_location,

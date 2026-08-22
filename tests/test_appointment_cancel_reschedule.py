@@ -229,9 +229,17 @@ def test_multiple_live_appointments_with_status_action_uses_its_own_step_and_sta
                 await conversation._handle_choosing_appointment_to_view(client, "919876543210", "list_reply", "appt-2", ctx)
 
     run(_run())
-    check(len(wa_mock.buttons) == 0, "picking one from the list still ends in a read-only status, not a Confirm/Cancel prompt")
-    check(wa_mock.texts and "Dr. B" in wa_mock.texts[-1], f"shows the CHOSEN appointment's details, got {wa_mock.texts!r}")
-    check(db_mock.cleared is True, "clears conversation state once the status is shown")
+    check(len(wa_mock.buttons) == 1, "picking one from the list ends in the status message with its action buttons")
+    body_text, buttons = wa_mock.buttons[-1]
+    check("Dr. B" in body_text, f"shows the CHOSEN appointment's details, got {body_text!r}")
+    check(
+        [b[0] for b in buttons] == ["cancel_this_appointment", "update_this_appointment", "start_booking"],
+        f"offers the three follow-up actions, not a Confirm/Cancel pair, got {buttons!r}",
+    )
+    check(
+        db_mock._state is not None and db_mock._state["current_step"] == "viewing_appointment_status",
+        f"stays on viewing_appointment_status so a follow-up button tap works, got {db_mock._state!r}",
+    )
 
 
 def test_cancelled_local_candidate_is_filtered_out_via_live_reverification():
@@ -558,13 +566,122 @@ def test_check_my_appointment_as_first_message_shows_a_read_only_status_not_a_ca
 
     run(_run())
     check(db_mock.get_booked_calls == 1, "looks up the real appointment instead of falling into the booking flow")
-    check(len(wa_mock.buttons) == 0, "must NOT show a Confirm/Cancel button for a plain status question")
+    check(len(wa_mock.buttons) == 1, "sends the status message with follow-up action buttons")
+    body_text, buttons = wa_mock.buttons[-1]
+    check("Dr. A" in body_text, f"names the doctor in the status message, got {body_text!r}")
     check(
-        wa_mock.texts and "Dr. A" in wa_mock.texts[-1],
-        f"sends a plain text status message naming the doctor, got {wa_mock.texts!r}",
+        [b[0] for b in buttons] == ["cancel_this_appointment", "update_this_appointment", "start_booking"],
+        f"offers three distinct actions, not a misleading Confirm/Cancel pair, got {buttons!r}",
     )
     check(not any("location" in t.lower() for t in wa_mock.texts), "must never mention sharing location for a status question")
-    check(db_mock.cleared is True, "clears conversation state -- nothing further to confirm")
+    check(
+        db_mock._state is not None and db_mock._state["current_step"] == "viewing_appointment_status",
+        "keeps state so the follow-up buttons actually work when tapped",
+    )
+
+
+def test_tapping_cancel_this_appointment_from_status_enters_the_real_confirm_flow():
+    print("\n--- Tapping 'Cancel Appointment' on the status screen enters the SAME confirm-before-acting flow as a direct cancel ---")
+    # Unlike arriving at check_my_appointment itself, tapping this button IS the patient's
+    # explicit intent to cancel -- so showing "Cancel your appointment? Confirm/Cancel" now
+    # is correct, not the misleading prompt this whole action="status" split was built to
+    # avoid for the read-only status check.
+    context = {
+        "lang": "en",
+        "appt_action_id": "appt-1",
+        "appt_action_detail": {"appointment_id": "appt-1", "doctor_name": "Dr. A", "appt_date": "2026-08-23", "status_code": "FUTURE"},
+    }
+    db_mock = _RecordingDb(initial_state={"current_step": "viewing_appointment_status", "context": context})
+    wa_mock = _RecordingWhatsApp()
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), patch.object(conversation, "whatsapp_client", wa_mock):
+            async with httpx.AsyncClient() as client:
+                await conversation._handle_viewing_appointment_status(client, "919876543210", "button_reply", "cancel_this_appointment", context)
+
+    run(_run())
+    check(len(wa_mock.buttons) == 1, "sends the real cancel-confirm prompt")
+    body_text, buttons = wa_mock.buttons[0]
+    check("Dr. A" in body_text, f"names the doctor in the confirm prompt, got {body_text!r}")
+    check([b[0] for b in buttons] == ["confirm", "cancel"], f"this IS the real Confirm/Cancel prompt now, got {buttons!r}")
+    check(
+        db_mock._state is not None and db_mock._state["current_step"] == "confirming_appointment_cancel",
+        f"transitions into the existing cancel-confirm step, reusing it rather than duplicating it, got {db_mock._state!r}",
+    )
+
+
+def test_tapping_update_this_appointment_asks_for_a_new_date():
+    print("\n--- Tapping 'Update Appointment' asks for a new date before doing anything else ---")
+    context = {
+        "lang": "en",
+        "appt_action_id": "appt-1",
+        "appt_action_detail": {"appointment_id": "appt-1", "doctor_name": "Dr. A", "appt_date": "2026-08-23", "status_code": "FUTURE"},
+    }
+    db_mock = _RecordingDb(initial_state={"current_step": "viewing_appointment_status", "context": context})
+    wa_mock = _RecordingWhatsApp()
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), patch.object(conversation, "whatsapp_client", wa_mock):
+            async with httpx.AsyncClient() as client:
+                await conversation._handle_viewing_appointment_status(client, "919876543210", "button_reply", "update_this_appointment", context)
+
+    run(_run())
+    check(wa_mock.texts, "asks for a new date instead of guessing or doing nothing")
+    check(
+        db_mock._state is not None and db_mock._state["current_step"] == "awaiting_reschedule_date",
+        f"transitions to a dedicated date-asking step, got {db_mock._state!r}",
+    )
+    check(
+        db_mock._state["context"].get("appt_action_id") == "appt-1",
+        "carries the appointment id forward so the eventual reschedule call knows which one",
+    )
+
+
+def test_providing_a_valid_new_date_completes_into_the_reschedule_confirm_flow():
+    print("\n--- After 'Update Appointment', a valid date reply goes into the SAME reschedule-confirm flow as a direct reschedule ---")
+    context = {
+        "lang": "en",
+        "appt_action_id": "appt-1",
+        "appt_action_detail": {"appointment_id": "appt-1", "doctor_name": "Dr. A", "appt_date": "2026-08-23", "status_code": "FUTURE"},
+    }
+    db_mock = _RecordingDb(initial_state={"current_step": "awaiting_reschedule_date", "context": context})
+    wa_mock = _RecordingWhatsApp()
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), patch.object(conversation, "whatsapp_client", wa_mock):
+            async with httpx.AsyncClient() as client:
+                await conversation._handle_awaiting_reschedule_date(client, "919876543210", "text", "tomorrow", context)
+
+    run(_run())
+    check(len(wa_mock.buttons) == 1, "sends the real reschedule-confirm prompt once a date is understood")
+    check(
+        db_mock._state is not None and db_mock._state["current_step"] == "confirming_appointment_reschedule",
+        f"transitions into the existing reschedule-confirm step, reusing it rather than duplicating it, got {db_mock._state!r}",
+    )
+    check(
+        db_mock._state["context"].get("appt_action_new_date") is not None,
+        "the resolved new date is carried into context for the eventual HMS reschedule call",
+    )
+
+
+def test_providing_an_unparseable_date_reprompts_instead_of_guessing():
+    print("\n--- After 'Update Appointment', gibberish gets re-prompted instead of silently accepted ---")
+    context = {
+        "lang": "en",
+        "appt_action_id": "appt-1",
+        "appt_action_detail": {"appointment_id": "appt-1", "doctor_name": "Dr. A", "appt_date": "2026-08-23", "status_code": "FUTURE"},
+    }
+    db_mock = _RecordingDb(initial_state={"current_step": "awaiting_reschedule_date", "context": context})
+    wa_mock = _RecordingWhatsApp()
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), patch.object(conversation, "whatsapp_client", wa_mock):
+            async with httpx.AsyncClient() as client:
+                await conversation._handle_awaiting_reschedule_date(client, "919876543210", "text", "asdkjaslkdj", context)
+
+    run(_run())
+    check(len(wa_mock.buttons) == 0, "never proceeds to a reschedule-confirm prompt on an unparseable date")
+    check(wa_mock.texts, "re-prompts instead of silently doing nothing")
 
 
 def test_appointment_status_and_confirm_messages_include_the_patient_name():
@@ -587,7 +704,7 @@ def test_appointment_status_and_confirm_messages_include_the_patient_name():
                 await conversation._start_appointment_action_flow(client, "919876543210", {"lang": "en"}, None, action="status")
 
     run(_run_status())
-    check(wa_mock.texts and "Aquib" in wa_mock.texts[-1], f"status message names the actual patient, got {wa_mock.texts!r}")
+    check(wa_mock.buttons and "Aquib" in wa_mock.buttons[-1][0], f"status message names the actual patient, got {wa_mock.buttons!r}")
 
     wa_mock2 = _RecordingWhatsApp()
 
@@ -626,8 +743,11 @@ def test_check_my_appointment_from_a_returning_user_also_shows_read_only_status(
 
     run(_run())
     check(db_mock.get_booked_calls == 1, "looks up the real appointment for a returning user too")
-    check(len(wa_mock.buttons) == 0, "must NOT show a Confirm/Cancel button for a plain status question, regardless of has_lang_init")
-    check(db_mock.cleared is True, "clears conversation state")
+    check(len(wa_mock.buttons) == 1, "sends the status message with follow-up action buttons, regardless of has_lang_init")
+    check(
+        wa_mock.buttons and [b[0] for b in wa_mock.buttons[-1][1]] == ["cancel_this_appointment", "update_this_appointment", "start_booking"],
+        f"same three actions regardless of has_lang_init, got {wa_mock.buttons!r}",
+    )
 
 
 def test_no_active_appointment_offers_a_tappable_book_appointment_button():
@@ -687,6 +807,10 @@ if __name__ == "__main__":
     test_cancel_as_the_very_first_message_of_a_fresh_conversation_still_resolves_a_real_appointment()
     test_cancel_as_first_message_with_low_confidence_language_still_resolves_after_confirming()
     test_check_my_appointment_as_first_message_shows_a_read_only_status_not_a_cancel_prompt()
+    test_tapping_cancel_this_appointment_from_status_enters_the_real_confirm_flow()
+    test_tapping_update_this_appointment_asks_for_a_new_date()
+    test_providing_a_valid_new_date_completes_into_the_reschedule_confirm_flow()
+    test_providing_an_unparseable_date_reprompts_instead_of_guessing()
     test_appointment_status_and_confirm_messages_include_the_patient_name()
     test_check_my_appointment_from_a_returning_user_also_shows_read_only_status()
     test_no_active_appointment_offers_a_tappable_book_appointment_button()
