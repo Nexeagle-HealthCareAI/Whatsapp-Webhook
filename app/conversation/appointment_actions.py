@@ -119,7 +119,15 @@ async def _start_appointment_action_flow(
             await conversation.db.clear_conversation_state(phone)
             return
 
-        await conversation.whatsapp_client.send_text(client, phone, t("no_active_appointment", lang))
+        # A tappable button, not just the typed "book appointment" fallback mentioned in the
+        # same message -- tapping is more reliable than typing for most patients. The button
+        # id (start_booking) is handled in __init__.py's handle_message regardless of
+        # conversation state, since clear_conversation_state right below wipes it before any
+        # tap on this button could arrive.
+        await conversation.whatsapp_client.send_buttons(
+            client, phone, t("no_active_appointment", lang),
+            [("start_booking", t("book_appointment_btn", lang))],
+        )
         await conversation.db.clear_conversation_state(phone)
         return
 

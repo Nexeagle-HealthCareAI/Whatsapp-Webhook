@@ -275,6 +275,16 @@ async def handle_message(
     await conversation_log_queue.log_event(
         get_redis(), context["session_id"], phone, "in", input_type, input_value, current_step
     )
+    # "Book Appointment" button offered after a no-active-appointment response (see
+    # appointment_actions.py's _start_appointment_action_flow) -- that response clears
+    # conversation_state right after sending it, so this tap always arrives with no prior
+    # state to dispatch on; same "begin a fresh conversation" entry point any other
+    # zero-state message would reach via _confirm_or_start_language's own no-language-detected
+    # fallback, just reached directly since a button tap never carries text to guess from.
+    if input_type == "button_reply" and input_value == "start_booking":
+        await _start(client, phone)
+        return
+
     # OPD QR check-in / discharge-summary & prescription QR pull / per-doctor booking QR:
     # deterministic commands from a QR scan (GET /c, /d, /rx, /rxv, /doc in webhook.py), not
     # natural language — intercepted before language detection/NLU/the clipboard even

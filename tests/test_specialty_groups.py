@@ -1452,7 +1452,10 @@ def test_wit_nlu_integration():
         # cancel_appointment used to just abandon local chat state without checking anything
         # real). "appointment" covers that message; "thank"/"cancel" still covers the old
         # generic-abort wording used elsewhere (e.g. decline-at-confirmation).
-        check(any("thank" in t.lower() or "cancel" in t.lower() or "appointment" in t.lower() for t in sent_texts), "should send a response about the cancel request")
+        # "no active appointment" now offers a tappable Book Appointment button (send_buttons),
+        # not a plain text message -- check both, since which one fires depends on the scenario.
+        all_response_texts = sent_texts + [text for text, _buttons in sent_buttons]
+        check(any("thank" in t.lower() or "cancel" in t.lower() or "appointment" in t.lower() for t in all_response_texts), "should send a response about the cancel request")
 
         # 2. Test navigate back intent
         sent_texts.clear()

@@ -150,7 +150,11 @@ def test_no_active_appointment_sends_message_and_clears_state():
                 await conversation._start_appointment_action_flow(client, "919876543210", context, None, action="cancel")
 
     run(_run())
-    check(len(wa_mock.texts) == 1, "sends exactly one 'no active appointment' message")
+    check(len(wa_mock.buttons) == 1, "sends exactly one 'no active appointment' message with a Book Appointment button")
+    check(
+        wa_mock.buttons and wa_mock.buttons[0][1] and wa_mock.buttons[0][1][0][0] == "start_booking",
+        f"offers a tappable start_booking button, not just the typed fallback, got {wa_mock.buttons!r}",
+    )
     check(db_mock.cleared is True, "clears conversation state")
 
 
@@ -215,7 +219,7 @@ def test_cancelled_local_candidate_is_filtered_out_via_live_reverification():
                 await conversation._start_appointment_action_flow(client, "919876543210", context, None, action="cancel")
 
     run(_run())
-    check(len(wa_mock.texts) == 1, "treats it as having no active appointment")
+    check(len(wa_mock.buttons) == 1, "treats it as having no active appointment")
     check(db_mock.cleared is True, "clears conversation state rather than confirming a cancel on an already-cancelled appointment")
 
 
@@ -238,7 +242,7 @@ def test_appointment_more_than_a_day_past_its_date_is_excluded_even_if_status_is
                 await conversation._start_appointment_action_flow(client, "919876543210", context, None, action="cancel")
 
     run(_run())
-    check(len(wa_mock.texts) == 1, "treats a many-days-old appointment as not active, even with statusCode still FUTURE")
+    check(len(wa_mock.buttons) == 1, "treats a many-days-old appointment as not active, even with statusCode still FUTURE")
     check(db_mock.cleared is True, "clears conversation state")
 
 
@@ -554,6 +558,45 @@ def test_check_my_appointment_from_a_returning_user_also_merges_into_the_same_fl
     )
 
 
+def test_no_active_appointment_offers_a_tappable_book_appointment_button():
+    print("\n--- 'no active appointment' response offers a tappable Book Appointment button, not just typed text ---")
+    db_mock = _RecordingDb(booked_appointments=[])
+    wa_mock = _RecordingWhatsApp()
+    context = {"lang": "en"}
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), patch.object(conversation, "whatsapp_client", wa_mock):
+            async with httpx.AsyncClient() as client:
+                await conversation._start_appointment_action_flow(client, "919876543210", context, None, action="cancel")
+
+    run(_run())
+    check(len(wa_mock.buttons) == 1, "sends exactly one button prompt")
+    body_text, buttons = wa_mock.buttons[0]
+    check("book" in body_text.lower() or "appointment" in body_text.lower(), f"body still explains there's nothing to cancel, got {body_text!r}")
+    check(buttons == [("start_booking", "Book Appointment")], f"offers a single start_booking button, got {buttons!r}")
+
+
+def test_tapping_the_book_appointment_button_starts_a_fresh_booking_regardless_of_state():
+    print("\n--- Tapping the Book Appointment button always starts fresh, even with no prior conversation_state ---")
+    # The button is offered right after _start_appointment_action_flow calls
+    # db.clear_conversation_state -- so by the time a patient could actually tap it, there is
+    # no conversation_state left for this phone at all. The tap must still work.
+    db_mock = _RecordingDb(initial_state=None)
+    wa_mock = _RecordingWhatsApp()
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), patch.object(conversation, "whatsapp_client", wa_mock):
+            async with httpx.AsyncClient() as client:
+                await conversation.handle_message(client, "919876543210", "User", "button_reply", "start_booking")
+
+    run(_run())
+    check(len(wa_mock.lists) == 1, "sends the language-choice list, same as any other fresh conversation start")
+    check(
+        db_mock._state is not None and db_mock._state["current_step"] == "choosing_language",
+        f"transitions to choosing_language, got {db_mock._state!r}",
+    )
+
+
 if __name__ == "__main__":
     test_no_active_appointment_sends_message_and_clears_state()
     test_single_live_appointment_goes_straight_to_confirmation()
@@ -572,6 +615,8 @@ if __name__ == "__main__":
     test_cancel_as_first_message_with_low_confidence_language_still_resolves_after_confirming()
     test_check_my_appointment_as_first_message_is_merged_into_the_same_cancel_flow()
     test_check_my_appointment_from_a_returning_user_also_merges_into_the_same_flow()
+    test_no_active_appointment_offers_a_tappable_book_appointment_button()
+    test_tapping_the_book_appointment_button_starts_a_fresh_booking_regardless_of_state()
 
     print(f"\n{'=' * 60}")
     if failures:

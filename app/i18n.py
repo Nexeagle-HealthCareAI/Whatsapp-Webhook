@@ -303,7 +303,22 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Please patient ke details is format mein bhejein: Name, Age, Gender, Guardian (optional) (jaise 'Riya, 8, Female, Rajesh' ya sirf 'Riya, 8, Female').",
         "bn": "অনুগ্রহ করে রোগীর বিবরণ এই বিন্যাসে পাঠান: নাম, বয়স, লিঙ্গ, অভিভাবক (ঐচ্ছিক) (যেমন 'Riya, 8, Female, Rajesh' অথবা শুধু 'Riya, 8, Female')।",
     },
+    # Deliberately NOT the same text as book_appointment_btn below -- at this point the
+    # patient already has a doctor/slot chosen and is filling details to FINISH that booking,
+    # not starting a new one. Reusing "Book Appointment" here read as the same action as the
+    # fresh-start button elsewhere (e.g. after "no active appointment"), which is confusing:
+    # tapping this one continues an in-progress booking, tapping that one starts over from
+    # language selection -- different actions need different labels.
     "patient_details_flow_cta": {
+        "en": "Continue Booking",
+        "hi": "बुकिंग जारी रखें",
+        "hg": "Continue Booking",
+        "bn": "বুকিং চালিয়ে যান",
+    },
+    # Starts a brand-new booking from scratch (language selection) -- see the Conductor's
+    # start_booking button-tap handler in app/conversation/__init__.py. Distinct wording from
+    # patient_details_flow_cta above on purpose (see its comment).
+    "book_appointment_btn": {
         "en": "Book Appointment",
         "hi": "अपॉइंटमेंट बुक करें",
         "hg": "Book Appointment",
@@ -842,10 +857,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "bn": "এখন আমরা আপনাকে চেক-ইন করতে পারিনি। অনুগ্রহ করে রিসেপশনে চেক-ইন করুন।",
     },
     "no_active_appointment": {
-        "en": "We couldn't find an active appointment booked under this number. Send \"book appointment\" if you'd like to book one.",
-        "hi": "इस नंबर पर कोई सक्रिय अपॉइंटमेंट नहीं मिली। अपॉइंटमेंट बुक करने के लिए \"book appointment\" भेजें।",
-        "hg": "Is number par koi active appointment nahi mili. Appointment book karne ke liye \"book appointment\" bhejein.",
-        "bn": "এই নম্বরে কোনো সক্রিয় অ্যাপয়েন্টমেন্ট পাওয়া যায়নি। বুক করতে চাইলে \"book appointment\" পাঠান।",
+        "en": "We couldn't find an active appointment booked under this number. Tap below to book one, or just type \"book appointment\".",
+        "hi": "इस नंबर पर कोई सक्रिय अपॉइंटमेंट नहीं मिली। बुक करने के लिए नीचे टैप करें, या \"book appointment\" टाइप करें।",
+        "hg": "Is number par koi active appointment nahi mili. Book karne ke liye neeche tap karein, ya \"book appointment\" type karein.",
+        "bn": "এই নম্বরে কোনো সক্রিয় অ্যাপয়েন্টমেন্ট পাওয়া যায়নি। বুক করতে নিচে ট্যাপ করুন, অথবা \"book appointment\" টাইপ করুন।",
     },
     "choose_appointment_prompt": {
         "en": "You have more than one upcoming appointment. Please choose one:",
