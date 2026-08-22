@@ -34,6 +34,24 @@ from app.messengers.hms_client import HmsApiError
 from app.i18n import t
 from app.conversation.shared import _match_choice
 
+# NLU intent -> the `action` value _start_appointment_action_flow understands. The single
+# source of truth for that mapping, so the Conductor (__init__.py) never has to know the
+# action vocabulary itself -- it just looks up whatever intent it saw.
+_INTENT_TO_APPT_ACTION = {
+    "cancel_appointment": "cancel",
+    "reschedule_appointment": "reschedule",
+    "check_my_appointment": "status",
+}
+
+# action -> the step name to disambiguate under when more than one live appointment is
+# found. "status" (check_my_appointment) gets its own step even though its final message is
+# read-only, so a stale/duplicate list tap re-dispatches through the right handler.
+_CHOOSING_STEP = {
+    "cancel": "choosing_appointment_to_cancel",
+    "reschedule": "choosing_appointment_to_reschedule",
+    "status": "choosing_appointment_to_view",
+}
+
 
 def _is_appointment_stale(appt: dict, clinic_today: date) -> bool:
     """Defensive safety net alongside the statusCode check below: statusCode is 1HMS's own
@@ -144,8 +162,7 @@ async def _start_appointment_action_flow(
         "appt_action_options": live_candidates,
         "appt_action_new_date": new_date_str,
     }
-    step = "choosing_appointment_to_cancel" if action == "cancel" else "choosing_appointment_to_reschedule"
-    await conversation._transition_to(phone, step, new_context, current_step)
+    await conversation._transition_to(phone, _CHOOSING_STEP[action], new_context, current_step)
     await _send_appointment_choice_list(client, phone, lang, live_candidates)
 
 
@@ -169,6 +186,10 @@ async def _handle_choosing_appointment_to_reschedule(client, phone, input_type, 
     await _handle_choosing_appointment_candidate(client, phone, input_type, input_value, context, action="reschedule")
 
 
+async def _handle_choosing_appointment_to_view(client, phone, input_type, input_value, context) -> None:
+    await _handle_choosing_appointment_candidate(client, phone, input_type, input_value, context, action="status")
+
+
 async def _handle_choosing_appointment_candidate(client, phone, input_type, input_value, context, action: str) -> None:
     lang = context.get("lang")
     options = context.get("appt_action_options", {})
@@ -181,7 +202,7 @@ async def _handle_choosing_appointment_candidate(client, phone, input_type, inpu
     appt_id = input_value
     appt = options[appt_id]
     await _confirm_appointment_action(
-        client, phone, context, "choosing_appointment_to_cancel" if action == "cancel" else "choosing_appointment_to_reschedule",
+        client, phone, context, _CHOOSING_STEP[action],
         action, appt_id, appt, context.get("appt_action_new_date"),
     )
 
@@ -192,6 +213,18 @@ async def _confirm_appointment_action(
     from app import conversation
 
     lang = context.get("lang")
+
+    if action == "status":
+        # Read-only -- there's nothing to confirm, so no Yes/No button implying an action is
+        # about to happen. A plain "cancel my appointment?" Confirm/Cancel prompt here would
+        # be misleading for a patient who only asked whether they have a booking at all
+        # (check_my_appointment) -- live-reported.
+        await conversation.whatsapp_client.send_text(
+            client, phone, t("appointment_status_message", lang, doctor=appt.get("doctorName", "-"), date=appt.get("apptDate", "-")),
+        )
+        await conversation.db.clear_conversation_state(phone)
+        return
+
     new_context = {
         **context,
         "appt_action": action,

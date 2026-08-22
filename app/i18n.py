@@ -886,6 +886,12 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Kya aap {doctor} ke saath apni appointment {old_date} se {new_date} par reschedule karna chahte hain?",
         "bn": "আপনি কি {doctor}-এর সাথে আপনার অ্যাপয়েন্টমেন্ট {old_date} থেকে {new_date}-এ পুনঃনির্ধারণ করতে চান?",
     },
+    "appointment_status_message": {
+        "en": "Yes, you have an upcoming appointment with {doctor} on {date}. Send \"cancel my appointment\" if you'd like to cancel it.",
+        "hi": "जी हाँ, आपकी {doctor} के साथ {date} को एक आने वाली अपॉइंटमेंट है। रद्द करने के लिए \"cancel my appointment\" भेजें।",
+        "hg": "Ji haan, aapki {doctor} ke saath {date} ko ek upcoming appointment hai. Cancel karne ke liye \"cancel my appointment\" bhejein.",
+        "bn": "হ্যাঁ, {doctor}-এর সাথে {date} তারিখে আপনার একটি আসন্ন অ্যাপয়েন্টমেন্ট আছে। বাতিল করতে \"cancel my appointment\" পাঠান।",
+    },
     "appointment_action_aborted": {
         "en": "No changes made. Send any message if you need anything else.",
         "hi": "कोई बदलाव नहीं किया गया। कुछ और चाहिए तो कोई भी संदेश भेजें।",

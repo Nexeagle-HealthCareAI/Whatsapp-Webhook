@@ -64,8 +64,9 @@ from app.conversation.checkin import (
     _handle_checkin_awaiting_location, _handle_checkin_choosing_appointment, _finish_checkin,
 )
 from app.conversation.appointment_actions import (
-    _start_appointment_action_flow,
+    _start_appointment_action_flow, _INTENT_TO_APPT_ACTION,
     _handle_choosing_appointment_to_cancel, _handle_choosing_appointment_to_reschedule,
+    _handle_choosing_appointment_to_view,
     _handle_confirming_appointment_cancel, _handle_confirming_appointment_reschedule,
     _prompt_appointment_choice, _prompt_appointment_confirm,
 )
@@ -356,12 +357,14 @@ async def handle_message(
                     # message (e.g. right after a previous appointment was cancelled and
                     # conversation_state cleared) fell straight into the welcome+location-share
                     # booking flow, silently dropping the actual cancel intent -- live-reported.
-                    # check_my_appointment ("do I have a booking?") is merged into the same
-                    # action="cancel" flow, not a separate one -- _start_appointment_action_flow
-                    # already shows the appointment's own details before asking to cancel it,
-                    # which answers the status question as a side effect; there's no separate
-                    # Specialist behavior worth building just to skip the cancel offer.
-                    new_context["pending_action"] = "reschedule" if raw_nlu_result["intent"] == "reschedule_appointment" else "cancel"
+                    # check_my_appointment ("do I have a booking?") shares
+                    # _start_appointment_action_flow's appointment-resolution logic with
+                    # cancel_appointment (still one Specialist, no duplicated lookup code) but
+                    # gets its own action="status" so it shows a plain, read-only status
+                    # message -- not the "Cancel your appointment? Confirm/Cancel" prompt,
+                    # which was live-reported as misleading for a patient who only asked
+                    # whether they have a booking at all.
+                    new_context["pending_action"] = _INTENT_TO_APPT_ACTION[raw_nlu_result["intent"]]
                     if new_context["pending_action"] == "reschedule":
                         raw_date = entities.get("datetime")
                         if raw_date:
@@ -488,16 +491,16 @@ async def handle_message(
         intent = nlu_result["intent"]
         
         if intent in ("cancel_appointment", "check_my_appointment"):
-            # check_my_appointment ("do I have a booking?") is merged into the same
-            # action="cancel" flow as cancel_appointment -- see the first-message shortcut
-            # above for why (_start_appointment_action_flow already shows the appointment's
-            # details before offering to cancel it, which answers the status question too).
+            # check_my_appointment ("do I have a booking?") shares the same appointment-
+            # resolution logic as cancel_appointment but gets its own action="status" so it
+            # shows a plain, read-only status message -- not a "Cancel your appointment?"
+            # confirm prompt, which was live-reported as misleading for a plain status check.
             #
             # Whether this means a real appointment, an in-progress draft booking to abandon,
             # or neither is entirely _start_appointment_action_flow's own decision to make
             # (see its docstring/_has_in_progress_booking in appointment_actions.py) -- the
             # Conductor's job here is just routing the intent, not the business logic behind it.
-            await _start_appointment_action_flow(client, phone, context, current_step, action="cancel")
+            await _start_appointment_action_flow(client, phone, context, current_step, action=_INTENT_TO_APPT_ACTION[intent])
             return
 
         elif intent == "reschedule_appointment":
@@ -1525,6 +1528,10 @@ STEP_REGISTRY = {
     },
     "choosing_appointment_to_reschedule": {
         "handler": _handle_choosing_appointment_to_reschedule,
+        "prompt": _prompt_appointment_choice,
+    },
+    "choosing_appointment_to_view": {
+        "handler": _handle_choosing_appointment_to_view,
         "prompt": _prompt_appointment_choice,
     },
     "confirming_appointment_cancel": {

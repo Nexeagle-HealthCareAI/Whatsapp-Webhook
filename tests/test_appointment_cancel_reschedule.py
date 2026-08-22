@@ -202,6 +202,38 @@ def test_multiple_live_appointments_offers_disambiguation_list():
     check(len(wa_mock.lists) == 1 and len(wa_mock.lists[0][2]) == 2, "sends a list with both live candidates")
 
 
+def test_multiple_live_appointments_with_status_action_uses_its_own_step_and_stays_read_only():
+    print("\n--- Multiple live appointments + check_my_appointment -> its own disambiguation step, then a read-only status ---")
+    db_mock = _RecordingDb(booked_appointments=[
+        {"id": "row1", "hms_appointment_id": "appt-1", "preferred_date": "2026-08-20"},
+        {"id": "row2", "hms_appointment_id": "appt-2", "preferred_date": "2026-08-21"},
+    ])
+    wa_mock = _RecordingWhatsApp()
+    context = {"lang": "en"}
+
+    async def _get_appointment(appt_id):
+        return _LIVE_APPT if appt_id == "appt-1" else _LIVE_APPT_2
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), \
+             patch.object(conversation, "whatsapp_client", wa_mock), \
+             patch.object(conversation.hms_client, "get_appointment", AsyncMock(side_effect=_get_appointment)):
+            async with httpx.AsyncClient() as client:
+                await conversation._start_appointment_action_flow(client, "919876543210", context, None, action="status")
+                check(
+                    db_mock._state["current_step"] == "choosing_appointment_to_view",
+                    f"transitions to its own status-disambiguation step, not cancel's or reschedule's, got {db_mock._state['current_step']!r}",
+                )
+                # Patient picks one from the list.
+                step, ctx = db_mock._state["current_step"], db_mock._state["context"]
+                await conversation._handle_choosing_appointment_to_view(client, "919876543210", "list_reply", "appt-2", ctx)
+
+    run(_run())
+    check(len(wa_mock.buttons) == 0, "picking one from the list still ends in a read-only status, not a Confirm/Cancel prompt")
+    check(wa_mock.texts and "Dr. B" in wa_mock.texts[-1], f"shows the CHOSEN appointment's details, got {wa_mock.texts!r}")
+    check(db_mock.cleared is True, "clears conversation state once the status is shown")
+
+
 def test_cancelled_local_candidate_is_filtered_out_via_live_reverification():
     print("\n--- Locally-'booked' but actually-cancelled candidate is excluded ---")
     # Local status says 'booked', but the hospital side already cancelled it -- the live
@@ -497,15 +529,17 @@ def test_cancel_as_first_message_with_low_confidence_language_still_resolves_aft
     )
 
 
-def test_check_my_appointment_as_first_message_is_merged_into_the_same_cancel_flow():
-    print("\n--- 'do I have a booking?' as the first message -- merged into cancel_appointment's own flow, not a new one ---")
-    # Live-reported: a plain status question ("mujhe ye btao mera koi booking already hai")
-    # had no matching intent at all, so it fell into the generic booking flow (welcome +
-    # "share your location") instead of ever answering whether a booking exists.
-    # check_my_appointment is a distinct intent (for accurate NLU classification/logging) but
-    # deliberately routes to the exact same _start_appointment_action_flow(action="cancel")
-    # call as cancel_appointment -- no separate Specialist behavior, see app/listener/
-    # nlu_config.py's own comment on the intent registry entry.
+def test_check_my_appointment_as_first_message_shows_a_read_only_status_not_a_cancel_prompt():
+    print("\n--- 'do I have a booking?' as the first message -- read-only status, not a Cancel confirm prompt ---")
+    # Live-reported bugs, in order:
+    # 1. A plain status question ("mujhe ye btao mera koi booking already hai") had no
+    #    matching intent at all, so it fell into the generic booking flow (welcome +
+    #    "share your location") instead of ever answering whether a booking exists.
+    # 2. After adding check_my_appointment and merging it into cancel_appointment's own
+    #    resolution logic, it showed "Cancel your appointment with X on Y? Confirm/Cancel" --
+    #    misleading for a patient who only asked whether they have a booking, not to cancel
+    #    it. action="status" (see _INTENT_TO_APPT_ACTION in appointment_actions.py) fixes
+    #    this: same appointment lookup, but a plain read-only message, no Confirm/Cancel.
     db_mock = _RecordingDb(
         initial_state=None,
         booked_appointments=[{"id": "row1", "hms_appointment_id": "appt-1", "preferred_date": "2026-08-20"}],
@@ -524,14 +558,16 @@ def test_check_my_appointment_as_first_message_is_merged_into_the_same_cancel_fl
 
     run(_run())
     check(db_mock.get_booked_calls == 1, "looks up the real appointment instead of falling into the booking flow")
+    check(len(wa_mock.buttons) == 0, "must NOT show a Confirm/Cancel button for a plain status question")
     check(
-        db_mock._state is not None and db_mock._state["current_step"] == "confirming_appointment_cancel",
-        f"shows the real appointment's details (answering the status question), got {db_mock._state!r}",
+        wa_mock.texts and "Dr. A" in wa_mock.texts[-1],
+        f"sends a plain text status message naming the doctor, got {wa_mock.texts!r}",
     )
     check(not any("location" in t.lower() for t in wa_mock.texts), "must never mention sharing location for a status question")
+    check(db_mock.cleared is True, "clears conversation state -- nothing further to confirm")
 
 
-def test_check_my_appointment_from_a_returning_user_also_merges_into_the_same_flow():
+def test_check_my_appointment_from_a_returning_user_also_shows_read_only_status():
     print("\n--- Same, but from a returning user (already has lang set) -- the OTHER routing branch ---")
     context = {"lang": "en", "booking": booking_slots.empty()}
     db_mock = _RecordingDb(
@@ -552,10 +588,8 @@ def test_check_my_appointment_from_a_returning_user_also_merges_into_the_same_fl
 
     run(_run())
     check(db_mock.get_booked_calls == 1, "looks up the real appointment for a returning user too")
-    check(
-        db_mock._state is not None and db_mock._state["current_step"] == "confirming_appointment_cancel",
-        f"same merged routing regardless of has_lang_init, got {db_mock._state!r}",
-    )
+    check(len(wa_mock.buttons) == 0, "must NOT show a Confirm/Cancel button for a plain status question, regardless of has_lang_init")
+    check(db_mock.cleared is True, "clears conversation state")
 
 
 def test_no_active_appointment_offers_a_tappable_book_appointment_button():
@@ -601,6 +635,7 @@ if __name__ == "__main__":
     test_no_active_appointment_sends_message_and_clears_state()
     test_single_live_appointment_goes_straight_to_confirmation()
     test_multiple_live_appointments_offers_disambiguation_list()
+    test_multiple_live_appointments_with_status_action_uses_its_own_step_and_stays_read_only()
     test_cancelled_local_candidate_is_filtered_out_via_live_reverification()
     test_appointment_more_than_a_day_past_its_date_is_excluded_even_if_status_is_stale()
     test_appointment_from_yesterday_is_still_within_the_grace_window()
@@ -613,8 +648,8 @@ if __name__ == "__main__":
     test_typed_cancel_with_no_in_progress_booking_still_resolves_a_real_appointment()
     test_cancel_as_the_very_first_message_of_a_fresh_conversation_still_resolves_a_real_appointment()
     test_cancel_as_first_message_with_low_confidence_language_still_resolves_after_confirming()
-    test_check_my_appointment_as_first_message_is_merged_into_the_same_cancel_flow()
-    test_check_my_appointment_from_a_returning_user_also_merges_into_the_same_flow()
+    test_check_my_appointment_as_first_message_shows_a_read_only_status_not_a_cancel_prompt()
+    test_check_my_appointment_from_a_returning_user_also_shows_read_only_status()
     test_no_active_appointment_offers_a_tappable_book_appointment_button()
     test_tapping_the_book_appointment_button_starts_a_fresh_booking_regardless_of_state()
 
