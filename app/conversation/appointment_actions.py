@@ -64,7 +64,7 @@ def _is_appointment_stale(appt: dict, clinic_today: date) -> bool:
     apptDate is date-only (always midnight on the wire) and an hour-level comparison against
     it wouldn't be meaningful. Unparseable dates fail open (kept, not excluded) -- 1HMS's own
     cancel endpoint is still the final, authoritative check once the patient actually confirms."""
-    raw = appt.get("apptDate")
+    raw = appt.get("appt_date")
     if not raw:
         return False
     try:
@@ -122,8 +122,19 @@ async def _start_appointment_action_flow(
             detail = await hms_client.get_appointment(appt_id)
         except HmsApiError:
             continue
-        appt = detail.get("appointment") if detail.get("success") else None
-        if appt and appt.get("statusCode") not in ("CANCELLED", "COMPLETED") and not _is_appointment_stale(appt, clinic_today):
+        if not detail or detail.status_code in ("CANCELLED", "COMPLETED"):
+            continue
+        # Flattened back to a plain dict (stable snake_case keys, not HMS's own wire names --
+        # see hms_client.AppointmentDetail) so this can still be stored in conversation
+        # context/persisted as JSON downstream, same as every other clipboard value. Patient
+        # fields come from OUR OWN local record (HMS's own lookup doesn't carry them) --
+        # merged in here so every caller sees one flat appointment+patient dict.
+        appt = detail.model_dump()
+        appt["patient_name"] = c.get("patient_display_name")
+        appt["patient_age"] = c.get("patient_age")
+        appt["patient_gender"] = c.get("patient_gender")
+        appt["patient_guardian"] = c.get("patient_guardian")
+        if not _is_appointment_stale(appt, clinic_today):
             live_candidates[appt_id] = appt
 
     if not live_candidates:
@@ -170,7 +181,7 @@ async def _send_appointment_choice_list(client, phone, lang: str | None, options
     from app import conversation
 
     rows = [
-        (appt_id, appt.get("doctorName") or "Doctor", appt.get("apptDate") or "")
+        (appt_id, appt.get("doctor_name") or "Doctor", appt.get("appt_date") or "")
         for appt_id, appt in options.items()
     ]
     await conversation.whatsapp_client.send_list(
@@ -220,7 +231,11 @@ async def _confirm_appointment_action(
         # be misleading for a patient who only asked whether they have a booking at all
         # (check_my_appointment) -- live-reported.
         await conversation.whatsapp_client.send_text(
-            client, phone, t("appointment_status_message", lang, doctor=appt.get("doctorName", "-"), date=appt.get("apptDate", "-")),
+            client, phone, t(
+                "appointment_status_message", lang,
+                patient=appt.get("patient_name") or t("you", lang),
+                doctor=appt.get("doctor_name", "-"), date=appt.get("appt_date", "-"),
+            ),
         )
         await conversation.db.clear_conversation_state(phone)
         return
@@ -244,12 +259,12 @@ async def _send_appointment_confirm_prompt(client, phone, lang: str | None, acti
     if action == "cancel":
         prompt = t(
             "confirm_cancel_appointment_prompt", lang,
-            doctor=appt.get("doctorName", "-"), date=appt.get("apptDate", "-"),
+            doctor=appt.get("doctor_name", "-"), date=appt.get("appt_date", "-"),
         )
     else:
         prompt = t(
             "confirm_reschedule_appointment_prompt", lang,
-            doctor=appt.get("doctorName", "-"), old_date=appt.get("apptDate", "-"), new_date=new_date_str or "-",
+            doctor=appt.get("doctor_name", "-"), old_date=appt.get("appt_date", "-"), new_date=new_date_str or "-",
         )
     await conversation.whatsapp_client.send_buttons(
         client, phone, prompt,

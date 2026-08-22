@@ -4,6 +4,7 @@ from functools import lru_cache
 from typing import Any
 
 import httpx
+from pydantic import BaseModel, Field
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.config import settings
@@ -152,18 +153,36 @@ async def book_appointment(
     return data
 
 
+class AppointmentDetail(BaseModel):
+    """Typed boundary for GetPublicAppointmentHandler's response -- the ONE place that knows
+    HMS's actual wire field names (the `alias`es below). Every caller works with these
+    stable, Pythonic names instead; if HMS ever renames a field on the wire, only the alias
+    here needs to change, not every call site. Deliberately narrow (only the fields this bot
+    actually uses) -- add more as real features need them, not speculatively."""
+
+    model_config = {"populate_by_name": True}
+
+    appointment_id: str = Field(alias="appointmentId")
+    doctor_name: str = Field(alias="doctorName")
+    appt_date: str = Field(alias="apptDate")
+    status_code: str = Field(alias="statusCode")
+
+
 @_retry_network_errors
-async def get_appointment(appointment_id: str) -> dict[str, Any]:
+async def get_appointment(appointment_id: str) -> AppointmentDetail | None:
     """Minimal, unauthenticated "what's the status of this appointment" lookup (see
     GetPublicAppointmentHandler) -- used to re-verify a locally-cached booked appointment is
     still live before offering it as a cancel/reschedule candidate (staff could have
-    changed/cancelled it from the hospital side since this bot last touched it). Returns the raw
-    dict; success:false (e.g. unknown id) is a normal outcome here, not raised."""
+    changed/cancelled it from the hospital side since this bot last touched it). Returns None
+    on success:false (e.g. unknown id) -- a normal outcome here, not raised."""
     client = _get_client()
     response = await client.get(f"/public/appointments/{appointment_id}", headers=_headers())
     if response.status_code >= 500:
         response.raise_for_status()
-    return response.json()
+    data = response.json()
+    if not data.get("success") or not data.get("appointment"):
+        return None
+    return AppointmentDetail.model_validate(data["appointment"])
 
 
 @_retry_network_errors

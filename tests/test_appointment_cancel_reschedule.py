@@ -65,7 +65,7 @@ for _key in [
     os.environ.setdefault(_key, "test")
 
 from app import conversation  # noqa: E402
-from app.messengers.hms_client import HmsApiError  # noqa: E402
+from app.messengers.hms_client import AppointmentDetail, HmsApiError  # noqa: E402
 from app.decision_maker import booking_slots  # noqa: E402
 from app.i18n import t  # noqa: E402
 
@@ -134,8 +134,8 @@ class _RecordingDb:
 # _is_appointment_stale's 1-day grace window as real calendar time moves past it.
 _TOMORROW = (date.today() + timedelta(days=1)).isoformat()
 _DAY_AFTER = (date.today() + timedelta(days=2)).isoformat()
-_LIVE_APPT = {"success": True, "appointment": {"appointmentId": "appt-1", "doctorName": "Dr. A", "apptDate": _TOMORROW, "statusCode": "FUTURE"}}
-_LIVE_APPT_2 = {"success": True, "appointment": {"appointmentId": "appt-2", "doctorName": "Dr. B", "apptDate": _DAY_AFTER, "statusCode": "FUTURE"}}
+_LIVE_APPT = AppointmentDetail(appointmentId="appt-1", doctorName="Dr. A", apptDate=_TOMORROW, statusCode="FUTURE")
+_LIVE_APPT_2 = AppointmentDetail(appointmentId="appt-2", doctorName="Dr. B", apptDate=_DAY_AFTER, statusCode="FUTURE")
 
 
 def test_no_active_appointment_sends_message_and_clears_state():
@@ -241,7 +241,7 @@ def test_cancelled_local_candidate_is_filtered_out_via_live_reverification():
     db_mock = _RecordingDb(booked_appointments=[{"id": "row1", "hms_appointment_id": "appt-1", "preferred_date": "2026-08-20"}])
     wa_mock = _RecordingWhatsApp()
     context = {"lang": "en"}
-    stale = {"success": True, "appointment": {"appointmentId": "appt-1", "doctorName": "Dr. A", "apptDate": "2026-08-20", "statusCode": "CANCELLED"}}
+    stale = AppointmentDetail(appointmentId="appt-1", doctorName="Dr. A", apptDate="2026-08-20", statusCode="CANCELLED")
 
     async def _run():
         with patch.object(conversation, "db", db_mock), \
@@ -264,7 +264,7 @@ def test_appointment_more_than_a_day_past_its_date_is_excluded_even_if_status_is
     db_mock = _RecordingDb(booked_appointments=[{"id": "row1", "hms_appointment_id": "appt-1", "preferred_date": long_past}])
     wa_mock = _RecordingWhatsApp()
     context = {"lang": "en"}
-    stuck = {"success": True, "appointment": {"appointmentId": "appt-1", "doctorName": "Dr. A", "apptDate": long_past, "statusCode": "FUTURE"}}
+    stuck = AppointmentDetail(appointmentId="appt-1", doctorName="Dr. A", apptDate=long_past, statusCode="FUTURE")
 
     async def _run():
         with patch.object(conversation, "db", db_mock), \
@@ -284,7 +284,7 @@ def test_appointment_from_yesterday_is_still_within_the_grace_window():
     db_mock = _RecordingDb(booked_appointments=[{"id": "row1", "hms_appointment_id": "appt-1", "preferred_date": yesterday}])
     wa_mock = _RecordingWhatsApp()
     context = {"lang": "en"}
-    recent = {"success": True, "appointment": {"appointmentId": "appt-1", "doctorName": "Dr. A", "apptDate": yesterday, "statusCode": "FUTURE"}}
+    recent = AppointmentDetail(appointmentId="appt-1", doctorName="Dr. A", apptDate=yesterday, statusCode="FUTURE")
 
     async def _run():
         with patch.object(conversation, "db", db_mock), \
@@ -567,6 +567,44 @@ def test_check_my_appointment_as_first_message_shows_a_read_only_status_not_a_ca
     check(db_mock.cleared is True, "clears conversation state -- nothing further to confirm")
 
 
+def test_appointment_status_and_confirm_messages_include_the_patient_name():
+    print("\n--- Status/confirm messages name the actual patient, not just the doctor -- from OUR local record, not HMS's own lookup ---")
+    # HMS's own GET /public/appointments/{id} doesn't carry patient details (see
+    # hms_client.AppointmentDetail -- deliberately narrow, only the fields HMS actually
+    # returns); patient_display_name comes from dbo.pending_appointments, captured at booking
+    # time, and has to be merged in by _start_appointment_action_flow itself.
+    db_mock = _RecordingDb(booked_appointments=[{
+        "id": "row1", "hms_appointment_id": "appt-1", "preferred_date": "2026-08-20",
+        "patient_display_name": "Aquib", "patient_age": 58, "patient_gender": "male", "patient_guardian": None,
+    }])
+    wa_mock = _RecordingWhatsApp()
+
+    async def _run_status():
+        with patch.object(conversation, "db", db_mock), \
+             patch.object(conversation, "whatsapp_client", wa_mock), \
+             patch.object(conversation.hms_client, "get_appointment", AsyncMock(return_value=_LIVE_APPT)):
+            async with httpx.AsyncClient() as client:
+                await conversation._start_appointment_action_flow(client, "919876543210", {"lang": "en"}, None, action="status")
+
+    run(_run_status())
+    check(wa_mock.texts and "Aquib" in wa_mock.texts[-1], f"status message names the actual patient, got {wa_mock.texts!r}")
+
+    wa_mock2 = _RecordingWhatsApp()
+
+    async def _run_confirm():
+        with patch.object(conversation, "db", db_mock), \
+             patch.object(conversation, "whatsapp_client", wa_mock2), \
+             patch.object(conversation.hms_client, "get_appointment", AsyncMock(return_value=_LIVE_APPT)):
+            async with httpx.AsyncClient() as client:
+                await conversation._start_appointment_action_flow(client, "919876543210", {"lang": "en"}, None, action="cancel")
+
+    run(_run_confirm())
+    check(
+        wa_mock2.buttons and "Dr. A" in wa_mock2.buttons[0][0],
+        f"cancel-confirm prompt still resolves the doctor correctly with the new typed AppointmentDetail, got {wa_mock2.buttons!r}",
+    )
+
+
 def test_check_my_appointment_from_a_returning_user_also_shows_read_only_status():
     print("\n--- Same, but from a returning user (already has lang set) -- the OTHER routing branch ---")
     context = {"lang": "en", "booking": booking_slots.empty()}
@@ -649,6 +687,7 @@ if __name__ == "__main__":
     test_cancel_as_the_very_first_message_of_a_fresh_conversation_still_resolves_a_real_appointment()
     test_cancel_as_first_message_with_low_confidence_language_still_resolves_after_confirming()
     test_check_my_appointment_as_first_message_shows_a_read_only_status_not_a_cancel_prompt()
+    test_appointment_status_and_confirm_messages_include_the_patient_name()
     test_check_my_appointment_from_a_returning_user_also_shows_read_only_status()
     test_no_active_appointment_offers_a_tappable_book_appointment_button()
     test_tapping_the_book_appointment_button_starts_a_fresh_booking_regardless_of_state()

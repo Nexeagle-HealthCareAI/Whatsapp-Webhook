@@ -887,10 +887,14 @@ _STRINGS: dict[str, dict[str, str]] = {
         "bn": "আপনি কি {doctor}-এর সাথে আপনার অ্যাপয়েন্টমেন্ট {old_date} থেকে {new_date}-এ পুনঃনির্ধারণ করতে চান?",
     },
     "appointment_status_message": {
-        "en": "Yes, you have an upcoming appointment with {doctor} on {date}. Send \"cancel my appointment\" if you'd like to cancel it.",
-        "hi": "जी हाँ, आपकी {doctor} के साथ {date} को एक आने वाली अपॉइंटमेंट है। रद्द करने के लिए \"cancel my appointment\" भेजें।",
-        "hg": "Ji haan, aapki {doctor} ke saath {date} ko ek upcoming appointment hai. Cancel karne ke liye \"cancel my appointment\" bhejein.",
-        "bn": "হ্যাঁ, {doctor}-এর সাথে {date} তারিখে আপনার একটি আসন্ন অ্যাপয়েন্টমেন্ট আছে। বাতিল করতে \"cancel my appointment\" পাঠান।",
+        # Deliberately "there's an appointment for {patient}", not "{patient} has an
+        # appointment" -- {patient} falls back to t("you", lang) ("You") when no name was
+        # captured at booking time, and "You has" is a verb-agreement bug that phrasing would
+        # hit; this construction reads correctly either way, with a real name or the fallback.
+        "en": "Yes, there's an upcoming appointment for {patient} with {doctor} on {date}. Send \"cancel my appointment\" if you'd like to cancel it.",
+        "hi": "जी हाँ, {patient} के लिए {doctor} के साथ {date} को एक आने वाली अपॉइंटमेंट है। रद्द करने के लिए \"cancel my appointment\" भेजें।",
+        "hg": "Ji haan, {patient} ke liye {doctor} ke saath {date} ko ek upcoming appointment hai. Cancel karne ke liye \"cancel my appointment\" bhejein.",
+        "bn": "হ্যাঁ, {patient}-এর জন্য {doctor}-এর সাথে {date} তারিখে একটি আসন্ন অ্যাপয়েন্টমেন্ট আছে। বাতিল করতে \"cancel my appointment\" পাঠান।",
     },
     "appointment_action_aborted": {
         "en": "No changes made. Send any message if you need anything else.",

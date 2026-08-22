@@ -114,12 +114,18 @@ async def get_booked_appointments_for_phone(phone: str) -> list[dict[str, Any]]:
     booked for this phone number that it still believes is live. Local status alone isn't proof
     of that (staff could have cancelled/completed it from the hospital side since), so
     conversation.py re-verifies each candidate against GET /public/appointments/{id} before
-    presenting or acting on it — this is just the local shortlist."""
+    presenting or acting on it — this is just the local shortlist.
+
+    Includes the patient fields captured at booking time (patient_display_name/age/gender/
+    guardian) — HMS's own appointment lookup doesn't carry these, only this bot's local
+    record does, so a cancel/status message that needs to name the patient has to come from
+    here, merged with the live HMS lookup by the caller."""
     from app.db import get_pool
     pool = await get_pool()
     async with pool.acquire() as conn, conn.cursor() as cur:
         await cur.execute(
-            "SELECT id, hms_appointment_id, preferred_date "
+            "SELECT id, hms_appointment_id, preferred_date, "
+            "patient_display_name, patient_age, patient_gender, patient_guardian "
             "FROM dbo.pending_appointments "
             "WHERE phone_number = ? AND status = 'booked' AND hms_appointment_id IS NOT NULL "
             "ORDER BY preferred_date ASC",
@@ -127,7 +133,11 @@ async def get_booked_appointments_for_phone(phone: str) -> list[dict[str, Any]]:
         )
         rows = await cur.fetchall()
         return [
-            {"id": row[0], "hms_appointment_id": row[1], "preferred_date": row[2]}
+            {
+                "id": row[0], "hms_appointment_id": row[1], "preferred_date": row[2],
+                "patient_display_name": row[3], "patient_age": row[4],
+                "patient_gender": row[5], "patient_guardian": row[6],
+            }
             for row in rows
         ]
 
