@@ -101,6 +101,25 @@ def _detect_language(text: str) -> tuple[str | None, bool]:
         return None, False
 
 
+async def _advance_or_run_pending_action(client, phone: str, context: ConversationContext, booking: dict) -> None:
+    """Once language is resolved (either immediately, high-confidence, or after the patient
+    confirms a guessed language), this decides what happens next: the normal booking flow,
+    or -- if the ORIGINAL first message was actually cancel_appointment/reschedule_appointment
+    (see the first-message shortcut in __init__.py's handle_message) -- resolving a real
+    appointment instead. Without this, a fresh "cancel my appointment" as literally the first
+    message fell straight into the booking flow, silently dropping the cancel intent."""
+    from app import conversation
+
+    pending_action = context.pop("pending_action", None)
+    if pending_action:
+        await conversation._start_appointment_action_flow(
+            client, phone, context, None, action=pending_action,
+            new_date_str=context.pop("pending_action_new_date", None),
+        )
+    else:
+        await conversation._advance_booking_flow(client, phone, context, booking)
+
+
 async def _confirm_or_start_language(
     client, phone: str, context: ConversationContext, input_value: str, nlu_hint: dict | None = None,
 ) -> None:
@@ -129,7 +148,7 @@ async def _confirm_or_start_language(
             booking = conversation._get_or_create_clipboard(context)
             booking_slots.fill(booking, "lang", detected_lang, source="user")
             await conversation.whatsapp_client.send_text(client, phone, t("welcome_banner", detected_lang))
-            await conversation._advance_booking_flow(client, phone, context, booking)
+            await _advance_or_run_pending_action(client, phone, context, booking)
         else:
             confirm_context = {
                 **context,
@@ -211,7 +230,7 @@ async def _handle_confirming_language(client, phone, input_type, input_value, co
         context["lang"] = lang
         booking = conversation._get_or_create_clipboard(context)
         booking_slots.fill(booking, "lang", lang, source="user")
-        await conversation._advance_booking_flow(client, phone, context, booking)
+        await _advance_or_run_pending_action(client, phone, context, booking)
     elif choice == "lang_confirm_change":
         init_context = {}
         if "search_doctor_query" in context:

@@ -430,6 +430,69 @@ def test_typed_cancel_with_no_in_progress_booking_still_resolves_a_real_appointm
           "still offers to cancel the real appointment, same as before this fix")
 
 
+def test_cancel_as_the_very_first_message_of_a_fresh_conversation_still_resolves_a_real_appointment():
+    print("\n--- 'cancel my appointment' as literally the first message (e.g. right after a previous cancel cleared state) ---")
+    # Live-reported: no prior conversation_state at all (has_lang_init is False) routed
+    # cancel_appointment/reschedule_appointment through the SAME first-message shortcut every
+    # other intent uses, which only ever leads to the booking flow -- the cancel intent was
+    # silently dropped. High-confidence language here exercises the immediate path in
+    # _confirm_or_start_language (no confirming_language step in between).
+    db_mock = _RecordingDb(
+        initial_state=None,
+        booked_appointments=[{"id": "row1", "hms_appointment_id": "appt-1", "preferred_date": "2026-08-20"}],
+    )
+    wa_mock = _RecordingWhatsApp()
+    nlu_result = {"intent": "cancel_appointment", "entities": {}, "confidence": "high", "detected_language": "en", "language_confidence": "high"}
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), \
+             patch.object(conversation, "whatsapp_client", wa_mock), \
+             patch.object(conversation.intent_router, "db", db_mock), \
+             patch.object(conversation.nlu_client, "classify_message", AsyncMock(return_value=nlu_result)), \
+             patch.object(conversation.hms_client, "get_appointment", AsyncMock(return_value=_LIVE_APPT)):
+            async with httpx.AsyncClient() as client:
+                await conversation.handle_message(client, "919876543210", "User", "text", "cancel my appointment")
+
+    run(_run())
+    check(db_mock.get_booked_calls == 1, "looks up the real appointment instead of falling into the booking flow")
+    check(
+        db_mock._state is not None and db_mock._state["current_step"] == "confirming_appointment_cancel",
+        f"offers to cancel the real appointment, not a location-share prompt, got {db_mock._state!r}",
+    )
+    check(not any("location" in t.lower() for t in wa_mock.texts), "must never mention sharing location for a cancel request")
+
+
+def test_cancel_as_first_message_with_low_confidence_language_still_resolves_after_confirming():
+    print("\n--- Same, but language needs an explicit confirm step first (low-confidence guess) ---")
+    db_mock = _RecordingDb(
+        initial_state=None,
+        booked_appointments=[{"id": "row1", "hms_appointment_id": "appt-1", "preferred_date": "2026-08-20"}],
+    )
+    wa_mock = _RecordingWhatsApp()
+    nlu_result = {"intent": "cancel_appointment", "entities": {}, "confidence": "high", "detected_language": "en", "language_confidence": "low"}
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), \
+             patch.object(conversation, "whatsapp_client", wa_mock), \
+             patch.object(conversation.intent_router, "db", db_mock), \
+             patch.object(conversation.nlu_client, "classify_message", AsyncMock(return_value=nlu_result)), \
+             patch.object(conversation.hms_client, "get_appointment", AsyncMock(return_value=_LIVE_APPT)):
+            async with httpx.AsyncClient() as client:
+                await conversation.handle_message(client, "919876543210", "User", "text", "cancel my appointment")
+                check(
+                    db_mock._state is not None and db_mock._state["current_step"] == "confirming_language",
+                    f"first asks to confirm the guessed language, got {db_mock._state!r}",
+                )
+                await conversation.handle_message(client, "919876543210", "User", "button_reply", "lang_confirm_yes")
+
+    run(_run())
+    check(db_mock.get_booked_calls == 1, "resolves the real appointment once language is confirmed")
+    check(
+        db_mock._state is not None and db_mock._state["current_step"] == "confirming_appointment_cancel",
+        f"offers to cancel the real appointment after confirming language, got {db_mock._state!r}",
+    )
+
+
 if __name__ == "__main__":
     test_no_active_appointment_sends_message_and_clears_state()
     test_single_live_appointment_goes_straight_to_confirmation()
@@ -444,6 +507,8 @@ if __name__ == "__main__":
     test_typed_cancel_prioritizes_a_real_appointment_over_a_leftover_in_progress_booking()
     test_typed_cancel_abandons_in_progress_booking_only_when_no_real_appointment_exists()
     test_typed_cancel_with_no_in_progress_booking_still_resolves_a_real_appointment()
+    test_cancel_as_the_very_first_message_of_a_fresh_conversation_still_resolves_a_real_appointment()
+    test_cancel_as_first_message_with_low_confidence_language_still_resolves_after_confirming()
 
     print(f"\n{'=' * 60}")
     if failures:

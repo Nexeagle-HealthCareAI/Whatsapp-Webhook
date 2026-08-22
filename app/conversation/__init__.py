@@ -12,6 +12,7 @@ from app import db, i18n
 from app.messengers import city_index, conversation_log_queue, hms_client, symptom_client, whatsapp_client
 from app.messengers.redis_client import get_redis
 from app.decision_maker import booking_slots
+from app.decision_maker.normalizer import normalize_datetime_to_date
 from app.decision_maker.resolver import match_doctor_by_query as _match_doctor_by_query
 from app.decision_maker.resolver import resolve_doctor
 from app.config import settings
@@ -334,13 +335,31 @@ async def handle_message(
                 "cancel_appointment", "reschedule_appointment", "change_selection"
             ):
                 entities = raw_nlu_result.get("entities", {}) or {}
+                new_context = {**context}
+
+                if raw_nlu_result["intent"] in ("cancel_appointment", "reschedule_appointment"):
+                    # These need to actually resolve a REAL appointment, not fall through to
+                    # the generic doctor/specialty extraction below (which every other intent
+                    # here defers to once language is known via _advance_booking_flow) --
+                    # see _confirm_or_start_language's pending_action handling in language.py.
+                    # Without this, a fresh "cancel my appointment" as literally the first
+                    # message (e.g. right after a previous appointment was cancelled and
+                    # conversation_state cleared) fell straight into the welcome+location-share
+                    # booking flow, silently dropping the actual cancel intent -- live-reported.
+                    new_context["pending_action"] = "cancel" if raw_nlu_result["intent"] == "cancel_appointment" else "reschedule"
+                    if new_context["pending_action"] == "reschedule":
+                        raw_date = entities.get("datetime")
+                        if raw_date:
+                            new_context["pending_action_new_date"] = normalize_datetime_to_date(raw_date)
+                    await _confirm_or_start_language(client, phone, new_context, input_value, nlu_hint=raw_nlu_result)
+                    return
+
                 doc_name = entities.get("doctor_name")
                 spec_name = entities.get("specialty")
                 sym_name = entities.get("symptom")
                 pref_date = entities.get("datetime")
                 time_of_day = entities.get("time_of_day")
 
-                new_context = {**context}
                 if pref_date:
                     new_context["preferred_date"] = pref_date
                 if time_of_day:
