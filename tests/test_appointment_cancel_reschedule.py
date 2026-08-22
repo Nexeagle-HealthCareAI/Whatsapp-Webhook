@@ -493,6 +493,67 @@ def test_cancel_as_first_message_with_low_confidence_language_still_resolves_aft
     )
 
 
+def test_check_my_appointment_as_first_message_is_merged_into_the_same_cancel_flow():
+    print("\n--- 'do I have a booking?' as the first message -- merged into cancel_appointment's own flow, not a new one ---")
+    # Live-reported: a plain status question ("mujhe ye btao mera koi booking already hai")
+    # had no matching intent at all, so it fell into the generic booking flow (welcome +
+    # "share your location") instead of ever answering whether a booking exists.
+    # check_my_appointment is a distinct intent (for accurate NLU classification/logging) but
+    # deliberately routes to the exact same _start_appointment_action_flow(action="cancel")
+    # call as cancel_appointment -- no separate Specialist behavior, see app/listener/
+    # nlu_config.py's own comment on the intent registry entry.
+    db_mock = _RecordingDb(
+        initial_state=None,
+        booked_appointments=[{"id": "row1", "hms_appointment_id": "appt-1", "preferred_date": "2026-08-20"}],
+    )
+    wa_mock = _RecordingWhatsApp()
+    nlu_result = {"intent": "check_my_appointment", "entities": {}, "confidence": "high", "detected_language": "en", "language_confidence": "high"}
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), \
+             patch.object(conversation, "whatsapp_client", wa_mock), \
+             patch.object(conversation.intent_router, "db", db_mock), \
+             patch.object(conversation.nlu_client, "classify_message", AsyncMock(return_value=nlu_result)), \
+             patch.object(conversation.hms_client, "get_appointment", AsyncMock(return_value=_LIVE_APPT)):
+            async with httpx.AsyncClient() as client:
+                await conversation.handle_message(client, "919876543210", "User", "text", "do I have any appointment")
+
+    run(_run())
+    check(db_mock.get_booked_calls == 1, "looks up the real appointment instead of falling into the booking flow")
+    check(
+        db_mock._state is not None and db_mock._state["current_step"] == "confirming_appointment_cancel",
+        f"shows the real appointment's details (answering the status question), got {db_mock._state!r}",
+    )
+    check(not any("location" in t.lower() for t in wa_mock.texts), "must never mention sharing location for a status question")
+
+
+def test_check_my_appointment_from_a_returning_user_also_merges_into_the_same_flow():
+    print("\n--- Same, but from a returning user (already has lang set) -- the OTHER routing branch ---")
+    context = {"lang": "en", "booking": booking_slots.empty()}
+    db_mock = _RecordingDb(
+        initial_state={"current_step": None, "context": context},
+        booked_appointments=[{"id": "row1", "hms_appointment_id": "appt-1", "preferred_date": "2026-08-20"}],
+    )
+    wa_mock = _RecordingWhatsApp()
+    nlu_result = {"intent": "check_my_appointment", "entities": {}, "confidence": "high", "detected_language": "en", "language_confidence": "high"}
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), \
+             patch.object(conversation, "whatsapp_client", wa_mock), \
+             patch.object(conversation.intent_router, "db", db_mock), \
+             patch.object(conversation.nlu_client, "classify_message", AsyncMock(return_value=nlu_result)), \
+             patch.object(conversation.hms_client, "get_appointment", AsyncMock(return_value=_LIVE_APPT)):
+            async with httpx.AsyncClient() as client:
+                await conversation.handle_message(client, "919876543210", "User", "text", "do I have any appointment")
+
+    run(_run())
+    check(db_mock.get_booked_calls == 1, "looks up the real appointment for a returning user too")
+    check(
+        db_mock._state is not None and db_mock._state["current_step"] == "confirming_appointment_cancel",
+        f"same merged routing regardless of has_lang_init, got {db_mock._state!r}",
+    )
+
+
 if __name__ == "__main__":
     test_no_active_appointment_sends_message_and_clears_state()
     test_single_live_appointment_goes_straight_to_confirmation()
@@ -509,6 +570,8 @@ if __name__ == "__main__":
     test_typed_cancel_with_no_in_progress_booking_still_resolves_a_real_appointment()
     test_cancel_as_the_very_first_message_of_a_fresh_conversation_still_resolves_a_real_appointment()
     test_cancel_as_first_message_with_low_confidence_language_still_resolves_after_confirming()
+    test_check_my_appointment_as_first_message_is_merged_into_the_same_cancel_flow()
+    test_check_my_appointment_from_a_returning_user_also_merges_into_the_same_flow()
 
     print(f"\n{'=' * 60}")
     if failures:

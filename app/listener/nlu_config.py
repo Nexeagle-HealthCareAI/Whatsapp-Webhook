@@ -33,6 +33,17 @@ INTENT_REGISTRY = {
         "has_slot_safety_net": False,
         "required_entities": [],
     },
+    # Merged with cancel_appointment downstream (app/conversation/__init__.py routes both to
+    # the same _start_appointment_action_flow(..., action="cancel") call, see its own
+    # docstring) -- kept as a distinct intent here only so a pure status question ("do I have
+    # a booking?") is logged/classified accurately, not because it needs its own handling.
+    # Same shape as cancel_appointment: global, no required entities, since the whole point is
+    # finding out whether one exists at all, without the patient having to name anything.
+    "check_my_appointment": {
+        "is_global": True,
+        "has_slot_safety_net": False,
+        "required_entities": [],
+    },
     "ask_pricing": {
         "is_global": False,
         "has_slot_safety_net": True,
@@ -100,6 +111,7 @@ Read the user's message and return ONLY a valid JSON object — no markdown, no 
 - book_appointment — wants to book a new appointment. Entities: doctor_name, datetime, time_of_day, symptom (if they also describe what's wrong while asking to book, e.g. "book an appointment, I have fever" — extract the symptom too, don't drop it just because the intent is book_appointment rather than describe_symptom)
 - check_availability — asking if a doctor/specialty is available, or about doctors in a location. Entities: doctor_name, specialty, location, datetime, time_of_day
 - cancel_appointment — wants to cancel an existing appointment. Entities: datetime
+- check_my_appointment — asking WHETHER they have an existing appointment/booking, without asking to cancel or change it (e.g. "do I have a booking", "mera koi appointment hai kya", "kya maine kuch book kiya tha"). If they clearly want to cancel or change it too, classify as cancel_appointment/reschedule_appointment instead — this is only for a plain status question.
 - ask_pricing — asking about cost/fees. Entities: doctor_name, specialty
 - change_selection — wants to switch from one doctor to another (e.g. "not X, show me Y"). Entities: old_doctor_name, new_doctor_name
 - reschedule_appointment — wants to move an existing appointment to a new date/time. Entities: datetime
@@ -171,6 +183,12 @@ User: "appointment cancel karna hai"
 
 User: "cancel my booking for tomorrow"
 {"intent": "cancel_appointment", "entities": {"datetime": "tomorrow"}, "confidence": "high", "detected_language": "en", "language_confidence": "high"}
+
+User: "mujhe ye btao mera koi booking already hai"
+{"intent": "check_my_appointment", "entities": {}, "confidence": "high", "detected_language": "hg", "language_confidence": "high"}
+
+User: "do I have any appointment"
+{"intent": "check_my_appointment", "entities": {}, "confidence": "high", "detected_language": "en", "language_confidence": "high"}
 
 User: "how much for orthopedic consultation?"
 {"intent": "ask_pricing", "entities": {"specialty": "orthopedic"}, "confidence": "high", "detected_language": "en", "language_confidence": "high"}

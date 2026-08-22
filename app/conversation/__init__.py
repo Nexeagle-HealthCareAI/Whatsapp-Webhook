@@ -332,12 +332,12 @@ async def handle_message(
 
             if not has_lang_init and raw_nlu_result and raw_nlu_result.get("intent") in (
                 "book_appointment", "check_availability", "describe_symptom", "ask_pricing",
-                "cancel_appointment", "reschedule_appointment", "change_selection"
+                "cancel_appointment", "check_my_appointment", "reschedule_appointment", "change_selection"
             ):
                 entities = raw_nlu_result.get("entities", {}) or {}
                 new_context = {**context}
 
-                if raw_nlu_result["intent"] in ("cancel_appointment", "reschedule_appointment"):
+                if raw_nlu_result["intent"] in ("cancel_appointment", "check_my_appointment", "reschedule_appointment"):
                     # These need to actually resolve a REAL appointment, not fall through to
                     # the generic doctor/specialty extraction below (which every other intent
                     # here defers to once language is known via _advance_booking_flow) --
@@ -346,7 +346,12 @@ async def handle_message(
                     # message (e.g. right after a previous appointment was cancelled and
                     # conversation_state cleared) fell straight into the welcome+location-share
                     # booking flow, silently dropping the actual cancel intent -- live-reported.
-                    new_context["pending_action"] = "cancel" if raw_nlu_result["intent"] == "cancel_appointment" else "reschedule"
+                    # check_my_appointment ("do I have a booking?") is merged into the same
+                    # action="cancel" flow, not a separate one -- _start_appointment_action_flow
+                    # already shows the appointment's own details before asking to cancel it,
+                    # which answers the status question as a side effect; there's no separate
+                    # Specialist behavior worth building just to skip the cancel offer.
+                    new_context["pending_action"] = "reschedule" if raw_nlu_result["intent"] == "reschedule_appointment" else "cancel"
                     if new_context["pending_action"] == "reschedule":
                         raw_date = entities.get("datetime")
                         if raw_date:
@@ -472,7 +477,12 @@ async def handle_message(
     if nlu_result and nlu_result.get("confidence", 0.0) >= settings.nlu_confidence_threshold:
         intent = nlu_result["intent"]
         
-        if intent == "cancel_appointment":
+        if intent in ("cancel_appointment", "check_my_appointment"):
+            # check_my_appointment ("do I have a booking?") is merged into the same
+            # action="cancel" flow as cancel_appointment -- see the first-message shortcut
+            # above for why (_start_appointment_action_flow already shows the appointment's
+            # details before offering to cancel it, which answers the status question too).
+            #
             # Whether this means a real appointment, an in-progress draft booking to abandon,
             # or neither is entirely _start_appointment_action_flow's own decision to make
             # (see its docstring/_has_in_progress_booking in appointment_actions.py) -- the

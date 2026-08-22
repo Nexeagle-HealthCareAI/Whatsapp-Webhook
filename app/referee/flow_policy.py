@@ -80,7 +80,7 @@ if __name__ == "__main__":
         else:
             print(f"PASS: {message}")
 
-    for intent in ("cancel_appointment", "navigate_back", "greeting"):
+    for intent in ("cancel_appointment", "check_my_appointment", "navigate_back", "greeting"):
         check(is_global_override(intent, "high"), f"{intent} at high confidence should override")
         check(is_global_override(intent, "medium"), f"{intent} at medium confidence should override")
         check(not is_global_override(intent, "low"), f"{intent} at low confidence should NOT override -- too unsure to blow away local state")
