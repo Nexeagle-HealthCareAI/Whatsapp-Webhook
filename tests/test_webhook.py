@@ -1,6 +1,7 @@
 import os
 import sys
 import types
+from urllib.parse import unquote
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -159,6 +160,18 @@ def test_qr_redirects():
         check("https://wa.me/12345" in response.headers.get("location", ""), "Location link missing display number")
 
         response = client.get("/c/INVALID", follow_redirects=False)
+        check(response.status_code == 404, f"Expected 404, got {response.status_code}")
+
+        # Hospital booking -- payload is human-readable (names the hospital), not just the
+        # bare code, with "QR ID of this hospital is {code}" kept as a still-parseable
+        # trailing phrase (see HospitalBookingRedirectHandler.build_wa_payload's own comment).
+        response = client.get("/h/HOSP1", follow_redirects=False)
+        check(response.status_code == 307, f"Expected 307, got {response.status_code}")
+        location = unquote(response.headers.get("location", ""))
+        check("Test Hospital" in location, f"Location text doesn't name the scanned hospital: {location!r}")
+        check(location.endswith("QR ID of this hospital is HOSP1"), f"Location text doesn't end with the parseable phrase: {location!r}")
+
+        response = client.get("/h/INVALID", follow_redirects=False)
         check(response.status_code == 404, f"Expected 404, got {response.status_code}")
 
         # Doctor booking

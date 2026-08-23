@@ -309,7 +309,10 @@ async def handle_message(
             await _handle_doctor_booking_trigger(client, phone, doctor_booking_match.group(1), context)
             return
 
-        hospital_booking_match = _HOSPITAL_BOOKING_TRIGGER_PATTERN.match(stripped_input)
+        # .search(), not .match() -- see _HOSPITAL_BOOKING_TRIGGER_PATTERN's own comment:
+        # the human-readable hospital name prefix means "hospbook <code>" is no longer
+        # guaranteed to start at position 0.
+        hospital_booking_match = _HOSPITAL_BOOKING_TRIGGER_PATTERN.search(stripped_input)
         if hospital_booking_match:
             await _handle_hospital_booking_trigger(client, phone, hospital_booking_match.group(1), context)
             return

@@ -50,12 +50,22 @@ _VISIT_SUMMARY_TRIGGER_PATTERN = re.compile(r"^rxv\s+(\S+)$", re.IGNORECASE)
 # realistic organic-message collision. See _handle_doctor_booking_trigger below.
 _DOCTOR_BOOKING_TRIGGER_PATTERN = re.compile(r"^drbook\s+(\S+)$", re.IGNORECASE)
 
-# Per-hospital QR (GET /h/{hospitalCode} in app/front_door/qr_redirects.py) -- same
-# machine-code reasoning as DRBOOK above, and deliberately distinct from CHECKIN's "C <code>"
-# trigger despite both starting from a hospital code: CHECKIN is for a patient with an
-# EXISTING appointment arriving at the hospital, HOSPBOOK is for starting a NEW booking
-# scoped to this hospital's doctors. See _handle_hospital_booking_trigger below.
-_HOSPITAL_BOOKING_TRIGGER_PATTERN = re.compile(r"^hospbook\s+(\S+)$", re.IGNORECASE)
+# Per-hospital QR (GET /h/{hospitalCode} in app/front_door/qr_redirects.py) -- internally
+# still referred to as "the HOSPBOOK trigger", though that word no longer appears in the
+# actual pre-filled text (see below). Deliberately distinct from CHECKIN's "C <code>" trigger
+# despite both starting from a hospital code: CHECKIN is for a patient with an EXISTING
+# appointment arriving at the hospital, this one is for starting a NEW booking scoped to this
+# hospital's doctors. See _handle_hospital_booking_trigger below.
+#
+# Unlike DRBOOK/CHECKIN above, this one is NOT anchored to the start of the message
+# (no ^) -- HospitalBookingRedirectHandler.build_wa_payload (app/front_door/qr_handlers.py)
+# prefixes it with a human-readable "Hey, I've scanned the QR code for {hospital name}!" so
+# the patient's own sent-message bubble names the actual hospital instead of a bare machine
+# code, and "QR ID of this hospital is {code}" is kept as a trailing, still-
+# deterministically-matchable phrase -- specific enough that no organic patient message is
+# realistically going to contain it by accident. Matched with .search(), not .match(), in
+# __init__.py's handle_message for that reason.
+_HOSPITAL_BOOKING_TRIGGER_PATTERN = re.compile(r"qr id of this hospital is\s+(\S+)\s*$", re.IGNORECASE)
 
 # (pattern, resolver attribute name, filename, "not available" i18n key, "delivered" caption
 # i18n key) — the resolver is looked up on hms_client by name at call time (see

@@ -142,15 +142,22 @@ LOCAL_ROW_HOSP2 = {
 
 
 def test_trigger_pattern_matches_and_ignores():
-    print("\n--- HOSPBOOK trigger pattern ---")
-    m = conversation._HOSPITAL_BOOKING_TRIGGER_PATTERN.match("HOSPBOOK hosp-1")
-    check(m is not None and m.group(1) == "hosp-1", "HOSPBOOK <code> matches")
-    m2 = conversation._HOSPITAL_BOOKING_TRIGGER_PATTERN.match("hospbook hosp-1")
-    check(m2 is not None, "lowercase hospbook matches case-insensitively")
-    check(conversation._HOSPITAL_BOOKING_TRIGGER_PATTERN.match("book appointment") is None,
-          "organic 'book appointment' text does not collide with the HOSPBOOK pattern")
-    check(conversation._HOSPITAL_BOOKING_TRIGGER_PATTERN.match("CHECKIN hosp-1") is None,
-          "CHECKIN's own trigger text does not collide with HOSPBOOK's pattern")
+    print("\n--- Hospital-QR trigger pattern ---")
+    m = conversation._HOSPITAL_BOOKING_TRIGGER_PATTERN.search("QR ID of this hospital is hosp-1")
+    check(m is not None and m.group(1) == "hosp-1", "bare 'QR ID of this hospital is <code>' matches")
+    m2 = conversation._HOSPITAL_BOOKING_TRIGGER_PATTERN.search("qr id of this hospital is hosp-1")
+    check(m2 is not None, "lowercase matches case-insensitively")
+    # The real pre-filled QR text (HospitalBookingRedirectHandler.build_wa_payload) is a
+    # human-readable sentence with "QR ID of this hospital is <code>" as a trailing phrase,
+    # not the whole message -- this is exactly why the pattern uses search(), not match()/^.
+    m3 = conversation._HOSPITAL_BOOKING_TRIGGER_PATTERN.search(
+        "Hey, I've scanned the QR code for Star Hospital! QR ID of this hospital is hosp-1"
+    )
+    check(m3 is not None and m3.group(1) == "hosp-1", "human-readable prefixed text still extracts the trailing code")
+    check(conversation._HOSPITAL_BOOKING_TRIGGER_PATTERN.search("book appointment") is None,
+          "organic 'book appointment' text does not collide with the pattern")
+    check(conversation._HOSPITAL_BOOKING_TRIGGER_PATTERN.search("CHECKIN hosp-1") is None,
+          "CHECKIN's own trigger text does not collide with the hospital-booking pattern")
 
 
 def test_invalid_hospital_code_sends_error_and_preserves_state():
@@ -163,7 +170,7 @@ def test_invalid_hospital_code_sends_error_and_preserves_state():
              patch.object(conversation, "whatsapp_client", wa_mock), \
              patch.object(conversation.hms_client, "get_hospital_by_code", AsyncMock(side_effect=HmsApiError("not found"))):
             async with httpx.AsyncClient() as client:
-                await conversation.handle_message(client, "919876543210", "Test", "text", "HOSPBOOK badcode", "msg1")
+                await conversation.handle_message(client, "919876543210", "Test", "text", "QR ID of this hospital is badcode", "msg1")
 
     run(_run())
     check(len(wa_mock.texts) == 1, "sends exactly one 'not available' message")
@@ -180,7 +187,7 @@ def test_valid_hospital_lang_known_shows_welcome_menu():
              patch.object(conversation, "whatsapp_client", wa_mock), \
              patch.object(conversation.hms_client, "get_hospital_by_code", AsyncMock(return_value=HOSPITAL)):
             async with httpx.AsyncClient() as client:
-                await conversation.handle_message(client, "919876543210", "Test", "text", "HOSPBOOK hosp-1", "msg2")
+                await conversation.handle_message(client, "919876543210", "Test", "text", "QR ID of this hospital is hosp-1", "msg2")
 
     run(_run())
     check(len(wa_mock.buttons) == 1, "sends exactly one welcome-menu button message, not a doctor list")
@@ -227,7 +234,7 @@ def test_valid_hospital_no_lang_yet_asks_language_then_resumes_to_the_menu():
              patch.object(conversation.hms_client, "get_hospital_by_code", AsyncMock(return_value=HOSPITAL)):
             async with httpx.AsyncClient() as client:
                 # Turn 1: scan the QR before any language is known.
-                await conversation.handle_message(client, "919876543210", "Test", "text", "HOSPBOOK hosp-1", "msg3")
+                await conversation.handle_message(client, "919876543210", "Test", "text", "QR ID of this hospital is hosp-1", "msg3")
                 check(
                     db_mock._state is not None and db_mock._state["current_step"] == "choosing_language",
                     f"asks for a language first, same as any other fresh entry point, got {db_mock._state!r}",
