@@ -984,6 +984,30 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Yeh doctor abhi booking ke liye available nahi hain. Kripya baad mein phir try karein.",
         "bn": "এই ডাক্তার এখন বুকিংয়ের জন্য উপলব্ধ নেই। অনুগ্রহ করে পরে আবার চেষ্টা করুন।",
     },
+    "hospital_qr_invalid": {
+        "en": "This hospital isn't available for booking right now. Please try again later.",
+        "hi": "यह अस्पताल अभी बुकिंग के लिए उपलब्ध नहीं है। कृपया बाद में फिर कोशिश करें।",
+        "hg": "Yeh hospital abhi booking ke liye available nahi hai. Kripya baad mein phir try karein.",
+        "bn": "এই হাসপাতাল এখন বুকিংয়ের জন্য উপলব্ধ নেই। অনুগ্রহ করে পরে আবার চেষ্টা করুন।",
+    },
+    "hospital_qr_welcome_menu": {
+        "en": "Welcome to {hospital}! How can I help you today?",
+        "hi": "{hospital} में आपका स्वागत है! मैं आपकी कैसे मदद कर सकता हूँ?",
+        "hg": "{hospital} mein aapka swagat hai! Main aapki kaise madad kar sakta hoon?",
+        "bn": "{hospital}-এ আপনাকে স্বাগতম! আমি আপনাকে কীভাবে সাহায্য করতে পারি?",
+    },
+    "check_appointment_status_btn": {
+        "en": "Check Status",
+        "hi": "स्थिति देखें",
+        "hg": "Check Status",
+        "bn": "স্ট্যাটাস দেখুন",
+    },
+    "no_active_appointment_at_hospital": {
+        "en": "We couldn't find an active appointment for you at {hospital}. Tap below to book one, or just type \"book appointment\".",
+        "hi": "{hospital} में आपकी कोई सक्रिय अपॉइंटमेंट नहीं मिली। बुक करने के लिए नीचे टैप करें, या \"book appointment\" टाइप करें।",
+        "hg": "{hospital} mein aapki koi active appointment nahi mili. Book karne ke liye neeche tap karein, ya \"book appointment\" type karein.",
+        "bn": "{hospital}-এ আপনার কোনো সক্রিয় অ্যাপয়েন্টমেন্ট পাওয়া যায়নি। বুক করতে নিচে ট্যাপ করুন, অথবা \"book appointment\" টাইপ করুন।",
+    },
 }
 
 

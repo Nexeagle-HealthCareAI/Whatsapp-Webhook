@@ -58,10 +58,13 @@ from app.conversation.doctor_search import (
     _handle_awaiting_doctor_name,
 )
 from app.conversation.checkin import (
-    _CHECKIN_TRIGGER_PATTERN, _DOCTOR_BOOKING_TRIGGER_PATTERN, _DOCUMENT_TRIGGERS,
+    _CHECKIN_TRIGGER_PATTERN, _DOCTOR_BOOKING_TRIGGER_PATTERN, _HOSPITAL_BOOKING_TRIGGER_PATTERN,
+    _DOCUMENT_TRIGGERS,
     _DISCHARGE_TRIGGER_PATTERN, _PRESCRIPTION_TRIGGER_PATTERN, _VISIT_SUMMARY_TRIGGER_PATTERN,
-    _handle_document_trigger, _handle_doctor_booking_trigger, _handle_checkin_trigger,
+    _handle_document_trigger, _handle_doctor_booking_trigger, _handle_hospital_booking_trigger,
+    _handle_checkin_trigger,
     _handle_checkin_awaiting_location, _handle_checkin_choosing_appointment, _finish_checkin,
+    _start_hospital_action_menu, _handle_choosing_hospital_action, _prompt_choosing_hospital_action,
 )
 from app.conversation.appointment_actions import (
     _start_appointment_action_flow, _INTENT_TO_APPT_ACTION,
@@ -304,6 +307,11 @@ async def handle_message(
         doctor_booking_match = _DOCTOR_BOOKING_TRIGGER_PATTERN.match(stripped_input)
         if doctor_booking_match:
             await _handle_doctor_booking_trigger(client, phone, doctor_booking_match.group(1), context)
+            return
+
+        hospital_booking_match = _HOSPITAL_BOOKING_TRIGGER_PATTERN.match(stripped_input)
+        if hospital_booking_match:
+            await _handle_hospital_booking_trigger(client, phone, hospital_booking_match.group(1), context)
             return
 
         for pattern, resolver_name, filename, not_available_key, delivered_key in _DOCUMENT_TRIGGERS:
@@ -1001,6 +1009,7 @@ async def _render_doctor_list(
         context["doctor_id"] = d["doctorId"]
         context["doctor_name"] = d.get("fullName") or "Doctor"
         context["doctor_fee"] = _doctor_fee(d)
+        context["hospital_id"] = d.get("hospitalId") or ""
         context["hospital_name"] = d.get("hospitalName") or ""
         context["hospital_address"] = d.get("address") or ""
         context["hospital_city"] = d.get("city") or ""
@@ -1076,6 +1085,7 @@ async def _handle_choosing_doctor(client, phone, input_type, input_value, contex
     context["doctor_id"] = doctor_id
     context["doctor_name"] = doctor.get("fullName") or "Doctor"
     context["doctor_fee"] = _doctor_fee(doctor)
+    context["hospital_id"] = doctor.get("hospitalId") or ""
     context["hospital_name"] = doctor.get("hospitalName") or ""
     context["hospital_address"] = doctor.get("address") or ""
     context["hospital_city"] = doctor.get("city") or ""
@@ -1298,6 +1308,7 @@ async def _handle_confirming(client, phone, sender_name, input_type, input_value
         patient_age=int(patient_age) if patient_age else None,
         patient_gender=patient_gender,
         patient_guardian=patient_guardian,
+        hospital_id=context.get("hospital_id") or None,
     )
     note_bits = []
     if patient_age:
@@ -1551,6 +1562,10 @@ STEP_REGISTRY = {
     "awaiting_reschedule_date": {
         "handler": _handle_awaiting_reschedule_date,
         "prompt": _prompt_awaiting_reschedule_date,
+    },
+    "choosing_hospital_action": {
+        "handler": _handle_choosing_hospital_action,
+        "prompt": _prompt_choosing_hospital_action,
     },
     "checkin_awaiting_location": {
         "handler": _handle_checkin_awaiting_location,

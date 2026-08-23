@@ -102,12 +102,28 @@ def _detect_language(text: str) -> tuple[str | None, bool]:
 
 
 async def _advance_or_run_pending_action(client, phone: str, context: ConversationContext, booking: dict) -> None:
-    """Once language is resolved (either immediately, high-confidence, or after the patient
-    confirms a guessed language), this decides what happens next: the normal booking flow,
-    or -- if the ORIGINAL first message was actually cancel_appointment/reschedule_appointment
-    (see the first-message shortcut in __init__.py's handle_message) -- resolving a real
-    appointment instead. Without this, a fresh "cancel my appointment" as literally the first
-    message fell straight into the booking flow, silently dropping the cancel intent."""
+    """Once language is resolved -- via ANY of the three paths that can resolve it
+    (_confirm_or_start_language's immediate high-confidence branch, its confirm-then-proceed
+    branch, or _handle_choosing_language's own pick-from-the-list branch below, reached when
+    no language could be guessed at all) -- this decides what happens next: the normal
+    booking flow, or a pending non-booking action set by whatever triggered this conversation
+    turn in the first place:
+
+    - pending_action: the ORIGINAL first message was actually cancel_appointment /
+      reschedule_appointment / check_my_appointment (see the first-message shortcut in
+      __init__.py's handle_message) -- resolve a real appointment instead of falling into the
+      booking flow. Without this, a fresh "cancel my appointment" as literally the first
+      message silently dropped the cancel intent.
+    - pending_hospital: the hospital-booking QR trigger (app/conversation/checkin.py) -- show
+      that hospital's Book Appointment / Check Appointment Status menu instead, same "resolve
+      to the exact known target, don't lose it just because language wasn't known yet"
+      reasoning as pending_action above.
+
+    All three language-resolution paths MUST route through this single function rather than
+    calling _advance_booking_flow directly -- a pending action honoured by only some of the
+    three would be a silent, path-dependent bug (which is exactly what happened before
+    _handle_choosing_language was included here: pending_action worked for two of the three
+    paths and was silently dropped on the third)."""
     from app import conversation
 
     pending_action = context.pop("pending_action", None)
@@ -116,8 +132,14 @@ async def _advance_or_run_pending_action(client, phone: str, context: Conversati
             client, phone, context, None, action=pending_action,
             new_date_str=context.pop("pending_action_new_date", None),
         )
-    else:
-        await conversation._advance_booking_flow(client, phone, context, booking)
+        return
+
+    pending_hospital = context.pop("pending_hospital", None)
+    if pending_hospital:
+        await conversation._start_hospital_action_menu(client, phone, context, pending_hospital, None)
+        return
+
+    await conversation._advance_booking_flow(client, phone, context, booking)
 
 
 async def _confirm_or_start_language(
@@ -190,7 +212,7 @@ async def _handle_choosing_language(client, phone, input_type, input_value, cont
     booking = conversation._get_or_create_clipboard(context)
     booking_slots.fill(booking, "lang", lang, source="user")
     await conversation.whatsapp_client.send_text(client, phone, t("greeting", lang))
-    await conversation._advance_booking_flow(client, phone, context, booking)
+    await _advance_or_run_pending_action(client, phone, context, booking)
 
 
 async def _handle_confirming_language(client, phone, input_type, input_value, context: ConversationContext) -> None:

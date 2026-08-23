@@ -90,6 +90,7 @@ def _has_in_progress_booking(context) -> bool:
 
 async def _start_appointment_action_flow(
     client, phone, context, current_step, action: str, new_date_str: str | None = None,
+    hospital: dict | None = None,
 ) -> None:
     """Entry point for the cancel_appointment / reschedule_appointment intents -- the
     Conductor (handle_message in __init__.py) only ever routes the intent here, every actual
@@ -97,10 +98,19 @@ async def _start_appointment_action_flow(
     disambiguate between several, and (for action=="cancel" specifically) whether a bare
     "cancel" with no real appointment should instead abandon an in-progress draft booking.
     Keeping all of that here, not split between here and the Conductor, is deliberate --
-    see _has_in_progress_booking above."""
+    see _has_in_progress_booking above.
+
+    hospital: when set (the hospital-QR "Check Appointment Status" menu button -- see
+    app/conversation/checkin.py's _handle_choosing_hospital_action), restricts candidates to
+    appointments booked at THIS hospital, not every appointment this phone number has ever
+    booked. A local row with no hospital_id (booked before that column existed, or via a path
+    that doesn't capture it) is kept rather than excluded -- NULL means "can't rule out",
+    not "not at this hospital", same fail-open reasoning as _is_appointment_stale's
+    unparseable-date case above."""
     from app import conversation
 
     lang = context.get("lang")
+    hospital_id_filter = hospital.get("hospitalId") if hospital else None
 
     # A real, already-booked appointment always takes priority over any leftover
     # in-progress-booking clipboard data -- a patient asking to cancel almost always means
@@ -117,6 +127,8 @@ async def _start_appointment_action_flow(
     local_candidates = await conversation.db.get_booked_appointments_for_phone(phone)
     live_candidates: dict[str, dict] = {}
     for c in local_candidates:
+        if hospital_id_filter and c.get("hospital_id") and c["hospital_id"] != hospital_id_filter:
+            continue
         appt_id = c["hms_appointment_id"]
         try:
             detail = await hms_client.get_appointment(appt_id)
@@ -152,9 +164,16 @@ async def _start_appointment_action_flow(
         # same message -- tapping is more reliable than typing for most patients. The button
         # id (start_booking) is handled in __init__.py's handle_message regardless of
         # conversation state, since clear_conversation_state right below wipes it before any
-        # tap on this button could arrive.
+        # tap on this button could arrive. Deliberately still the generic (not hospital-scoped)
+        # booking button even when hospital_id_filter is set -- only the message text names the
+        # hospital; re-scoping the button itself to that one hospital would need its own
+        # state-surviving-a-clear handler for one edge case, not worth it for now.
+        message = (
+            t("no_active_appointment_at_hospital", lang, hospital=hospital.get("name") or "")
+            if hospital_id_filter else t("no_active_appointment", lang)
+        )
         await conversation.whatsapp_client.send_buttons(
-            client, phone, t("no_active_appointment", lang),
+            client, phone, message,
             [("start_booking", t("book_appointment_btn", lang))],
         )
         await conversation.db.clear_conversation_state(phone)

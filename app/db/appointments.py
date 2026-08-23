@@ -43,6 +43,7 @@ async def create_pending_appointment(
     patient_age: int | None = None,
     patient_gender: str | None = None,
     patient_guardian: str | None = None,
+    hospital_id: str | None = None,
 ) -> UUID:
     from app.db import get_pool
     pool = await get_pool()
@@ -50,8 +51,8 @@ async def create_pending_appointment(
     async with pool.acquire() as conn, conn.cursor() as cur:
         await cur.execute(
             "INSERT INTO dbo.pending_appointments "
-            "(id, phone_number, preferred_date, status, preferred_language, booking_for, patient_display_name, patient_age, patient_gender, patient_guardian) "
-            "VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)",
+            "(id, phone_number, preferred_date, status, preferred_language, booking_for, patient_display_name, patient_age, patient_gender, patient_guardian, hospital_id) "
+            "VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)",
             (
                 str(row_id),
                 phone,
@@ -62,6 +63,7 @@ async def create_pending_appointment(
                 patient_age,
                 patient_gender,
                 patient_guardian,
+                hospital_id,
             ),
         )
     return row_id
@@ -125,7 +127,7 @@ async def get_booked_appointments_for_phone(phone: str) -> list[dict[str, Any]]:
     async with pool.acquire() as conn, conn.cursor() as cur:
         await cur.execute(
             "SELECT id, hms_appointment_id, preferred_date, "
-            "patient_display_name, patient_age, patient_gender, patient_guardian "
+            "patient_display_name, patient_age, patient_gender, patient_guardian, hospital_id "
             "FROM dbo.pending_appointments "
             "WHERE phone_number = ? AND status = 'booked' AND hms_appointment_id IS NOT NULL "
             "ORDER BY preferred_date ASC",
@@ -136,7 +138,7 @@ async def get_booked_appointments_for_phone(phone: str) -> list[dict[str, Any]]:
             {
                 "id": row[0], "hms_appointment_id": row[1], "preferred_date": row[2],
                 "patient_display_name": row[3], "patient_age": row[4],
-                "patient_gender": row[5], "patient_guardian": row[6],
+                "patient_gender": row[5], "patient_guardian": row[6], "hospital_id": row[7],
             }
             for row in rows
         ]

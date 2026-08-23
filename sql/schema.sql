@@ -118,6 +118,19 @@ BEGIN
 END
 GO
 
+-- Captured at booking time from the doctor's own hospitalId (see hms_client.list_doctors /
+-- list_doctors_at_hospital). Lets the hospital-QR flow's "Check Appointment Status" scope
+-- results to just the hospital that was scanned, instead of every appointment this phone
+-- number has ever booked through the bot anywhere. NULL for bookings made before this
+-- column existed, or via paths that don't yet capture it (e.g. the doctor-specific QR) --
+-- app/conversation/appointment_actions.py treats NULL as "can't rule out", not "not at this
+-- hospital", so those rows still surface rather than silently vanishing from a scoped check.
+IF COL_LENGTH('dbo.pending_appointments', 'hospital_id') IS NULL
+BEGIN
+    ALTER TABLE dbo.pending_appointments ADD hospital_id NVARCHAR(64) NULL;
+END
+GO
+
 -- One row per conversation session (session_id from app/conversation/language.py's _start,
 -- carried through context for the session's whole lifetime) -- NOT one row per message.
 -- transcript_json accumulates every inbound message (full content) and every step the bot

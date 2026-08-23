@@ -27,6 +27,7 @@ from app.decision_maker import booking_slots
 from app.messengers.hms_client import HmsApiError
 from app.i18n import t
 from app.conversation.doctor_list import _doctor_fee
+from app.conversation.doctor_search import _resolve_hospital_search_match
 
 # OPD QR check-in trigger — matches the "CHECKIN <code>" text GET /c/{hospital_code}
 # (app/webhook.py) prefills into the wa.me deep link. See the interceptor in handle_message.
@@ -48,6 +49,13 @@ _VISIT_SUMMARY_TRIGGER_PATTERN = re.compile(r"^rxv\s+(\S+)$", re.IGNORECASE)
 # ever sees it. "DRBOOK" reads as a machine code, same as CHECKIN/DISCHARGE/RX/RXV, with no
 # realistic organic-message collision. See _handle_doctor_booking_trigger below.
 _DOCTOR_BOOKING_TRIGGER_PATTERN = re.compile(r"^drbook\s+(\S+)$", re.IGNORECASE)
+
+# Per-hospital QR (GET /h/{hospitalCode} in app/front_door/qr_redirects.py) -- same
+# machine-code reasoning as DRBOOK above, and deliberately distinct from CHECKIN's "C <code>"
+# trigger despite both starting from a hospital code: CHECKIN is for a patient with an
+# EXISTING appointment arriving at the hospital, HOSPBOOK is for starting a NEW booking
+# scoped to this hospital's doctors. See _handle_hospital_booking_trigger below.
+_HOSPITAL_BOOKING_TRIGGER_PATTERN = re.compile(r"^hospbook\s+(\S+)$", re.IGNORECASE)
 
 # (pattern, resolver attribute name, filename, "not available" i18n key, "delivered" caption
 # i18n key) — the resolver is looked up on hms_client by name at call time (see
@@ -176,6 +184,119 @@ async def _handle_doctor_booking_trigger(client, phone: str, doctor_id: str, con
         # own `ctx = init_context or {}`), so the pre-filled doctor slot survives into
         # _handle_choosing_language's own _advance_booking_flow call once the patient picks one.
         await conversation._start(client, phone, {"booking": booking, **doctor_context_fields})
+
+
+# ---------------------------------------------------------------------------------------
+# Per-hospital QR -- deterministically starts a NEW booking flow scoped to one already-known
+# hospital's doctor list (no name search, no disambiguation), reusing
+# _resolve_hospital_search_match unchanged: the exact same function the typed hospital-name-
+# search fallback (_search_hospitals_flow) already uses, just invoked directly with the
+# hospital this QR resolved to instead of a fuzzy text match. Distinct from the doctor-booking
+# QR above, which pre-fills a booking_slots "doctor" slot and lets _advance_booking_flow's
+# existing cascade take it from there -- a hospital has many doctors, so there's no single
+# slot value to pre-fill; the "show this hospital's doctor list" action itself has to be
+# deferred until language is known, via context["pending_hospital"] (see
+# _advance_or_run_pending_action in language.py).
+# ---------------------------------------------------------------------------------------
+
+
+async def _handle_hospital_booking_trigger(client, phone: str, hospital_code: str, context: dict) -> None:
+    from app import conversation
+
+    # Re-resolves independently of GET /h/{hospitalCode}'s own validation (app/front_door/
+    # qr_redirects.py) -- same "redirect is a UX nicety, never the authoritative check"
+    # reasoning as _handle_doctor_booking_trigger/_handle_checkin_trigger.
+    lang = context.get("lang")
+    try:
+        hospital = await hms_client.get_hospital_by_code(hospital_code)
+    except HmsApiError:
+        await conversation.whatsapp_client.send_text(client, phone, t("hospital_qr_invalid", lang))
+        return
+
+    # Fresh clipboard -- scanning a specific hospital's QR is unambiguously "start a new
+    # booking scoped to THIS hospital", same "start fresh" choice
+    # _handle_doctor_booking_trigger/_handle_checkin_trigger make for their own QR flows.
+    booking = booking_slots.empty()
+
+    if lang:
+        booking_slots.fill(booking, "lang", lang, source="user")
+        await conversation.whatsapp_client.send_text(client, phone, t("welcome_banner", lang))
+        await _start_hospital_action_menu(client, phone, {"lang": lang, "booking": booking}, hospital, None)
+    else:
+        # First-ever contact (or language forgotten) -- ask first, same as the doctor-booking
+        # QR flow above. _advance_or_run_pending_action (language.py) is what actually resolves
+        # pending_hospital once a language is picked, regardless of which of the three
+        # language-resolution paths gets there.
+        await conversation._start(client, phone, {"booking": booking, "pending_hospital": hospital})
+
+
+# ---------------------------------------------------------------------------------------
+# Hospital-QR welcome menu -- "Welcome to {hospital}! How can I help you?" with Book
+# Appointment / Check Appointment Status buttons. Shared by the immediate
+# (language-already-known) branch above and language.py's pending_hospital resume path, so
+# both give the exact same menu rather than one skipping straight to the doctor list. Both
+# menu choices stay scoped to this one hospital: Book Appointment reuses
+# _resolve_hospital_search_match (same as the typed hospital-name-search fallback) to show
+# only its doctors, and Check Appointment Status passes `hospital` through to
+# _start_appointment_action_flow so it only surfaces appointments booked there (see that
+# function's own docstring in appointment_actions.py for the NULL-hospital_id fail-open
+# reasoning).
+# ---------------------------------------------------------------------------------------
+
+
+async def _start_hospital_action_menu(client, phone: str, context: dict, hospital: dict, current_step: str | None) -> None:
+    from app import conversation
+
+    new_context = {**context, "qr_hospital": hospital}
+    await conversation._transition_to(phone, "choosing_hospital_action", new_context, current_step)
+    await _send_hospital_action_menu(client, phone, context.get("lang"), hospital)
+
+
+async def _send_hospital_action_menu(client, phone: str, lang: str | None, hospital: dict) -> None:
+    from app import conversation
+
+    await conversation.whatsapp_client.send_buttons(
+        client, phone,
+        t("hospital_qr_welcome_menu", lang, hospital=hospital.get("name") or ""),
+        [
+            ("hospbook_book", t("book_appointment_btn", lang)),
+            ("hospbook_status", t("check_appointment_status_btn", lang)),
+        ],
+    )
+
+
+async def _handle_choosing_hospital_action(client, phone, input_type, input_value, context) -> None:
+    from app import conversation
+
+    lang = context.get("lang")
+    hospital = context.get("qr_hospital")
+    if not hospital:
+        # Shouldn't happen (this step is only ever entered with qr_hospital set), but fail
+        # safe rather than crash on a missing key.
+        await conversation.whatsapp_client.send_text(client, phone, t("hospital_qr_invalid", lang))
+        await conversation.db.clear_conversation_state(phone)
+        return
+
+    if input_type != "button_reply" or input_value not in ("hospbook_book", "hospbook_status"):
+        await _send_hospital_action_menu(client, phone, lang, hospital)
+        return
+
+    if input_value == "hospbook_book":
+        await _resolve_hospital_search_match(
+            client, phone, context, hospital, hospital.get("name") or "", "choosing_hospital_action",
+            lead_type="HospitalQRScan",
+        )
+        return
+
+    await conversation._start_appointment_action_flow(
+        client, phone, context, "choosing_hospital_action", action="status", hospital=hospital,
+    )
+
+
+async def _prompt_choosing_hospital_action(client, phone, context) -> None:
+    hospital = context.get("qr_hospital")
+    if hospital:
+        await _send_hospital_action_menu(client, phone, context.get("lang"), hospital)
 
 
 # ---------------------------------------------------------------------------------------

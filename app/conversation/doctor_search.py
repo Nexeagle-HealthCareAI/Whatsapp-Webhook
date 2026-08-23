@@ -190,17 +190,23 @@ async def _search_hospitals_flow(
 
 async def _resolve_hospital_search_match(
     client, phone: str, context: dict, hospital: dict, query: str, current_step: str | None,
+    lead_type: str = "HospitalNameSearch",
 ) -> None:
     """A hospital-name search has resolved to exactly one hospital (either directly, or after
     disambiguation via _handle_choosing_hospital_from_search) -- record the lead, then show
     that hospital's doctors through the same _render_doctor_list a doctor-name search uses, so
-    picking one continues into completely unchanged existing booking code."""
+    picking one continues into completely unchanged existing booking code.
+
+    lead_type defaults to the typed-search attribution these two callers use; the hospital-QR
+    trigger (app/conversation/checkin.py) passes "HospitalQRScan" instead so the Lead
+    Generation page can tell how much traffic each source actually drives, rather than every
+    hospital-doctor-list view being misattributed as a typed name search."""
     from app import conversation
 
     lang = context.get("lang")
     hospital_id = hospital.get("hospitalId")
     await hms_client.record_lead(
-        hospital_id=hospital_id, lead_type="HospitalNameSearch", search_query=query, mobile=phone,
+        hospital_id=hospital_id, lead_type=lead_type, search_query=query, mobile=phone,
     )
 
     try:

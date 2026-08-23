@@ -6,6 +6,7 @@ from app.config import settings
 from app.front_door.qr_handlers import (
     CheckinRedirectHandler,
     DoctorBookingRedirectHandler,
+    HospitalBookingRedirectHandler,
     DocumentRedirectHandler,
 )
 
@@ -42,6 +43,11 @@ async def visit_summary_qr_redirect(appointment_id: str):
 @router.get("/doc/{doctor_id}")
 async def doctor_booking_qr_redirect(doctor_id: str):
     return await DoctorBookingRedirectHandler().handle_redirect(doctor_id)
+
+
+@router.get("/h/{hospital_code}")
+async def hospital_booking_qr_redirect(hospital_code: str):
+    return await HospitalBookingRedirectHandler().handle_redirect(hospital_code)
 
 
 @router.get("/start")

@@ -91,6 +91,18 @@ class DoctorBookingRedirectHandler(BaseRedirectHandler):
         return f"DRBOOK {resource_id}"
 
 
+class HospitalBookingRedirectHandler(BaseRedirectHandler):
+    @property
+    def display_name(self) -> str:
+        return "Hospital booking"
+
+    async def validate_resource(self, resource_id: str) -> None:
+        await hms_client.get_hospital_by_code(resource_id)
+
+    def build_wa_payload(self, resource_id: str) -> str:
+        return f"HOSPBOOK {resource_id}"
+
+
 class DocumentRedirectHandler(BaseRedirectHandler):
     def __init__(self, code_prefix: str, resolver):
         self.code_prefix = code_prefix
