@@ -1313,18 +1313,12 @@ async def _handle_confirming(client, phone, sender_name, input_type, input_value
         patient_guardian=patient_guardian,
         hospital_id=context.get("hospital_id") or None,
     )
-    note_bits = []
-    if patient_age:
-        note_bits.append(f"age {patient_age}")
-    if patient_gender:
-        note_bits.append(f"gender {patient_gender}")
-    if patient_guardian:
-        note_bits.append(f"guardian {patient_guardian}")
-    extra_note = "; ".join(note_bits) or None
-
     try:
         result = await hms_client.book_appointment(
-            patient_name, phone, doctor_id, preferred_date, shift_label, extra_note=extra_note
+            patient_name, phone, doctor_id, preferred_date, shift_label,
+            patient_age=int(patient_age) if patient_age else None,
+            patient_gender=patient_gender,
+            patient_guardian=patient_guardian,
         )
     except (HmsApiError, httpx.HTTPError):
         await db.mark_appointment_failed(row_id)

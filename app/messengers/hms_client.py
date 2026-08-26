@@ -122,23 +122,35 @@ async def book_appointment(
     doctor_id: str,
     preferred_date: date_type,
     preferred_shift_label: str,
-    extra_note: str | None = None,
+    patient_age: int | None = None,
+    patient_gender: str | None = None,
+    patient_guardian: str | None = None,
 ) -> dict[str, Any]:
     # PreferredTime is a .NET TimeSpan? on the wire — deliberately left unset rather than
     # risk a serialization mismatch; PreferredDate + the shift noted in Reason is enough,
     # since neither is binding anyway (see PublicBookAppointmentRequestModel — a public
     # booking never claims a real slot, front desk picks the actual time at confirm time).
     #
-    # extra_note: used for family/proxy bookings (conversation.py) to record who the visit
-    # is actually for, e.g. "for Daughter (age 8)" — folded into this same free-text field
-    # rather than a dedicated request field, since the public API's request schema wasn't
-    # confirmed to have one; the front desk sees it either way. If 1HMS later exposes a
-    # first-class relation/dependent field, switch to that instead of this text append.
+    # age/gender/guardian go on dedicated Patient fields (age, ageUnit, sex, guardianName),
+    # not folded into the free-text Reason like an earlier version of this function did --
+    # confirmed against 1HMSAPI-temp's own Patient request model and
+    # AppointmentBookingHelpers.FindOrCreatePatientAsync, which persists exactly these
+    # fields onto the patient record when present. That folded-into-text version was the
+    # root cause of a real bug: age/gender never actually showed up on the patient record in
+    # 1HMS, only buried in the appointment's free-text notes where reception never parsed it
+    # back out. ageUnit is hardcoded "Y" (years) -- the WhatsApp patient-details form
+    # (_looks_like_age) only ever asks for and validates an age in years.
     reason = f"WhatsApp booking — preferred {preferred_shift_label}"
-    if extra_note:
-        reason += f"; {extra_note}"
+    patient: dict[str, Any] = {"fullName": patient_name, "mobile": patient_mobile}
+    if patient_age is not None:
+        patient["age"] = patient_age
+        patient["ageUnit"] = "Y"
+    if patient_gender:
+        patient["sex"] = patient_gender
+    if patient_guardian:
+        patient["guardianName"] = patient_guardian
     body = {
-        "patient": {"fullName": patient_name, "mobile": patient_mobile},
+        "patient": patient,
         "doctorId": doctor_id,
         "preferredDate": preferred_date.isoformat(),
         "reason": reason,
