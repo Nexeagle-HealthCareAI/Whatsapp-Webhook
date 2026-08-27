@@ -1305,10 +1305,17 @@ async def _handle_confirming(client, phone, sender_name, input_type, input_value
         await db.clear_conversation_state(phone)
         return
 
+    # Clean patient_age safely to digits only
+    clean_age = None
+    if patient_age:
+        digits = "".join(char for char in str(patient_age) if char.isdigit())
+        if digits:
+            clean_age = int(digits)
+
     row_id = await db.create_pending_appointment(
         phone, preferred_date,
         preferred_language=lang, booking_for=booking_for, patient_display_name=patient_name,
-        patient_age=int(patient_age) if patient_age else None,
+        patient_age=clean_age,
         patient_gender=patient_gender,
         patient_guardian=patient_guardian,
         hospital_id=context.get("hospital_id") or None,
@@ -1316,7 +1323,7 @@ async def _handle_confirming(client, phone, sender_name, input_type, input_value
     try:
         result = await hms_client.book_appointment(
             patient_name, phone, doctor_id, preferred_date, shift_label,
-            patient_age=int(patient_age) if patient_age else None,
+            patient_age=clean_age,
             patient_gender=patient_gender,
             patient_guardian=patient_guardian,
         )

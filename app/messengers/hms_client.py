@@ -122,7 +122,7 @@ async def book_appointment(
     doctor_id: str,
     preferred_date: date_type,
     preferred_shift_label: str,
-    patient_age: int | None = None,
+    patient_age: int | str | None = None,
     patient_gender: str | None = None,
     patient_guardian: str | None = None,
 ) -> dict[str, Any]:
@@ -140,15 +140,37 @@ async def book_appointment(
     # 1HMS, only buried in the appointment's free-text notes where reception never parsed it
     # back out. ageUnit is hardcoded "Y" (years) -- the WhatsApp patient-details form
     # (_looks_like_age) only ever asks for and validates an age in years.
+    
+    # Clean and parse age to digits only
+    age_val = None
+    if patient_age is not None:
+        digits = "".join(char for char in str(patient_age) if char.isdigit())
+        if digits:
+            age_val = int(digits)
+
+    # Normalize gender to case-sensitive Male / Female
+    gender_val = None
+    if patient_gender:
+        g = patient_gender.strip().lower()
+        if g in ("male", "m", "boy", "man"):
+            gender_val = "Male"
+        elif g in ("female", "f", "girl", "woman"):
+            gender_val = "Female"
+        else:
+            gender_val = patient_gender.strip()
+
+    # Clean guardian name
+    guardian_val = patient_guardian.strip() if patient_guardian else None
+
     reason = f"WhatsApp booking — preferred {preferred_shift_label}"
     patient: dict[str, Any] = {"fullName": patient_name, "mobile": patient_mobile}
-    if patient_age is not None:
-        patient["age"] = patient_age
+    if age_val is not None:
+        patient["age"] = age_val
         patient["ageUnit"] = "Y"
-    if patient_gender:
-        patient["sex"] = patient_gender
-    if patient_guardian:
-        patient["guardianName"] = patient_guardian
+    if gender_val:
+        patient["sex"] = gender_val
+    if guardian_val:
+        patient["guardianName"] = guardian_val
     body = {
         "patient": patient,
         "doctorId": doctor_id,
