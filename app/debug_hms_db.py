@@ -1,6 +1,9 @@
 import re
 import pyodbc
+import logging
 from app.config import settings
+
+logger = logging.getLogger("debug_hms_db")
 
 def main():
     conn_str = settings.sqlserver_conn_string
@@ -14,12 +17,12 @@ def main():
             "FROM dbo.PatientRegistrations ORDER BY RegisteredAt DESC"
         )
         rows = cur.fetchall()
-        print("LAST 5 PATIENTS IN HMS DATABASE:")
+        logger.info("LAST 5 PATIENTS IN HMS DATABASE:")
         for r in rows:
-            print(f"ID: {r[0]} | Name: {r[1]} | Age: {r[2]} {r[3]} | Sex: {r[4]} | Guardian: {r[5]} | RegisteredAt: {r[6]}")
+            logger.info(f"ID: {r[0]} | Name: {r[1]} | Age: {r[2]} {r[3]} | Sex: {r[4]} | Guardian: {r[5]} | RegisteredAt: {r[6]}")
         conn.close()
     except Exception as e:
-        print(f"Error querying HMS database: {e}")
+        logger.error(f"Error querying HMS database: {e}")
 
 if __name__ == "__main__":
     main()
