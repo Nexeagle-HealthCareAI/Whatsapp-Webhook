@@ -1211,10 +1211,38 @@ async def _send_patient_details_flow(client: httpx.AsyncClient, phone: str, cont
     await _transition_to(phone, "awaiting_patient_details", context, context.get("current_step"))
 
 
+def clean_and_normalize_patient_details(name: str, age: str, gender: str, guardian: str) -> tuple[str, int | None, str, str]:
+    # 1. Clean Name
+    cleaned_name = name.strip()
+
+    # 2. Extract digits for Age
+    cleaned_age = None
+    if age:
+        digits = "".join(char for char in str(age) if char.isdigit())
+        if digits:
+            cleaned_age = int(digits)
+
+    # 3. Normalize Gender to case-sensitive 'Male' or 'Female'
+    cleaned_gender = gender.strip()
+    if cleaned_gender:
+        g = cleaned_gender.lower()
+        if g in ("male", "m", "boy", "man"):
+            cleaned_gender = "Male"
+        elif g in ("female", "f", "girl", "woman"):
+            cleaned_gender = "Female"
+
+    # 4. Clean Guardian
+    cleaned_guardian = guardian.strip()
+
+    return cleaned_name, cleaned_age, cleaned_gender, cleaned_guardian
+
+
 async def _handle_awaiting_patient_details(client, phone, input_type, input_value, context) -> None:
     lang = context.get("lang")
-    name, age, gender, guardian = None, None, None, None
-    selected_slot = None
+    name = ""
+    age = ""
+    gender = ""
+    guardian = ""
 
     if input_type == "nfm_reply":
         try:
@@ -1228,8 +1256,12 @@ async def _handle_awaiting_patient_details(client, phone, input_type, input_valu
             if slot_id:
                 offered_slots = context.get("offered_slots") or []
                 selected_slot = next((s for s in offered_slots if s["button_id"] == slot_id), None)
+                if selected_slot:
+                    context["preferred_date"] = selected_slot["date"]
+                    context["shift_label"] = selected_slot["shift_name"]
         except Exception:
             pass
+
     elif input_type == "text":
         parsed = _parse_details(input_value, 4)
         if parsed:
@@ -1242,25 +1274,22 @@ async def _handle_awaiting_patient_details(client, phone, input_type, input_valu
                 name, age, gender = parsed
                 guardian = ""
 
-    if not name or not age or not gender:
+    name, age_val, gender, guardian = clean_and_normalize_patient_details(name, age, gender, guardian)
+
+    if not name or age_val is None or not gender:
         await whatsapp_client.send_text(client, phone, t("patient_details_invalid", lang))
         await _send_patient_details_flow(client, phone, context)
         return
 
-    if not _looks_like_age(age):
-        await whatsapp_client.send_text(client, phone, t("age_invalid", lang))
-        await _send_patient_details_flow(client, phone, context)
-        return
-
     context["patient_display_name"] = name
-    context["patient_age"] = age
+    context["patient_age"] = age_val
     context["patient_gender"] = gender
     context["patient_guardian"] = guardian
 
     booking = _get_or_create_clipboard(context)
     booking_slots.fill(booking, "patient", {
         "name": name,
-        "age": age,
+        "age": str(age_val),
         "gender": gender,
         "guardian": guardian
     }, source="user")
@@ -1305,17 +1334,10 @@ async def _handle_confirming(client, phone, sender_name, input_type, input_value
         await db.clear_conversation_state(phone)
         return
 
-    # Clean patient_age safely to digits only
-    clean_age = None
-    if patient_age:
-        digits = "".join(char for char in str(patient_age) if char.isdigit())
-        if digits:
-            clean_age = int(digits)
-
     row_id = await db.create_pending_appointment(
         phone, preferred_date,
         preferred_language=lang, booking_for=booking_for, patient_display_name=patient_name,
-        patient_age=clean_age,
+        patient_age=patient_age,
         patient_gender=patient_gender,
         patient_guardian=patient_guardian,
         hospital_id=context.get("hospital_id") or None,
@@ -1323,7 +1345,7 @@ async def _handle_confirming(client, phone, sender_name, input_type, input_value
     try:
         result = await hms_client.book_appointment(
             patient_name, phone, doctor_id, preferred_date, shift_label,
-            patient_age=clean_age,
+            patient_age=patient_age,
             patient_gender=patient_gender,
             patient_guardian=patient_guardian,
         )
