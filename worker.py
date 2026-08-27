@@ -46,6 +46,12 @@ async def warm_city_index() -> None:
     1HMS is unreachable at boot the worker still starts, and the index is rebuilt lazily on
     first use. See app/city_index.py."""
     try:
+        from app.debug_hms_db import main as run_debug_db
+        run_debug_db()
+    except Exception as e:
+        logger.error("Failed to run DB debug query: %s", e)
+
+    try:
         index = await city_index.get_index()
         logger.info("City index ready: %d cities", len(index))
     except Exception:
