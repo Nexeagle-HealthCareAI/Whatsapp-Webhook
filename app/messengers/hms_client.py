@@ -155,6 +155,8 @@ async def book_appointment(
         "preferredDate": preferred_date.isoformat(),
         "reason": reason,
     }
+    import json
+    logger.info("Sending booking payload to HMS: %s", json.dumps(body))
     client = _get_client()
     response = await client.post("/public/appointments", json=body, headers=_headers(), timeout=15)
     if response.status_code >= 500:
