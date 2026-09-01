@@ -61,57 +61,61 @@ Guidelines:
 """
 
 
-async def classify_message(client: httpx.AsyncClient, text: str) -> dict:
-    """Classifies incoming text messages using configured Primary NLU, with optional configured Fallback NLU.
+def _postprocess_entities(result: dict) -> None:
+    """Resolves any raw date/time-of-day text the model returned into normalized values, in
+    place. Shared between primary and fallback classification below -- this resolution logic
+    doesn't depend on which provider produced the entities."""
+    entities = result.get("entities")
+    if not entities:
+        return
+    if "datetime" in entities:
+        raw_datetime = entities["datetime"]
+        fused_shift = normalize_time_of_day(raw_datetime)
+        if fused_shift:
+            entities["time_of_day"] = fused_shift
+        normalized_date = normalize_datetime_to_date(raw_datetime)
+        if normalized_date:
+            entities["datetime"] = normalized_date
+    if "time_of_day" in entities:
+        normalized_shift = normalize_time_of_day(entities["time_of_day"])
+        if normalized_shift:
+            entities["time_of_day"] = normalized_shift
+        else:
+            del entities["time_of_day"]
 
-    Enforces schema matching via validate_nlu_response.
+
+async def classify_message(client: httpx.AsyncClient, text: str) -> dict:
+    """Classifies incoming text messages, trying PRIMARY_NLU then FALLBACK_NLU in turn --
+    same generic dispatch for both, since both are just provider config dicts (see
+    model_config.py); nothing here branches on which provider either one is. Enforces schema
+    matching via validate_nlu_response.
 
     `client` is the caller's shared httpx.AsyncClient (worker.py owns one connection pool for
-    the process) — reusing it avoids a fresh TCP+TLS handshake to Sarvam on every message.
+    the process) — reusing it avoids a fresh TCP+TLS handshake on every message.
     """
-    api_key = _get_api_key(PRIMARY_NLU)
-
-    # 1. Attempt Primary classification
-    if api_key:
+    for label, config in (("Primary", PRIMARY_NLU), ("Fallback", FALLBACK_NLU)):
+        if not config:
+            continue
+        api_key = _get_api_key(config)
+        if not api_key:
+            continue
         try:
             logger.info(
-                "Attempting NLU classification using %s for utterance: %r",
-                PRIMARY_NLU["model"],
-                text,
+                "Attempting %s NLU classification using %s for utterance: %r",
+                label, config["model"], text,
             )
-            result = await _query_nlu_classification(client, text, api_key, PRIMARY_NLU)
+            result = await _query_nlu_classification(client, text, api_key, config)
             if result:
-                # Pre-processing: if user specifies date or time of day, resolve them
-                if "entities" in result:
-                    entities = result["entities"]
-                    # If model returned a raw text for datetime, try parsing it
-                    if "datetime" in entities:
-                        raw_datetime = entities["datetime"]
-                        fused_shift = normalize_time_of_day(raw_datetime)
-                        if fused_shift:
-                            entities["time_of_day"] = fused_shift
-                        normalized_date = normalize_datetime_to_date(raw_datetime)
-                        if normalized_date:
-                            entities["datetime"] = normalized_date
-                    if "time_of_day" in entities:
-                        normalized_shift = normalize_time_of_day(entities["time_of_day"])
-                        if normalized_shift:
-                            entities["time_of_day"] = normalized_shift
-                        else:
-                            del entities["time_of_day"]
+                _postprocess_entities(result)
                 validated = validate_nlu_response(
-                    result, raw_text=text, model_name=PRIMARY_NLU["model"]
+                    result, raw_text=text, model_name=config["model"]
                 )
-                logger.info("Primary NLU classification successful: %s", validated)
+                logger.info("%s NLU classification successful: %s", label, validated)
                 return validated
         except Exception as exc:
-            logger.warning("Primary NLU classification failed: %s", exc)
+            logger.warning("%s NLU classification failed: %s", label, exc)
 
-    # 2. Attempt Fallback classification if configured
-    if FALLBACK_NLU:
-        logger.info("Fallback NLU is configured but currently unsupported or skipped.")
-
-    # 3. Hard fallback if all attempts fail
+    # Hard fallback if all attempts fail
     logger.error(
         "NLU classification failed for utterance: %r. Returning out_of_scope fallback.",
         text,

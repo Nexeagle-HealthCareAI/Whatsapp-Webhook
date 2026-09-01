@@ -28,6 +28,9 @@ services:
       # — a different secret from WHATSAPP_APP_SECRET, which authenticates Meta instead.
       INTERNAL_EVENTS_TOKEN: "${INTERNAL_EVENTS_TOKEN}"
       SARVAM_API_KEY: "${SARVAM_API_KEY}"
+      # PRIMARY_NLU (app/listener/model_config.py) -- optional, classify_message falls
+      # through to FALLBACK_NLU (Sarvam, above) if this is unset or a call fails.
+      GROK_API_KEY: "${GROK_API_KEY:-}"
       # Only this service serves GET /c/{hospital_code} (worker.py never mounts the FastAPI
       # app) -- optional, see app/config.py for why an unset value degrades gracefully.
       WHATSAPP_DISPLAY_NUMBER: "${WHATSAPP_DISPLAY_NUMBER:-}"
@@ -66,6 +69,9 @@ services:
       # conversation.handle_message — without this, settings.sarvam_api_key is None here
       # and every message silently falls back to out_of_scope (see nlu_logs).
       SARVAM_API_KEY: "${SARVAM_API_KEY}"
+      # PRIMARY_NLU (app/listener/model_config.py) -- optional, classify_message falls
+      # through to FALLBACK_NLU (Sarvam, above) if this is unset or a call fails.
+      GROK_API_KEY: "${GROK_API_KEY:-}"
       # The patient-details WhatsApp Flow -- only read here (_send_patient_details_flow,
       # app/conversation/__init__.py), which only ever runs inside this container. Default
       # matches app/config.py's own default -- an unset/empty value here would otherwise

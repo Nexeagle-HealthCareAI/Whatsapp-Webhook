@@ -98,6 +98,7 @@ class Settings(BaseSettings):
     # rather than silently accepting unauthenticated event pushes.
     internal_events_token: str
     sarvam_api_key: str | None = None
+    grok_api_key: str | None = None
     gemini_api_key: str | None = None
     nlu_confidence_threshold: float = 0.75
 
