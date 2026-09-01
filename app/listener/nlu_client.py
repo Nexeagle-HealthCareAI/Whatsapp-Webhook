@@ -11,6 +11,27 @@ from app.decision_maker.normalizer import normalize_datetime_to_date, normalize_
 
 logger = logging.getLogger("nlu_client")
 
+
+def _get_api_key(config: dict) -> str | None:
+    """Reads whichever Settings field this provider's config points at (config["api_key_setting"]),
+    instead of every call site hardcoding `settings.sarvam_api_key` -- that hardcoding is
+    exactly what made swapping providers look like a one-line API-key change when it wasn't:
+    the key alone doesn't carry the endpoint or the header format with it. "test" is the
+    placeholder value test fixtures use for required-but-irrelevant settings fields (see
+    tests' os.environ.setdefault blocks) -- treated as "not configured", same as unset."""
+    key = getattr(settings, config.get("api_key_setting", ""), None)
+    return key if key and key != "test" else None
+
+
+def _auth_headers(config: dict, api_key: str) -> dict:
+    """Builds the auth header this provider expects. config["auth_header"] names a custom
+    header (Sarvam's "api-subscription-key"); omitting it falls back to the standard
+    "Authorization: Bearer <key>" most OpenAI-compatible chat-completions APIs use."""
+    header_name = config.get("auth_header")
+    if header_name:
+        return {header_name: api_key, "Content-Type": "application/json"}
+    return {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
 RECEPTIONIST_SYSTEM_PROMPT = """
 You are a warm, friendly, and helpful medical receptionist at NexEagle clinic.
 Your job is to talk to the patient and guide them naturally to the next step of booking an appointment.
@@ -48,17 +69,17 @@ async def classify_message(client: httpx.AsyncClient, text: str) -> dict:
     `client` is the caller's shared httpx.AsyncClient (worker.py owns one connection pool for
     the process) — reusing it avoids a fresh TCP+TLS handshake to Sarvam on every message.
     """
-    sarvam_api_key = getattr(settings, "sarvam_api_key", None)
+    api_key = _get_api_key(PRIMARY_NLU)
 
     # 1. Attempt Primary classification
-    if PRIMARY_NLU["provider"] == "sarvam" and sarvam_api_key and sarvam_api_key != "test":
+    if api_key:
         try:
             logger.info(
                 "Attempting NLU classification using %s for utterance: %r",
                 PRIMARY_NLU["model"],
                 text,
             )
-            result = await _query_sarvam(client, text, sarvam_api_key, PRIMARY_NLU)
+            result = await _query_nlu_classification(client, text, api_key, PRIMARY_NLU)
             if result:
                 # Pre-processing: if user specifies date or time of day, resolve them
                 if "entities" in result:
@@ -202,12 +223,12 @@ async def _query_llm_text(
     config: dict,
     timeout: float | None = None,
 ) -> str | None:
-    sarvam_api_key = getattr(settings, "sarvam_api_key", None)
-    if not sarvam_api_key or sarvam_api_key == "test":
+    api_key = _get_api_key(config)
+    if not api_key:
         return None
 
     url = config["endpoint"]
-    headers = {"api-subscription-key": sarvam_api_key, "Content-Type": "application/json"}
+    headers = _auth_headers(config, api_key)
     body = {
         "messages": [
             {"role": "system", "content": system_prompt},
@@ -232,7 +253,7 @@ async def _query_llm_text(
     return None
 
 
-async def _query_sarvam(
+async def _query_nlu_classification(
     client: httpx.AsyncClient,
     text: str,
     api_key: str,
@@ -240,7 +261,7 @@ async def _query_sarvam(
     retry: bool = True,
 ) -> dict | None:
     url = config["endpoint"]
-    headers = {"api-subscription-key": api_key, "Content-Type": "application/json"}
+    headers = _auth_headers(config, api_key)
     body = {
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -254,7 +275,7 @@ async def _query_sarvam(
 
     resp = await client.post(url, headers=headers, json=body, timeout=config["timeout"])
     if resp.status_code != 200:
-        logger.warning("Sarvam API returned non-200 status code: %d", resp.status_code)
+        logger.warning("%s API returned non-200 status code: %d", config.get("provider", "NLU"), resp.status_code)
         return None
 
     try:
@@ -262,18 +283,18 @@ async def _query_sarvam(
         content = data["choices"][0]["message"]["content"].strip()
         return json.loads(content)
     except (KeyError, ValueError, json.JSONDecodeError) as err:
-        logger.warning("Failed to parse Sarvam AI response as JSON: %s", err)
+        logger.warning("Failed to parse %s response as JSON: %s", config.get("provider", "NLU"), err)
         if retry:
-            logger.info("Retrying Sarvam AI call with JSON reminder...")
-            return await _query_sarvam_retry(client, text, api_key, config)
+            logger.info("Retrying %s call with JSON reminder...", config.get("provider", "NLU"))
+            return await _query_nlu_classification_retry(client, text, api_key, config)
         return None
 
 
-async def _query_sarvam_retry(
+async def _query_nlu_classification_retry(
     client: httpx.AsyncClient, text: str, api_key: str, config: dict
 ) -> dict | None:
     url = config["endpoint"]
-    headers = {"api-subscription-key": api_key, "Content-Type": "application/json"}
+    headers = _auth_headers(config, api_key)
     body = {
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},

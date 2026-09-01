@@ -1243,6 +1243,7 @@ async def _handle_awaiting_patient_details(client, phone, input_type, input_valu
     age = ""
     gender = ""
     guardian = ""
+    selected_slot = None
 
     if input_type == "nfm_reply":
         try:
