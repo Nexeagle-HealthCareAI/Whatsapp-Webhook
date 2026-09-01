@@ -25,6 +25,15 @@
 #   WHATSAPP_DISPLAY_NUMBER  optional — dialable wa.me number (E.164, no leading +) for
 #                            GET /c/{hospital_code}. Omit until you're ready to print QR
 #                            codes; that route degrades to a friendly error until it's set.
+#   WHATSAPP_FLOW_ID         required — the patient-details WhatsApp Flow's own id. Flow ids
+#                            are NOT portable between Meta Apps/WABAs (each needs its own Flow
+#                            built in that app's WhatsApp Manager, with name/age/gender/
+#                            guardian/slot fields matching what app/conversation/__init__.py's
+#                            _send_patient_details_flow sends and reads back) — pointing this
+#                            at another app's Flow id fails every send with "flow_id is
+#                            invalid" the moment a patient reaches that step.
+#   WHATSAPP_FLOW_SCREEN_ID  optional — only needed if your Flow's screen isn't named
+#                            REGISTRATION_SCREEN (app/config.py's default).
 #
 # VARIABLES (optional):
 #   VM_DEPLOY_PATH    where this repo is checked out on the VM (default /opt/whatsapp-webhook)
@@ -90,12 +99,14 @@ jobs:
           INTERNAL_EVENTS_TOKEN: ${{ secrets.INTERNAL_EVENTS_TOKEN }}
           SARVAM_API_KEY: ${{ secrets.SARVAM_API_KEY }}
           WHATSAPP_DISPLAY_NUMBER: ${{ secrets.WHATSAPP_DISPLAY_NUMBER }}
+          WHATSAPP_FLOW_ID: ${{ secrets.WHATSAPP_FLOW_ID }}
+          WHATSAPP_FLOW_SCREEN_ID: ${{ secrets.WHATSAPP_FLOW_SCREEN_ID }}
         with:
           host: ${{ secrets.DEV_SSH_HOST }}
           username: ${{ secrets.DEV_SSH_USER }}
           password: ${{ secrets.DEV_SSH_PASSWORD }}
           port: 22
-          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,SQLSERVER_CONN_STRING_DEV,HMS_API_KEY,INTERNAL_EVENTS_TOKEN,SARVAM_API_KEY,WHATSAPP_DISPLAY_NUMBER
+          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,SQLSERVER_CONN_STRING_DEV,HMS_API_KEY,INTERNAL_EVENTS_TOKEN,SARVAM_API_KEY,WHATSAPP_DISPLAY_NUMBER,WHATSAPP_FLOW_ID,WHATSAPP_FLOW_SCREEN_ID
           script: |
             set -e
             cd "$DEPLOY_PATH"
@@ -108,7 +119,8 @@ jobs:
             : "${SQLSERVER_CONN_STRING_DEV:?SQLSERVER_CONN_STRING_DEV is empty}"
             : "${INTERNAL_EVENTS_TOKEN:?INTERNAL_EVENTS_TOKEN is empty}"
             : "${SARVAM_API_KEY:?SARVAM_API_KEY is empty}"
-          
+            : "${WHATSAPP_FLOW_ID:?WHATSAPP_FLOW_ID is empty}"
+
 
             # Doesn't print the secret itself, just confirms the shape pyodbc needs is there —
             # ADO.NET-style strings (Server=...;User Id=...) silently lack this and fail later
@@ -132,6 +144,8 @@ jobs:
               printf 'INTERNAL_EVENTS_TOKEN=%s\n' "$INTERNAL_EVENTS_TOKEN"
               printf 'SARVAM_API_KEY=%s\n' "$SARVAM_API_KEY"
               printf 'WHATSAPP_DISPLAY_NUMBER=%s\n' "$WHATSAPP_DISPLAY_NUMBER"
+              printf 'WHATSAPP_FLOW_ID=%s\n' "$WHATSAPP_FLOW_ID"
+              printf 'WHATSAPP_FLOW_SCREEN_ID=%s\n' "$WHATSAPP_FLOW_SCREEN_ID"
             } > "$ENVFILE"
             chmod 600 "$ENVFILE"
 

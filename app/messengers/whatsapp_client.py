@@ -8,7 +8,7 @@ from app.messengers.redis_client import get_redis
 
 logger = logging.getLogger("whatsapp_client")
 
-GRAPH_API_URL = f"https://graph.facebook.com/v19.0/{settings.whatsapp_phone_number_id}/messages"
+GRAPH_API_URL = f"https://graph.facebook.com/v25.0/{settings.whatsapp_phone_number_id}/messages"
 
 # WhatsApp interactive-message limits (Meta Cloud API).
 _MAX_LIST_ROWS = 10
