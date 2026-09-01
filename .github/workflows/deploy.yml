@@ -55,6 +55,14 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # Prefers secrets scoped to the "development" GitHub Environment (Settings ->
+    # Environments) over same-named repository secrets -- see F1 in the Environment
+    # Separation Runbook. Anything NOT in that environment (DEV_SSH_*, MSSQL_SA_PASSWORD_DEV,
+    # GHCR_TOKEN -- shared VM/infra credentials, not per-environment app credentials) still
+    # resolves from repository secrets as a fallback, so this line alone doesn't require
+    # moving every secret. When Prod exists, deploy-prod.yml points this same way at its own
+    # "production" environment -- the two can never accidentally read each other's secrets.
+    environment: development
     steps:
       - name: Sync checkout + apply SQL schema
         uses: appleboy/ssh-action@v1.2.0
