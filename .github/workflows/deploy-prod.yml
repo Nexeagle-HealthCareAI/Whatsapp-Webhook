@@ -7,9 +7,12 @@
 #
 # SECRETS (Settings → Secrets and variables → Actions — put these under the "production"
 # Environment specifically, not repository-level, so they can never be read by deploy.yml):
-#   PROD_SSH_HOST            Prod VM address
+#   PROD_SSH_HOST            Prod VM address (same one easyHMSAPI's Stage 4 deploys to)
 #   PROD_SSH_USER            root
-#   PROD_SSH_PASSWORD        Prod VM root password
+#   PROD_SSH_KEY_B64         base64-encoded SSH private key for the Prod VM — same
+#                            key-auth convention as easyHMSAPI's deploy-api.yml Stage 4
+#                            (Dev stays password-auth; only Prod uses a key). Generate the
+#                            b64 form with: base64 -w0 path/to/key   (macOS: base64 -i path/to/key)
 #
 #   WHATSAPP_TOKEN            permanent access token, Meta App dashboard (Prod WABA/App)
 #   WHATSAPP_PHONE_NUMBER_ID  Meta App dashboard
@@ -20,8 +23,11 @@
 #   MSSQL_SA_PASSWORD_PROD    sa password for the Prod VM's sqlserver container — used ONLY
 #                            to apply sql/schema.sql (creates the separate WhatsAppBookingProd
 #                            database, never touches easyHMSAPI's own DB)
-#   SQLSERVER_CONN_STRING_PROD  ODBC conn string the APP itself connects with (pyodbc, NOT
-#                            the ADO.NET/SqlClient format easyHMSAPI uses), e.g.:
+#   PROD_DB_CONNECTION       ODBC conn string the APP itself connects with (pyodbc, NOT the
+#                            ADO.NET/SqlClient format easyHMSAPI's own PROD_DB_CONNECTION
+#                            secret uses — same secret NAME, different connection-string
+#                            dialect, since this app talks to SQL Server via pyodbc not
+#                            Microsoft.Data.SqlClient), e.g.:
 #                            DRIVER={ODBC Driver 18 for SQL Server};SERVER=host.docker.internal,1433;
 #                            DATABASE=WhatsAppBookingProd;UID=sa;PWD=...;TrustServerCertificate=yes
 #   HMS_API_KEY              optional — X-Api-Key for easyHMSAPI's PublicController. Omit the
@@ -78,6 +84,13 @@ jobs:
     # secrets as a fallback, same convention as DEV_SSH_*/MSSQL_SA_PASSWORD_DEV today.
     environment: production
     steps:
+      - name: Prepare SSH key
+        # Same convention as easyHMSAPI's deploy-api.yml Stage 4 -- decode once, reuse the
+        # file path (key_path) in both ssh-action steps below rather than passing password auth.
+        run: |
+          echo "${{ secrets.PROD_SSH_KEY_B64 }}" | base64 -d > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+
       - name: Sync checkout + apply SQL schema
         uses: appleboy/ssh-action@v1.2.0
         env:
@@ -86,7 +99,7 @@ jobs:
         with:
           host: ${{ secrets.PROD_SSH_HOST }}
           username: ${{ secrets.PROD_SSH_USER }}
-          password: ${{ secrets.PROD_SSH_PASSWORD }}
+          key_path: /tmp/deploy_key
           port: 22
           envs: DEPLOY_PATH,MSSQL_SA_PASSWORD_PROD
           script: |
@@ -123,7 +136,7 @@ jobs:
           WHATSAPP_VERIFY_TOKEN: ${{ secrets.WHATSAPP_VERIFY_TOKEN }}
           WHATSAPP_APP_SECRET: ${{ secrets.WHATSAPP_APP_SECRET }}
           REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
-          SQLSERVER_CONN_STRING_PROD: ${{ secrets.SQLSERVER_CONN_STRING_PROD }}
+          PROD_DB_CONNECTION: ${{ secrets.PROD_DB_CONNECTION }}
           HMS_API_KEY: ${{ secrets.HMS_API_KEY }}
           INTERNAL_EVENTS_TOKEN: ${{ secrets.INTERNAL_EVENTS_TOKEN }}
           SARVAM_API_KEY: ${{ secrets.SARVAM_API_KEY }}
@@ -134,9 +147,9 @@ jobs:
         with:
           host: ${{ secrets.PROD_SSH_HOST }}
           username: ${{ secrets.PROD_SSH_USER }}
-          password: ${{ secrets.PROD_SSH_PASSWORD }}
+          key_path: /tmp/deploy_key
           port: 22
-          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,SQLSERVER_CONN_STRING_PROD,HMS_API_KEY,INTERNAL_EVENTS_TOKEN,SARVAM_API_KEY,WHATSAPP_DISPLAY_NUMBER,WHATSAPP_FLOW_ID,WHATSAPP_FLOW_SCREEN_ID,GROK_API_KEY
+          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,PROD_DB_CONNECTION,HMS_API_KEY,INTERNAL_EVENTS_TOKEN,SARVAM_API_KEY,WHATSAPP_DISPLAY_NUMBER,WHATSAPP_FLOW_ID,WHATSAPP_FLOW_SCREEN_ID,GROK_API_KEY
           script: |
             set -e
             cd "$DEPLOY_PATH"
@@ -146,7 +159,7 @@ jobs:
             : "${WHATSAPP_VERIFY_TOKEN:?WHATSAPP_VERIFY_TOKEN is empty}"
             : "${WHATSAPP_APP_SECRET:?WHATSAPP_APP_SECRET is empty}"
             : "${REDIS_PASSWORD:?REDIS_PASSWORD is empty}"
-            : "${SQLSERVER_CONN_STRING_PROD:?SQLSERVER_CONN_STRING_PROD is empty}"
+            : "${PROD_DB_CONNECTION:?PROD_DB_CONNECTION is empty}"
             : "${INTERNAL_EVENTS_TOKEN:?INTERNAL_EVENTS_TOKEN is empty}"
             : "${SARVAM_API_KEY:?SARVAM_API_KEY is empty}"
             : "${WHATSAPP_FLOW_ID:?WHATSAPP_FLOW_ID is empty}"
@@ -154,8 +167,8 @@ jobs:
             # Doesn't print the secret itself, just confirms the shape pyodbc needs is there —
             # ADO.NET-style strings (Server=...;User Id=...) silently lack this and fail later
             # with a much less obvious "Data source name not found" error.
-            if ! printf '%s' "$SQLSERVER_CONN_STRING_PROD" | grep -qi 'DRIVER='; then
-              echo "ERROR: SQLSERVER_CONN_STRING_PROD has no DRIVER= key — it must be an ODBC" \
+            if ! printf '%s' "$PROD_DB_CONNECTION" | grep -qi 'DRIVER='; then
+              echo "ERROR: PROD_DB_CONNECTION has no DRIVER= key — it must be an ODBC" \
                    "connection string (DRIVER={ODBC Driver 18 for SQL Server};SERVER=...;UID=...;PWD=...)," \
                    "not an ADO.NET/SqlClient one (Server=...;User Id=...;Password=...)." >&2
               exit 1
@@ -168,7 +181,7 @@ jobs:
               printf 'WHATSAPP_VERIFY_TOKEN=%s\n' "$WHATSAPP_VERIFY_TOKEN"
               printf 'WHATSAPP_APP_SECRET=%s\n' "$WHATSAPP_APP_SECRET"
               printf 'REDIS_PASSWORD=%s\n' "$REDIS_PASSWORD"
-              printf 'SQLSERVER_CONN_STRING=%s\n' "$SQLSERVER_CONN_STRING_PROD"
+              printf 'SQLSERVER_CONN_STRING=%s\n' "$PROD_DB_CONNECTION"
               printf 'HMS_API_KEY=%s\n' "$HMS_API_KEY"
               printf 'INTERNAL_EVENTS_TOKEN=%s\n' "$INTERNAL_EVENTS_TOKEN"
               printf 'SARVAM_API_KEY=%s\n' "$SARVAM_API_KEY"
