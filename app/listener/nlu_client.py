@@ -241,8 +241,8 @@ async def _query_llm_text(
         "model": config["model"],
         "temperature": 0.5,
         "max_tokens": 150,
-        "reasoning_effort": None,
     }
+    body.update(config.get("extra_body", {}))
 
     try:
         resp = await client.post(
@@ -251,7 +251,7 @@ async def _query_llm_text(
         if resp.status_code == 200:
             data = resp.json()
             return data["choices"][0]["message"]["content"].strip()
-        logger.warning("LLM text generation returned status %d", resp.status_code)
+        logger.warning("LLM text generation returned status %d: %s", resp.status_code, resp.text[:500])
     except Exception as exc:
         logger.warning("LLM text generation failed: %s", exc)
     return None
@@ -274,12 +274,15 @@ async def _query_nlu_classification(
         "model": config["model"],
         "temperature": config["temperature"],
         "max_tokens": config["max_tokens"],
-        "reasoning_effort": None,
     }
+    body.update(config.get("extra_body", {}))
 
     resp = await client.post(url, headers=headers, json=body, timeout=config["timeout"])
     if resp.status_code != 200:
-        logger.warning("%s API returned non-200 status code: %d", config.get("provider", "NLU"), resp.status_code)
+        logger.warning(
+            "%s API returned non-200 status code: %d: %s",
+            config.get("provider", "NLU"), resp.status_code, resp.text[:500],
+        )
         return None
 
     try:
@@ -307,8 +310,8 @@ async def _query_nlu_classification_retry(
         "model": config["model"],
         "temperature": config["temperature"],
         "max_tokens": config["max_tokens"],
-        "reasoning_effort": None,
     }
+    body.update(config.get("extra_body", {}))
     resp = await client.post(url, headers=headers, json=body, timeout=config["timeout"])
     if resp.status_code == 200:
         try:

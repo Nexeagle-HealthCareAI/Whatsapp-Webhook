@@ -41,4 +41,10 @@ FALLBACK_NLU = {
     "temperature": 0.2,
     "max_tokens": 300,
     "timeout": 5.0,
+    # Extra request-body fields this provider's API expects/accepts, merged in on top of the
+    # shared body nlu_client.py builds. Provider-specific on purpose: sending Sarvam's
+    # "reasoning_effort": null unconditionally to EVERY provider (including Grok) is exactly
+    # what broke Grok with a 400 the first time PRIMARY_NLU pointed at it -- Grok's API is
+    # OpenAI-compatible and doesn't expect this field at all.
+    "extra_body": {"reasoning_effort": None},
 }
