@@ -34,9 +34,10 @@
 #                            invalid" the moment a patient reaches that step.
 #   WHATSAPP_FLOW_SCREEN_ID  optional — only needed if your Flow's screen isn't named
 #                            REGISTRATION_SCREEN (app/config.py's default).
-#   GROK_API_KEY             optional — PRIMARY_NLU (app/listener/model_config.py). Omit and
-#                            classify_message falls through to FALLBACK_NLU (Sarvam) instead
-#                            of failing outright — see SARVAM_API_KEY below, still required.
+#   GROQ_API_KEY             optional — from console.groq.com (Groq Inc., NOT xAI's Grok —
+#                            different company). PRIMARY_NLU (app/listener/model_config.py).
+#                            Omit and classify_message falls through to FALLBACK_NLU (Sarvam)
+#                            instead of failing outright — see SARVAM_API_KEY below, still required.
 #
 # VARIABLES (optional):
 #   VM_DEPLOY_PATH    where this repo is checked out on the VM (default /opt/whatsapp-webhook)
@@ -112,13 +113,13 @@ jobs:
           WHATSAPP_DISPLAY_NUMBER: ${{ secrets.WHATSAPP_DISPLAY_NUMBER }}
           WHATSAPP_FLOW_ID: ${{ secrets.WHATSAPP_FLOW_ID }}
           WHATSAPP_FLOW_SCREEN_ID: ${{ secrets.WHATSAPP_FLOW_SCREEN_ID }}
-          GROK_API_KEY: ${{ secrets.GROK_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         with:
           host: ${{ secrets.DEV_SSH_HOST }}
           username: ${{ secrets.DEV_SSH_USER }}
           password: ${{ secrets.DEV_SSH_PASSWORD }}
           port: 22
-          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,SQLSERVER_CONN_STRING_DEV,HMS_API_KEY,INTERNAL_EVENTS_TOKEN,SARVAM_API_KEY,WHATSAPP_DISPLAY_NUMBER,WHATSAPP_FLOW_ID,WHATSAPP_FLOW_SCREEN_ID,GROK_API_KEY
+          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,SQLSERVER_CONN_STRING_DEV,HMS_API_KEY,INTERNAL_EVENTS_TOKEN,SARVAM_API_KEY,WHATSAPP_DISPLAY_NUMBER,WHATSAPP_FLOW_ID,WHATSAPP_FLOW_SCREEN_ID,GROQ_API_KEY
           script: |
             set -e
             cd "$DEPLOY_PATH"
@@ -158,7 +159,7 @@ jobs:
               printf 'WHATSAPP_DISPLAY_NUMBER=%s\n' "$WHATSAPP_DISPLAY_NUMBER"
               printf 'WHATSAPP_FLOW_ID=%s\n' "$WHATSAPP_FLOW_ID"
               printf 'WHATSAPP_FLOW_SCREEN_ID=%s\n' "$WHATSAPP_FLOW_SCREEN_ID"
-              printf 'GROK_API_KEY=%s\n' "$GROK_API_KEY"
+              printf 'GROQ_API_KEY=%s\n' "$GROQ_API_KEY"
             } > "$ENVFILE"
             chmod 600 "$ENVFILE"
 
