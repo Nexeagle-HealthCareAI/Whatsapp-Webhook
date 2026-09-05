@@ -44,13 +44,6 @@ _GENERIC_SLOT_PROMPT = {
     "hg": "Kripya {slot} ke baare mein batayein.",
     "bn": "অনুগ্রহ করে {slot} সম্পর্কে বলুন।",
 }
-_RESCHEDULE_CLARIFY_PROMPT = {
-    "en": "You already have an appointment on {date}. Would you like to book a new one, or reschedule it?",
-    "hi": "आपकी पहले से ही {date} को एक अपॉइंटमेंट है। क्या आप नई बुक करना चाहते हैं या इसे रीशेड्यूल करना चाहते हैं?",
-    "hg": "Aapki already ek appointment hai {date}. Naya book karna hai ya usko reschedule karna hai?",
-    "bn": "আপনার ইতিমধ্যে {date} তারিখে একটি অ্যাপয়েন্টমেন্ট আছে। আপনি কি নতুন বুক করতে চান নাকি এটি পুনঃনির্ধারণ করতে চান?",
-}
-
 
 def _pick(prompt_map: dict, lang: str | None) -> str:
     return prompt_map.get(lang or "hg", prompt_map["hg"])
@@ -60,7 +53,7 @@ class RoutedResult:
         self, action: str, intent: str, entities: dict, followup_prompt: str | None = None,
         confidence: float = 0.9,
     ):
-        self.action = action  # "ask_followup", "proceed_to_business_logic", or "error"
+        self.action = action  # "ask_followup", "proceed_to_business_logic", "active_appointment_conflict", or "error"
         self.intent = intent
         self.entities = entities
         self.followup_prompt = followup_prompt
@@ -123,8 +116,8 @@ def get_followup_prompt(intent: str, missing_slot, lang: str | None = None) -> s
 
 
 async def clear_session(wa_id: str) -> None:
-    """Drops any accumulated multi-turn state (including an awaiting_clarification
-    follow-up) for this patient. Called by conversation.py, via app/flow_policy.py,
+    """Drops any accumulated multi-turn slot-filling state for this patient. Called by
+    conversation.py, via app/flow_policy.py,
     right before route_intent() would otherwise consult that state -- see
     flow_policy.py's module docstring for why a global intent (cancel/back/greeting)
     must never be swallowed by a stale or in-progress local session here."""
@@ -216,49 +209,19 @@ async def route_intent(
 
     current_intent = new_intent
     current_entities = new_entities
-    awaiting_clarification = False
-    resolved_clarification_this_turn = False
 
     # 2. Check if we have an existing state to merge/resolve
     if stored_state:
         stored_intent = stored_state.get("intent")
         stored_entities = stored_state.get("entities", {}) or {}
-        awaiting_clarification = stored_state.get("awaiting_clarification", False)
 
-        if awaiting_clarification:
-            # The user was asked to clarify "Naya book karna hai ya reschedule"
-            raw_normalized = raw_text.lower().strip()
-            # Simple keyword matching for clarification
-            is_reschedule = any(k in raw_normalized for k in ["reschedule", "change", "shift", "badal", "parso", "kal", "time"]) or new_intent == "reschedule_appointment"
-            is_new_booking = any(k in raw_normalized for k in ["new", "naya", "dusra", "another", "fresh", "book"])
-
-            if is_reschedule:
-                current_intent = "reschedule_appointment"
-                current_entities = {**stored_entities, **new_entities}
-                awaiting_clarification = False
-            elif is_new_booking:
-                current_intent = "book_appointment"
-                current_entities = stored_entities  # keep slots, drop clarification
-                awaiting_clarification = False
-                resolved_clarification_this_turn = True
-            else:
-                # Keep asking
-                active_date = stored_state.get("active_appt_date", "")
-                return RoutedResult(
-                    action="ask_followup",
-                    intent=stored_intent,
-                    entities=stored_entities,
-                    followup_prompt=_pick(_RESCHEDULE_CLARIFY_PROMPT, lang).format(date=active_date)
-                )
+        # Switch to new intent if new intent is a distinct high/medium confidence intent (not out_of_scope)
+        if new_intent and new_intent != "out_of_scope" and new_intent != stored_intent and new_confidence in ("high", "medium"):
+            current_intent = new_intent
+            current_entities = new_entities
         else:
-            # General state merging:
-            # Switch to new intent if new intent is a distinct high/medium confidence intent (not out_of_scope)
-            if new_intent and new_intent != "out_of_scope" and new_intent != stored_intent and new_confidence in ("high", "medium"):
-                current_intent = new_intent
-                current_entities = new_entities
-            else:
-                current_intent = stored_intent
-                current_entities = {**stored_entities, **new_entities}
+            current_intent = stored_intent
+            current_entities = {**stored_entities, **new_entities}
 
     # 3. Check for required entities
     requirements = REQUIRED_ENTITIES.get(current_intent, [])
@@ -279,7 +242,6 @@ async def route_intent(
         state_to_save = {
             "intent": current_intent,
             "entities": current_entities,
-            "awaiting_clarification": False,
             "step_at_save": current_step,
             "updated_at": time.time()
         }
@@ -293,40 +255,32 @@ async def route_intent(
             followup_prompt=prompt
         )
 
-    # 4. Check for active upcoming appointment conflict (Only if all slots are present for book_appointment)
-    if current_intent == "book_appointment" and not awaiting_clarification and not resolved_clarification_this_turn:
+    # 4. Check for active upcoming appointment conflict (only once all slots are present for
+    # book_appointment). No longer persists anything here or asks its own plain-text
+    # clarifying question -- the Conductor (app/conversation/__init__.py) owns the follow-up
+    # from here via the SAME rich appointment-status card "check my appointment" already
+    # uses (Cancel/Update/Book Another buttons, with the real doctor/patient name looked up
+    # live), not a bare date with no other details this function has never had access to.
+    if current_intent == "book_appointment":
         # Check active booked/pending appointments for this user in the DB. A patient with a
-        # real active appointment MUST be asked to clarify (new booking vs. reschedule) before
-        # a second one gets created — so a failed check here can never be quietly treated as
-        # "no active appointment found," or a DB hiccup turns into a real duplicate booking.
+        # real active appointment MUST be shown it (and asked what to do) before a second one
+        # gets created — so a failed check here can never be quietly treated as "no active
+        # appointment found," or a DB hiccup turns into a real duplicate booking.
         # Not retried inline either: this runs synchronously inside one patient's live turn,
         # so a retry loop here is retry latency the patient feels directly, against a database
         # that may still be under the exact same load a moment later. Failing loud instead —
         # tell the patient, stop here, let them re-send — is safer than guessing.
         try:
-            has_active, active_date_str = await db.get_upcoming_active_appointment(wa_id)
+            has_active, _ = await db.get_upcoming_active_appointment(wa_id)
         except Exception as exc:
             logger.error("DB check for active appointments failed, aborting rather than guessing: %s", exc)
             return RoutedResult(action="error", intent=current_intent, entities=current_entities)
 
         if has_active:
-            # Persist clarification state and ask clarifying question
-            state_to_save = {
-                "intent": "book_appointment",
-                "entities": current_entities,
-                "awaiting_clarification": True,
-                "active_appt_date": active_date_str,
-                "step_at_save": current_step,
-                "updated_at": time.time()
-            }
-            await redis.set(redis_key, json.dumps(state_to_save), ex=900)
-
-            prompt = _pick(_RESCHEDULE_CLARIFY_PROMPT, lang).format(date=active_date_str)
             return RoutedResult(
-                action="ask_followup",
+                action="active_appointment_conflict",
                 intent=current_intent,
                 entities=current_entities,
-                followup_prompt=prompt
             )
 
     # 5. Success! Clear session state and proceed to business logic

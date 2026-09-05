@@ -283,11 +283,27 @@ async def handle_message(
     )
     # "Book Appointment" button offered after a no-active-appointment response (see
     # appointment_actions.py's _start_appointment_action_flow) -- that response clears
-    # conversation_state right after sending it, so this tap always arrives with no prior
+    # conversation_state right after sending it, so this tap usually arrives with no prior
     # state to dispatch on; same "begin a fresh conversation" entry point any other
     # zero-state message would reach via _confirm_or_start_language's own no-language-detected
     # fallback, just reached directly since a button tap never carries text to guess from.
+    #
+    # Exception: tapped from the active-appointment-conflict status card (see
+    # routed.action == "active_appointment_conflict" below) with a doctor name the patient
+    # already typed this conversation still in context -- state wasn't cleared there, so
+    # honour it by seeding the search instead of discarding it for a blank restart.
     if input_type == "button_reply" and input_value == "start_booking":
+        pending_doctor_name = context.get("pending_doctor_name")
+        pending_lang = context.get("lang")
+        if pending_doctor_name and pending_lang:
+            booking = booking_slots.empty()
+            booking_slots.fill(booking, "lang", pending_lang, source="user")
+            new_context = {"lang": pending_lang, "booking": booking, "search_doctor_query": pending_doctor_name}
+            await _transition_to(phone, "awaiting_doctor_name", new_context, current_step)
+            if await _search_doctors_flow(client, phone, new_context, "awaiting_doctor_name"):
+                return
+            await _handle_doctor_search_miss(client, phone, new_context, pending_doctor_name)
+            return
         await _start(client, phone)
         return
 
@@ -472,6 +488,21 @@ async def handle_message(
                 # active appointment (see its own comment) -- rather than silently letting a
                 # booking through unchecked, tell the patient and stop here.
                 await whatsapp_client.send_text(client, phone, t("error_hms", lang or "en"))
+                return
+
+            if routed.action == "active_appointment_conflict":
+                # Patient tried to start a NEW booking while a real appointment already
+                # exists. Reuses the exact same rich status card "check my appointment"
+                # shows (real doctor/patient name, Cancel/Update/Book Another buttons) --
+                # not a bare-date plain-text question, which is all intent_router's own
+                # cheap existence-check could ever populate. The doctor name typed THIS
+                # turn (if any) rides along in context so tapping Book Another seeds that
+                # search instead of starting from a blank slate -- see the "start_booking"
+                # button handler above.
+                doctor_name = routed.entities.get("doctor_name") or routed.entities.get("new_doctor_name")
+                if doctor_name:
+                    context["pending_doctor_name"] = doctor_name
+                await _start_appointment_action_flow(client, phone, context, current_step, action="status")
                 return
 
             # 3. Flatten NLU result so downstream business logic remains completely untouched

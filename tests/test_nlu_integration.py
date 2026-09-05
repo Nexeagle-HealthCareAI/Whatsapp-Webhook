@@ -130,30 +130,20 @@ def test_multi_turn_slot_filling():
     check(routed2.action == "proceed_to_business_logic", "Turn 2 action must proceed to business logic")
     check(routed2.entities.get("specialty") == "gyno", "Entities must preserve specialty gyno from previous turn")
 
-def test_booking_vs_reschedule_ambiguity():
-    print("\n--- Running Reschedule vs Book Ambiguity Tests ---")
+def test_booking_with_active_appointment_reports_conflict():
+    print("\n--- Running Active-Appointment-Conflict Tests ---")
+    # Booking when an appointment already exists reports the conflict directly, as its own
+    # action -- app/conversation/__init__.py's Conductor is what actually decides what
+    # happens next (shows the same rich Cancel/Update/Book-Another card "check my
+    # appointment" uses; see test_active_appointment_conflict_cannot_stick_around_as_a_loop
+    # for why nothing gets persisted to Redis for this anymore, unlike the old design).
     db_mock.has_active_appt = True
-    
-    # 1. Booking when an appointment exists -> should ask clarification
+
     nlu_val = {"intent": "book_appointment", "confidence": "high", "entities": {"specialty": "gyno", "datetime": "2026-08-11"}}
     routed = asyncio.run(intent_router.route_intent("user_2", nlu_val, "book gynecology for tomorrow"))
-    check(routed.action == "ask_followup", "Should ask clarification if active appointment exists")
-    check("reschedule" in routed.followup_prompt, "Clarification prompt should offer rescheduling option")
-
-    # 2. User chooses "reschedule" -> should switch to reschedule_appointment
-    res_input = {"intent": "unknown", "confidence": "low", "entities": {}}
-    routed_res = asyncio.run(intent_router.route_intent("user_2", res_input, "reschedule"))
-    check(routed_res.intent == "reschedule_appointment", "Reschedule choice should change intent to reschedule")
-    check(routed_res.entities.get("datetime") == "2026-08-11", "Should retain slots across clarification")
-
-    # 3. User chooses "naya" -> should proceed with book_appointment
-    # Reset state to mock another user clarification
-    asyncio.run(_mock_redis_instance.delete("nlu:session:user_3"))
-    routed_clarify = asyncio.run(intent_router.route_intent("user_3", nlu_val, "book gynecology for tomorrow"))
-    
-    routed_new = asyncio.run(intent_router.route_intent("user_3", res_input, "book new one"))
-    check(routed_new.action == "proceed_to_business_logic", "Choosing new booking should proceed")
-    check(routed_new.intent == "book_appointment", "Intent should remain book_appointment")
+    check(routed.action == "active_appointment_conflict", "Should report the conflict, not ask a plain-text clarifying question")
+    check(routed.entities.get("specialty") == "gyno", "Entities from this turn (specialty) must survive for the Conductor to use")
+    check(routed.entities.get("datetime") == "2026-08-11", "Entities from this turn (datetime) must survive for the Conductor to use")
 
     db_mock.has_active_appt = False
 
@@ -193,7 +183,7 @@ def test_confidence_gate_on_zero_slot_intents():
     # already means every slot passed that check across however many turns it took, so this
     # must report a safe confidence even when the single message that filled the last slot
     # was itself low-confidence (this is exactly turn 3 of test_multi_turn_slot_filling).
-    db_mock.has_active_appt = False  # belt-and-suspenders reset; test_booking_vs_reschedule_ambiguity also resets this itself now
+    db_mock.has_active_appt = False  # belt-and-suspenders reset; test_booking_with_active_appointment_reports_conflict also resets this itself now
     low_conf_but_slots_filled = {"intent": "book_appointment", "confidence": "low", "entities": {"specialty": "gyno", "datetime": "kal"}}
     routed = asyncio.run(intent_router.route_intent("user_conf_3", low_conf_but_slots_filled, "kal"))
     check(routed.action == "proceed_to_business_logic", "slot-filled book_appointment proceeds")
@@ -297,42 +287,48 @@ def test_short_datetime_reply_recovered_when_nlu_returns_out_of_scope():
     check(routed2.entities.get("datetime"), f"'today' should have been recovered as a datetime, got {routed2.entities!r}")
 
 
-def test_global_intent_escapes_awaiting_clarification_loop():
-    print("\n--- Running Global-Intent Override Test (live-reported stuck-loop bug) ---")
-    # Live-reported: a patient with an active appointment tries to book a new one, gets
-    # asked "book new or reschedule?" (awaiting_clarification state saved in Redis) -- then
-    # sends a plain "hi", and the bot repeats the EXACT SAME clarification question. Sending
-    # "cancel" instead has the identical problem. Neither "hi" nor "cancel" match either of
-    # awaiting_clarification's own keyword lists (reschedule words / new-booking words), so
-    # its "else: keep asking" branch just replays the question -- forever, regardless of what
-    # the patient actually said, since conversation.py's own cancel/back/greeting handling
-    # never even runs (it's gated behind route_intent returning proceed_to_business_logic,
-    # which this branch never reaches).
+def test_active_appointment_conflict_cannot_stick_around_as_a_loop():
+    print("\n--- Running Active-Appointment-Conflict Test (replaces the old stuck-loop bug fix) ---")
+    # Live-reported bug this used to guard, under the OLD design: a patient with an active
+    # appointment tries to book a new one, gets asked "book new or reschedule?" with that
+    # question's own state persisted in Redis (awaiting_clarification) -- then a later plain
+    # "hi" or "cancel" matched neither of its keyword lists, so its "else: keep asking" branch
+    # replayed the same question forever, and conversation.py's own cancel/back/greeting
+    # handling never got a turn.
+    #
+    # The fix (SOLID rebuild) removes that whole redis-persisted state machine instead of
+    # patching its keyword lists: intent_router now just reports the conflict once, as its
+    # own action ("active_appointment_conflict"), and never writes anything to Redis for it.
+    # app/conversation/__init__.py's Conductor owns the actual follow-up from there (the same
+    # rich Cancel/Update/Book-Another button card "check my appointment" already uses). With
+    # nothing persisted here, there is no state left for a later unrelated message to get
+    # stuck against -- every subsequent turn is routed purely on its own merits.
     db_mock.has_active_appt = True
+
+    wa_id = "user_active_conflict"
+    step = "confirming"
+
+    turn1 = {"intent": "book_appointment", "confidence": "high", "entities": {"doctor_name": "Radha", "datetime": "2026-08-13"}}
+    routed1 = asyncio.run(intent_router.route_intent(wa_id, turn1, "book appointment with radha tomorrow", "en", step))
+    check(
+        routed1.action == "active_appointment_conflict",
+        f"turn 1 should report the conflict directly, got action={routed1.action!r}",
+    )
+    check(routed1.entities.get("doctor_name") == "Radha", "the doctor name typed this turn is preserved for the Conductor to seed Book Another with")
 
     for label, message_intent, message_text in [
         ("hi", "greeting", "hi"),
         ("cancel", "cancel_appointment", "cancel"),
         ("back", "navigate_back", "back"),
     ]:
-        wa_id = f"user_global_override_{label}"
-        step = "confirming"
-
-        turn1 = {"intent": "book_appointment", "confidence": "high", "entities": {"doctor_name": "Radha", "datetime": "2026-08-13"}}
-        routed1 = asyncio.run(intent_router.route_intent(wa_id, turn1, "book appointment with radha tomorrow", "en", step))
-        check(routed1.action == "ask_followup", f"[{label}] turn 1 should ask to clarify new-vs-reschedule (active appointment exists)")
-
-        # This is what conversation.py's handle_message now does before calling
-        # route_intent() on the next turn -- see the call site right before "2. Route intent
-        # using intent_router" in app/conversation.py.
+        # No clear_session() call here at all, unlike the old design -- nothing was ever
+        # persisted for turn 1, so there is nothing to clear. This is the point: a later
+        # turn simply can't inherit a stuck conflict-clarification state that no longer exists.
         turn2 = {"intent": message_intent, "confidence": "high", "entities": {}}
-        if flow_policy.is_global_override(turn2["intent"], turn2["confidence"]):
-            asyncio.run(intent_router.clear_session(wa_id))
         routed2 = asyncio.run(intent_router.route_intent(wa_id, turn2, message_text, "en", step))
-
         check(
             routed2.action == "proceed_to_business_logic",
-            f"[{label}] must escape the clarification loop, got action={routed2.action!r}",
+            f"[{label}] must be routed on its own merits, got action={routed2.action!r}",
         )
         check(routed2.intent == message_intent, f"[{label}] must be routed as its own real intent, got {routed2.intent!r}")
 
@@ -386,14 +382,14 @@ if __name__ == "__main__":
     # Run tests
     test_classify_message_wrapper()
     test_multi_turn_slot_filling()
-    test_booking_vs_reschedule_ambiguity()
+    test_booking_with_active_appointment_reports_conflict()
     test_active_appointment_check_failure_aborts_instead_of_guessing()
     test_confidence_gate_on_zero_slot_intents()
     test_nlu_confidence_gate_rejection()
     test_stale_session_discarded_on_step_mismatch()
     test_legitimate_multi_turn_still_merges_with_matching_step()
     test_short_datetime_reply_recovered_when_nlu_returns_out_of_scope()
-    test_global_intent_escapes_awaiting_clarification_loop()
+    test_active_appointment_conflict_cannot_stick_around_as_a_loop()
     test_legitimate_followup_answer_not_treated_as_a_global_override()
     test_live_time_of_day_extraction()
     test_gemini_fallback_simulation()
