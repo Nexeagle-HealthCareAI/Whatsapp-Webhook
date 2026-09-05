@@ -1,0 +1,225 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Production counterpart to deploy.yml — same shape, points at its own "production"
+# GitHub Environment (Settings → Environments) so these secrets never collide with the
+# "development" ones deploy.yml reads. Create that Environment and fill in the secrets
+# below before the first push to `main`; until then this workflow fails fast and loudly
+# at the `: "${VAR:?...}"` guards instead of deploying with missing/broken config.
+#
+# SECRETS (Settings → Secrets and variables → Actions — put these under the "production"
+# Environment specifically, not repository-level, so they can never be read by deploy.yml):
+#   PROD_SSH_HOST            Prod VM address (same one easyHMSAPI's Stage 4 deploys to)
+#   PROD_SSH_USER            root
+#   PROD_SSH_KEY_B64         base64-encoded SSH private key for the Prod VM — same
+#                            key-auth convention as easyHMSAPI's deploy-api.yml Stage 4
+#                            (Dev stays password-auth; only Prod uses a key). Generate the
+#                            b64 form with: base64 -w0 path/to/key   (macOS: base64 -i path/to/key)
+#
+#   WHATSAPP_TOKEN            permanent access token, Meta App dashboard (Prod WABA/App)
+#   WHATSAPP_PHONE_NUMBER_ID  Meta App dashboard
+#   WHATSAPP_VERIFY_TOKEN     any random string you choose, used in the GET handshake
+#   WHATSAPP_APP_SECRET       Meta App dashboard → App Settings → Basic
+#   REDIS_PASSWORD           generate once: openssl rand -hex 24
+#
+#   MSSQL_SA_PASSWORD_PROD    sa password for the Prod VM's sqlserver container — used ONLY
+#                            to apply sql/schema.sql (creates the separate WhatsAppBookingProd
+#                            database, never touches easyHMSAPI's own DB)
+#   PROD_DB_CONNECTION       ODBC conn string the APP itself connects with (pyodbc, NOT the
+#                            ADO.NET/SqlClient format easyHMSAPI's own PROD_DB_CONNECTION
+#                            secret uses — same secret NAME, different connection-string
+#                            dialect, since this app talks to SQL Server via pyodbc not
+#                            Microsoft.Data.SqlClient), e.g.:
+#                            DRIVER={ODBC Driver 18 for SQL Server};SERVER=host.docker.internal,1433;
+#                            DATABASE=WhatsAppBookingProd;UID=sa;PWD=...;TrustServerCertificate=yes
+#   HMS_API_KEY              optional — X-Api-Key for easyHMSAPI's PublicController. Omit the
+#                            secret entirely for anonymous access (PublicApiKeyFilter allows
+#                            it) — do NOT set it to a placeholder like "NA"; any non-empty
+#                            value gets sent as a real key and a non-matching one gets 401'd
+#   WHATSAPP_DISPLAY_NUMBER  optional — dialable wa.me number (E.164, no leading +) for
+#                            GET /c/{hospital_code}. Omit until you're ready to print QR
+#                            codes; that route degrades to a friendly error until it's set.
+#   WHATSAPP_FLOW_ID         required — the patient-details WhatsApp Flow's own id, for the
+#                            PRODUCTION Meta App/WABA. Flow ids are NOT portable between Meta
+#                            Apps/WABAs (each needs its own Flow built in that app's WhatsApp
+#                            Manager, with name/age/gender/guardian/slot fields matching what
+#                            app/conversation/__init__.py's _send_patient_details_flow sends
+#                            and reads back) — pointing this at the Dev app's Flow id fails
+#                            every send with "flow_id is invalid" the moment a patient reaches
+#                            that step.
+#   WHATSAPP_FLOW_SCREEN_ID  optional — only needed if your Flow's screen isn't named
+#                            REGISTRATION_SCREEN (app/config.py's default).
+#   GROK_API_KEY             optional — PRIMARY_NLU (app/listener/model_config.py). Omit and
+#                            classify_message falls through to FALLBACK_NLU (Sarvam) instead
+#                            of failing outright — see SARVAM_API_KEY below, still required.
+#   SARVAM_API_KEY           FALLBACK_NLU — required.
+#   INTERNAL_EVENTS_TOKEN    authenticates 1HMS/1Rad's POST /events/token-called calls into
+#                            this gateway — a different secret from WHATSAPP_APP_SECRET, which
+#                            authenticates Meta instead.
+#
+# VARIABLES (optional, Environment-scoped under "production"):
+#   VM_DEPLOY_PATH    where this repo is checked out on the Prod VM
+#                      (default /opt/whatsapp-webhook-prod)
+#
+# .env on the VM is written BY this workflow from the secrets above on every deploy —
+# nothing is created or edited on the VM by hand.
+#
+# The SQL step below pipes sql/schema.sql through `sed` to swap the dev database name for
+# the prod one — schema.sql itself and deploy.yml are untouched by this file, so dev's
+# already-working pipeline can never be affected by anything here.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Deploy to Prod VM
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Prefers secrets scoped to the "production" GitHub Environment over same-named repository
+    # secrets — mirrors deploy.yml's own "development" binding, so the two environments can
+    # never accidentally read each other's app credentials. PROD_SSH_*/MSSQL_SA_PASSWORD_PROD
+    # (VM/infra-level, not per-environment app credentials) still resolve from repository
+    # secrets as a fallback, same convention as DEV_SSH_*/MSSQL_SA_PASSWORD_DEV today.
+    environment: production
+    steps:
+      - name: Prepare SSH key
+        # Same convention as easyHMSAPI's deploy-api.yml Stage 4 -- decode once, reuse the
+        # file path (key_path) in both ssh-action steps below rather than passing password auth.
+        run: |
+          echo "${{ secrets.PROD_SSH_KEY_B64 }}" | base64 -d > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+
+      - name: Sync checkout + apply SQL schema
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_PATH: ${{ vars.VM_DEPLOY_PATH || '/opt/whatsapp-webhook-prod' }}
+          MSSQL_SA_PASSWORD_PROD: ${{ secrets.MSSQL_SA_PASSWORD_PROD }}
+        with:
+          host: ${{ secrets.PROD_SSH_HOST }}
+          username: ${{ secrets.PROD_SSH_USER }}
+          key_path: /tmp/deploy_key
+          port: 22
+          envs: DEPLOY_PATH,MSSQL_SA_PASSWORD_PROD
+          script: |
+            set -e
+            : "${MSSQL_SA_PASSWORD_PROD:?MSSQL_SA_PASSWORD_PROD is empty}"
+
+            if [ ! -d "$DEPLOY_PATH/.git" ]; then
+              mkdir -p "$DEPLOY_PATH"
+              git clone -b main https://github.com/Nexeagle-HealthCareAI/Whatsapp-Webhook.git "$DEPLOY_PATH"
+            fi
+            cd "$DEPLOY_PATH"
+            git fetch origin main
+            git reset --hard origin/main
+
+            # Same schema.sql dev uses, with WhatsAppBookingDev swapped for WhatsAppBookingProd
+            # -- keeps this file the single source of truth for the schema itself.
+            if docker exec sqlserver test -x /opt/mssql-tools18/bin/sqlcmd 2>/dev/null; then
+              sed 's/WhatsAppBookingDev/WhatsAppBookingProd/g' sql/schema.sql | \
+                docker exec -i sqlserver /opt/mssql-tools18/bin/sqlcmd \
+                  -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD_PROD" -i /dev/stdin
+            else
+              sed 's/WhatsAppBookingDev/WhatsAppBookingProd/g' sql/schema.sql | \
+                docker exec -i sqlserver /opt/mssql-tools/bin/sqlcmd \
+                  -S localhost -U sa -P "$MSSQL_SA_PASSWORD_PROD" -i /dev/stdin
+            fi
+            echo "SQL schema applied"
+
+      - name: Deploy app stack
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_PATH: ${{ vars.VM_DEPLOY_PATH || '/opt/whatsapp-webhook-prod' }}
+          WHATSAPP_TOKEN: ${{ secrets.WHATSAPP_TOKEN }}
+          WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}
+          WHATSAPP_VERIFY_TOKEN: ${{ secrets.WHATSAPP_VERIFY_TOKEN }}
+          WHATSAPP_APP_SECRET: ${{ secrets.WHATSAPP_APP_SECRET }}
+          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+          PROD_DB_CONNECTION: ${{ secrets.PROD_DB_CONNECTION }}
+          HMS_API_KEY: ${{ secrets.HMS_API_KEY }}
+          INTERNAL_EVENTS_TOKEN: ${{ secrets.INTERNAL_EVENTS_TOKEN }}
+          SARVAM_API_KEY: ${{ secrets.SARVAM_API_KEY }}
+          WHATSAPP_DISPLAY_NUMBER: ${{ secrets.WHATSAPP_DISPLAY_NUMBER }}
+          WHATSAPP_FLOW_ID: ${{ secrets.WHATSAPP_FLOW_ID }}
+          WHATSAPP_FLOW_SCREEN_ID: ${{ secrets.WHATSAPP_FLOW_SCREEN_ID }}
+          GROK_API_KEY: ${{ secrets.GROK_API_KEY }}
+        with:
+          host: ${{ secrets.PROD_SSH_HOST }}
+          username: ${{ secrets.PROD_SSH_USER }}
+          key_path: /tmp/deploy_key
+          port: 22
+          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,PROD_DB_CONNECTION,HMS_API_KEY,INTERNAL_EVENTS_TOKEN,SARVAM_API_KEY,WHATSAPP_DISPLAY_NUMBER,WHATSAPP_FLOW_ID,WHATSAPP_FLOW_SCREEN_ID,GROK_API_KEY
+          script: |
+            set -e
+            cd "$DEPLOY_PATH"
+
+            : "${WHATSAPP_TOKEN:?WHATSAPP_TOKEN is empty}"
+            : "${WHATSAPP_PHONE_NUMBER_ID:?WHATSAPP_PHONE_NUMBER_ID is empty}"
+            : "${WHATSAPP_VERIFY_TOKEN:?WHATSAPP_VERIFY_TOKEN is empty}"
+            : "${WHATSAPP_APP_SECRET:?WHATSAPP_APP_SECRET is empty}"
+            : "${REDIS_PASSWORD:?REDIS_PASSWORD is empty}"
+            : "${PROD_DB_CONNECTION:?PROD_DB_CONNECTION is empty}"
+            : "${INTERNAL_EVENTS_TOKEN:?INTERNAL_EVENTS_TOKEN is empty}"
+            : "${SARVAM_API_KEY:?SARVAM_API_KEY is empty}"
+            : "${WHATSAPP_FLOW_ID:?WHATSAPP_FLOW_ID is empty}"
+
+            # Doesn't print the secret itself, just confirms the shape pyodbc needs is there —
+            # ADO.NET-style strings (Server=...;User Id=...) silently lack this and fail later
+            # with a much less obvious "Data source name not found" error.
+            if ! printf '%s' "$PROD_DB_CONNECTION" | grep -qi 'DRIVER='; then
+              echo "ERROR: PROD_DB_CONNECTION has no DRIVER= key — it must be an ODBC" \
+                   "connection string (DRIVER={ODBC Driver 18 for SQL Server};SERVER=...;UID=...;PWD=...)," \
+                   "not an ADO.NET/SqlClient one (Server=...;User Id=...;Password=...)." >&2
+              exit 1
+            fi
+
+            ENVFILE="$DEPLOY_PATH/.env"
+            {
+              printf 'WHATSAPP_TOKEN=%s\n' "$WHATSAPP_TOKEN"
+              printf 'WHATSAPP_PHONE_NUMBER_ID=%s\n' "$WHATSAPP_PHONE_NUMBER_ID"
+              printf 'WHATSAPP_VERIFY_TOKEN=%s\n' "$WHATSAPP_VERIFY_TOKEN"
+              printf 'WHATSAPP_APP_SECRET=%s\n' "$WHATSAPP_APP_SECRET"
+              printf 'REDIS_PASSWORD=%s\n' "$REDIS_PASSWORD"
+              printf 'SQLSERVER_CONN_STRING=%s\n' "$PROD_DB_CONNECTION"
+              printf 'HMS_API_KEY=%s\n' "$HMS_API_KEY"
+              printf 'INTERNAL_EVENTS_TOKEN=%s\n' "$INTERNAL_EVENTS_TOKEN"
+              printf 'SARVAM_API_KEY=%s\n' "$SARVAM_API_KEY"
+              printf 'WHATSAPP_DISPLAY_NUMBER=%s\n' "$WHATSAPP_DISPLAY_NUMBER"
+              printf 'WHATSAPP_FLOW_ID=%s\n' "$WHATSAPP_FLOW_ID"
+              printf 'WHATSAPP_FLOW_SCREEN_ID=%s\n' "$WHATSAPP_FLOW_SCREEN_ID"
+              printf 'GROK_API_KEY=%s\n' "$GROK_API_KEY"
+            } > "$ENVFILE"
+            chmod 600 "$ENVFILE"
+
+            docker compose up -d --build
+            docker compose ps
+
+            sleep 3
+            if curl -sf http://127.0.0.1:8001/health; then
+              echo ""
+              echo "FastAPI health OK"
+            else
+              echo "FastAPI health check FAILED" >&2
+              docker compose logs fastapi --tail 50
+              exit 1
+            fi
+
+            # The worker's SQL pool is created lazily on first use, so a bad
+            # SQLSERVER_CONN_STRING wouldn't otherwise surface until a real WhatsApp
+            # message arrives — check it now instead (app/healthcheck_db.py).
+            if docker exec booking-worker python -m app.healthcheck_db; then
+              echo "SQL Server connectivity OK"
+            else
+              echo "SQL Server connectivity FAILED" >&2
+              docker compose logs worker --tail 50
+              exit 1
+            fi
+
+            if docker exec booking-worker python -m app.healthcheck_symptom; then
+              echo "NLP symptom router reachable OK"
+            else
+              echo "NLP symptom router check FAILED" >&2
+              docker compose logs worker --tail 50
+              exit 1
+            fi
