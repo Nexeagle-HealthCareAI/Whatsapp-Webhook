@@ -182,6 +182,46 @@ def test_stale_or_unknown_list_reply_id_reprompts_the_same_list():
         conversation.whatsapp_client.send_list = original_send_list
 
 
+def test_list_reply_with_no_active_location_list_reprompts_instead_of_sending_an_empty_list():
+    """Live-reported: a patient re-tapped the ORIGINAL language-choice list (WhatsApp never
+    disables past interactive messages) after the conversation had already moved on to
+    choosing_location. That delivers list_reply id="hi" here, but location_options is empty
+    -- there's no disambiguation list active at all. The old code treated any unmatched
+    list_reply as "re-show the current list," which built a location list with ZERO rows;
+    WhatsApp Cloud API rejects an empty list, so the send silently failed and the patient
+    got no reply whatsoever. Must re-issue the real location prompt instead."""
+    sent_lists = []
+    sent_location_prompts = []
+    sent_texts = []
+
+    async def mock_send_list(client, to, text, button_label, rows, section_title="Options"):
+        sent_lists.append(rows)
+
+    async def mock_send_location_request(client, to, text):
+        sent_location_prompts.append(text)
+
+    async def mock_send_text(client, to, text):
+        sent_texts.append(text)
+
+    original_send_list = conversation.whatsapp_client.send_list
+    original_send_location_request = conversation.whatsapp_client.send_location_request
+    original_send_text = conversation.whatsapp_client.send_text
+    conversation.whatsapp_client.send_list = mock_send_list
+    conversation.whatsapp_client.send_location_request = mock_send_location_request
+    conversation.whatsapp_client.send_text = mock_send_text
+    try:
+        booking = booking_slots.empty()
+        context = {"lang": "en", "booking": booking}  # no location_options set
+        run(location_module._handle_choosing_location(None, "919876543210", "list_reply", "hi", context))
+        check(len(sent_lists) == 0, f"must never build a location list with no options to show, got {len(sent_lists)} list send(s)")
+        check(len(sent_location_prompts) == 1, "must re-issue the real location prompt instead of going silent")
+        check(len(sent_texts) == 1, "must re-send the manual-entry hint alongside the location prompt")
+    finally:
+        conversation.whatsapp_client.send_list = original_send_list
+        conversation.whatsapp_client.send_location_request = original_send_location_request
+        conversation.whatsapp_client.send_text = original_send_text
+
+
 if __name__ == "__main__":
     test_single_match_resolves_directly_with_coordinates()
     test_single_match_without_coordinates_still_sets_city()
@@ -190,6 +230,7 @@ if __name__ == "__main__":
     test_api_failure_falls_back_to_local_city_index()
     test_picking_from_the_disambiguation_list_resolves_and_advances()
     test_stale_or_unknown_list_reply_id_reprompts_the_same_list()
+    test_list_reply_with_no_active_location_list_reprompts_instead_of_sending_an_empty_list()
 
     print("\n" + "=" * 50)
     if failures:

@@ -144,7 +144,18 @@ async def _handle_choosing_location(client, phone, input_type, input_value, cont
         options: dict = context.get("location_options", {})
         match = options.get(input_value)
         if not match:
-            await _send_location_match_list(client, phone, context)
+            if options:
+                # Unknown id but there IS a current disambiguation list -- re-show it.
+                await _send_location_match_list(client, phone, context)
+            else:
+                # No location list is even active right now -- this list_reply must be a
+                # stale tap on an OLDER message (e.g. the language-choice list from earlier
+                # in the chat; WhatsApp never disables past interactive messages). Re-sending
+                # _send_location_match_list here would build a list with zero rows, which
+                # WhatsApp Cloud API rejects -- a silent send failure that left the patient
+                # stuck with no reply at all. Re-issue the real location prompt instead.
+                await conversation.whatsapp_client.send_location_request(client, phone, t("location_prompt", lang))
+                await conversation.whatsapp_client.send_text(client, phone, t("location_manual_hint", lang))
             return
         context = _apply_single_match(context, match)
         context.pop("location_options", None)
