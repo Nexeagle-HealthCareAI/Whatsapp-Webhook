@@ -20,7 +20,7 @@ PRIMARY_NLU = {
                                            # earlier version of this config pointed at Grok's
                                            # api.x.ai by mistake, which is why a real Groq key
                                            # got rejected there as "Incorrect API key provided."
-    "model": "openai/gpt-oss-20b",        # Model name identifier
+    "model": "openai/gpt-oss-120b",        # Model name identifier
     "endpoint": "https://api.groq.com/openai/v1/chat/completions",
     # Which app.config.Settings field holds this provider's key. To add a new provider:
     # add its own `<provider>_api_key` field to Settings, then point a new config dict here
