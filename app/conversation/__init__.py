@@ -818,6 +818,15 @@ async def handle_message(
                 if current_step not in (
                     "awaiting_symptom", "awaiting_doctor_name", "awaiting_patient_details",
                     "checkin_awaiting_location", "checkin_choosing_appointment",
+                    # Free-text answers here (a typed city name / a typed reschedule date)
+                    # routinely have no doctor_name/specialty/symptom entity for the NLU to
+                    # extract and get classified out_of_scope -- without excluding these two,
+                    # that sent a casual LLM chat reply and then re-sent the SAME location/
+                    # date prompt, over and over, on every single reply the patient typed.
+                    # Live-reported: typing a real city ("kishanganj") twice in a row while the
+                    # bot was in choosing_location produced two casual "Hi there!" replies and
+                    # never once actually resolved the city.
+                    "choosing_location", "awaiting_reschedule_date",
                 ):
                     try:
                         dynamic_reply = await nlu_client.generate_conversational_response(client, "general_chat", context, input_value)

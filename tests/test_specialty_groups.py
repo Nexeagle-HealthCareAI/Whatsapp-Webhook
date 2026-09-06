@@ -2810,6 +2810,114 @@ def test_unresolved_location_reprompts_instead_of_silently_advancing():
         location_client.search_locations = original_search_locations
 
 
+def test_typed_city_in_choosing_location_is_not_hijacked_by_casual_chat():
+    """Live-reported: typing a real city ("kishanganj") while the bot was in choosing_location
+    got NLU-classified out_of_scope (no doctor/specialty/symptom entity to extract from a bare
+    place name -- expected), which handle_message's off-topic-casual-chat fallback then took
+    as license to send a generated "Hi there!" reply and re-send the SAME location prompt --
+    forever, since the patient's actual answer was never routed to _handle_choosing_location at
+    all. Root cause: choosing_location (and awaiting_reschedule_date, same shape of bug) were
+    simply missing from that fallback's exclusion list. Goes through the full handle_message
+    path (not _handle_choosing_location directly, unlike the notfound-reprompt test above) --
+    this bug lived one layer higher, in the dispatch that runs BEFORE the step handler."""
+    import asyncio
+
+    class MockDB:
+        def __init__(self):
+            self.state = {}
+
+        async def get_conversation_state(self, phone):
+            if phone in self.state:
+                step, ctx = self.state[phone]
+                return {"current_step": step, "context": ctx}
+            return None
+
+        async def save_conversation_state(self, phone, step, context):
+            self.state[phone] = (step, context)
+
+        async def clear_conversation_state(self, phone):
+            self.state.pop(phone, None)
+
+    db_mock = MockDB()
+    original_db = conversation.db
+    conversation.db = db_mock
+
+    sent_texts, sent_loc_reqs = [], []
+
+    async def mock_send_text(client, to, text):
+        sent_texts.append(text)
+
+    async def mock_send_loc_req(client, to, text):
+        sent_loc_reqs.append(text)
+
+    async def mock_send_noop(*args, **kwargs):
+        pass
+
+    original_send_text = conversation.whatsapp_client.send_text
+    original_send_text_direct = conversation.whatsapp_client.send_text_direct
+    original_send_loc = conversation.whatsapp_client.send_location_request
+    original_send_list = conversation.whatsapp_client.send_list
+    original_send_buttons = conversation.whatsapp_client.send_buttons
+    conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_text_direct = mock_send_text
+    conversation.whatsapp_client.send_location_request = mock_send_loc_req
+    # Resolving the city advances the flow into whatever prompt comes next (a language or
+    # doctor-search list/buttons) -- not under test here, but real send_list/send_buttons
+    # would otherwise reach the real outbound_queue.enqueue -> MockRedis, which this test
+    # file's shared redis stub doesn't implement lpush() for.
+    conversation.whatsapp_client.send_list = mock_send_noop
+    conversation.whatsapp_client.send_buttons = mock_send_noop
+
+    async def mock_search_locations(query, limit=5):
+        return [{"name": "Kishanganj", "type": "city", "state": "Bihar", "coordinates": {"latitude": 26.1, "longitude": 87.9}}]
+
+    original_search_locations = location_client.search_locations
+    location_client.search_locations = mock_search_locations
+
+    async def mock_classify_message(client, text):
+        # Exactly what Groq returns for a bare place name in real logs -- no recognizable
+        # intent, no entities, since "kishanganj" alone isn't a doctor/specialty/symptom.
+        return {
+            "intent": "out_of_scope", "entities": {}, "confidence": "low",
+            "detected_language": None, "language_confidence": None,
+            "_validated": True, "_had_hallucination": False,
+        }
+    original_classify = conversation.nlu_client.classify_message
+    conversation.nlu_client.classify_message = mock_classify_message
+
+    casual_chat_calls = []
+    async def spy_generate_conversational_response(*args, **kwargs):
+        casual_chat_calls.append((args, kwargs))
+        return "should never be sent"
+    original_generate = conversation.nlu_client.generate_conversational_response
+    conversation.nlu_client.generate_conversational_response = spy_generate_conversational_response
+
+    mock_client = object()
+    try:
+        booking = conversation.booking_slots.empty()
+        conversation.booking_slots.fill(booking, "lang", "en", source="user")
+        db_mock.state["cityuser"] = ("choosing_location", {"lang": "en", "booking": booking})
+
+        asyncio.run(conversation.handle_message(mock_client, "cityuser", "Patient", "text", "kishanganj"))
+
+        check(len(casual_chat_calls) == 0, f"must not fall into the casual-chat fallback for a plain typed city, got {len(casual_chat_calls)} call(s)")
+        check(not any("Hi there" in t or "Hi!" in t for t in sent_texts), f"must not send a generic casual reply instead of resolving the city, got sent_texts={sent_texts!r}")
+
+        step, ctx = db_mock.state.get("cityuser", (None, {}))
+        check(step != "choosing_location", f"must advance past choosing_location once the city resolves, got {step!r}")
+        check(ctx.get("city") == "Kishanganj", f"the typed city must actually get applied, got city={ctx.get('city')!r}")
+    finally:
+        conversation.db = original_db
+        conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_text_direct = original_send_text_direct
+        conversation.whatsapp_client.send_location_request = original_send_loc
+        conversation.whatsapp_client.send_list = original_send_list
+        conversation.whatsapp_client.send_buttons = original_send_buttons
+        location_client.search_locations = original_search_locations
+        conversation.nlu_client.classify_message = original_classify
+        conversation.nlu_client.generate_conversational_response = original_generate
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:
