@@ -183,13 +183,14 @@ def test_stale_or_unknown_list_reply_id_reprompts_the_same_list():
 
 
 def test_list_reply_with_no_active_location_list_reprompts_instead_of_sending_an_empty_list():
-    """Live-reported: a patient re-tapped the ORIGINAL language-choice list (WhatsApp never
+    """Live-reported: a patient re-tapped a STALE interactive message (WhatsApp never
     disables past interactive messages) after the conversation had already moved on to
-    choosing_location. That delivers list_reply id="hi" here, but location_options is empty
-    -- there's no disambiguation list active at all. The old code treated any unmatched
-    list_reply as "re-show the current list," which built a location list with ZERO rows;
-    WhatsApp Cloud API rejects an empty list, so the send silently failed and the patient
-    got no reply whatsoever. Must re-issue the real location prompt instead."""
+    choosing_location, delivering a list_reply id that isn't a language code and doesn't
+    match anything -- location_options is empty, so there's no disambiguation list active
+    at all. The old code treated any unmatched list_reply as "re-show the current list,"
+    which built a location list with ZERO rows; WhatsApp Cloud API rejects an empty list,
+    so the send silently failed and the patient got no reply whatsoever. Must re-issue the
+    real location prompt instead."""
     sent_lists = []
     sent_location_prompts = []
     sent_texts = []
@@ -212,7 +213,7 @@ def test_list_reply_with_no_active_location_list_reprompts_instead_of_sending_an
     try:
         booking = booking_slots.empty()
         context = {"lang": "en", "booking": booking}  # no location_options set
-        run(location_module._handle_choosing_location(None, "919876543210", "list_reply", "hi", context))
+        run(location_module._handle_choosing_location(None, "919876543210", "list_reply", "stale-id-99", context))
         check(len(sent_lists) == 0, f"must never build a location list with no options to show, got {len(sent_lists)} list send(s)")
         check(len(sent_location_prompts) == 1, "must re-issue the real location prompt instead of going silent")
         check(len(sent_texts) == 1, "must re-send the manual-entry hint alongside the location prompt")
@@ -220,6 +221,50 @@ def test_list_reply_with_no_active_location_list_reprompts_instead_of_sending_an
         conversation.whatsapp_client.send_list = original_send_list
         conversation.whatsapp_client.send_location_request = original_send_location_request
         conversation.whatsapp_client.send_text = original_send_text
+
+
+def test_stale_language_pick_during_choosing_location_switches_language_and_reasks():
+    """Product expectation: WhatsApp keeps the ORIGINAL welcome/language list tappable
+    forever, so a patient can pick a DIFFERENT language from it even after choosing_location
+    has already started (e.g. picked English, then goes back and taps Hindi instead). That's
+    an unambiguous, deliberate signal -- must switch the active language and re-ask for
+    location in the NEW language, not silently re-prompt in whatever language was set
+    before."""
+    sent_texts = []
+    sent_location_prompts = []
+    saved_states = []
+
+    async def mock_send_text(client, to, text):
+        sent_texts.append(text)
+
+    async def mock_send_location_request(client, to, text):
+        sent_location_prompts.append(text)
+
+    class _RecordingDb:
+        async def save_conversation_state(self, phone, step, context):
+            saved_states.append((step, context))
+
+    original_send_text = conversation.whatsapp_client.send_text
+    original_send_location_request = conversation.whatsapp_client.send_location_request
+    original_db = conversation.db
+    conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_location_request = mock_send_location_request
+    conversation.db = _RecordingDb()
+    try:
+        booking = booking_slots.empty()
+        booking_slots.fill(booking, "lang", "en", source="user")
+        context = {"lang": "en", "booking": booking}
+        run(location_module._handle_choosing_location(None, "919876543210", "list_reply", "hi", context))
+
+        check(context.get("lang") == "hi", f"the tapped language must actually take effect, got lang={context.get('lang')!r}")
+        check(context["booking"]["lang"]["value"] == "hi", "the booking clipboard's lang slot must be updated too")
+        check(len(sent_location_prompts) == 1, "must re-ask for location once the language switches")
+        check(any("हिंदी" in t or "हिन्दी" in t for t in sent_texts), f"the greeting must actually be sent in the NEW language, got sent_texts={sent_texts!r}")
+        check(len(saved_states) == 1 and saved_states[0][0] == "choosing_location", f"the language switch must be persisted, staying on choosing_location, got {saved_states!r}")
+    finally:
+        conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_location_request = original_send_location_request
+        conversation.db = original_db
 
 
 if __name__ == "__main__":
@@ -231,6 +276,7 @@ if __name__ == "__main__":
     test_picking_from_the_disambiguation_list_resolves_and_advances()
     test_stale_or_unknown_list_reply_id_reprompts_the_same_list()
     test_list_reply_with_no_active_location_list_reprompts_instead_of_sending_an_empty_list()
+    test_stale_language_pick_during_choosing_location_switches_language_and_reasks()
 
     print("\n" + "=" * 50)
     if failures:

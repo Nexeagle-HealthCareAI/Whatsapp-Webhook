@@ -31,14 +31,26 @@ from app.messengers import city_index, location_client
 from app.decision_maker import booking_slots
 from app.i18n import t
 from app.types import ConversationContext
+from app.conversation.language import _detect_stale_language_pick, _apply_stale_language_switch
+
+
+async def _send_location_ask(client, phone: str, lang: str | None) -> None:
+    """Just the two location-prompt messages, no context/state side effects -- shared by the
+    fresh-prompt path (_send_location_request below) and _handle_choosing_location's two
+    stale-list-tap recovery branches, which each need to re-ask without re-running
+    _send_location_request's own _transition_to call (which bakes in a "from choosing_language"
+    history entry that's wrong once the conversation is already past that step)."""
+    from app import conversation
+
+    await conversation.whatsapp_client.send_location_request(client, phone, t("location_prompt", lang))
+    await conversation.whatsapp_client.send_text(client, phone, t("location_manual_hint", lang))
 
 
 async def _send_location_request(client, phone: str, context: ConversationContext) -> None:
     from app import conversation
 
     lang = context.get("lang")
-    await conversation.whatsapp_client.send_location_request(client, phone, t("location_prompt", lang))
-    await conversation.whatsapp_client.send_text(client, phone, t("location_manual_hint", lang))
+    await _send_location_ask(client, phone, lang)
     await conversation._transition_to(phone, "choosing_location", context, "choosing_language")
 
 
@@ -141,6 +153,15 @@ async def _handle_choosing_location(client, phone, input_type, input_value, cont
     booking = conversation._get_or_create_clipboard(context)
 
     if input_type == "list_reply":
+        stale_lang = _detect_stale_language_pick(input_type, input_value, context)
+        if stale_lang:
+            await _apply_stale_language_switch(client, phone, context, stale_lang)
+            lang = stale_lang
+            context.pop("location_options", None)
+            await _send_location_ask(client, phone, lang)
+            await conversation._transition_to(phone, "choosing_location", context, "choosing_location")
+            return
+
         options: dict = context.get("location_options", {})
         match = options.get(input_value)
         if not match:
@@ -149,13 +170,13 @@ async def _handle_choosing_location(client, phone, input_type, input_value, cont
                 await _send_location_match_list(client, phone, context)
             else:
                 # No location list is even active right now -- this list_reply must be a
-                # stale tap on an OLDER message (e.g. the language-choice list from earlier
-                # in the chat; WhatsApp never disables past interactive messages). Re-sending
-                # _send_location_match_list here would build a list with zero rows, which
-                # WhatsApp Cloud API rejects -- a silent send failure that left the patient
-                # stuck with no reply at all. Re-issue the real location prompt instead.
-                await conversation.whatsapp_client.send_location_request(client, phone, t("location_prompt", lang))
-                await conversation.whatsapp_client.send_text(client, phone, t("location_manual_hint", lang))
+                # stale tap on an OLDER message (e.g. the SAME language re-picked, or some
+                # other stale id; WhatsApp never disables past interactive messages).
+                # Re-sending _send_location_match_list here would build a list with zero
+                # rows, which WhatsApp Cloud API rejects -- a silent send failure that left
+                # the patient stuck with no reply at all. Re-issue the real location prompt
+                # instead.
+                await _send_location_ask(client, phone, lang)
             return
         context = _apply_single_match(context, match)
         context.pop("location_options", None)
