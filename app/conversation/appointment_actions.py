@@ -29,6 +29,8 @@ same reasoning applied consistently across every sibling file.
 
 from datetime import date, timedelta
 
+import httpx
+
 from app.messengers import hms_client
 from app.messengers.hms_client import HmsApiError
 from app.i18n import t
@@ -132,7 +134,14 @@ async def _start_appointment_action_flow(
         appt_id = c["hms_appointment_id"]
         try:
             detail = await hms_client.get_appointment(appt_id)
-        except HmsApiError:
+        except (HmsApiError, httpx.HTTPError):
+            # get_appointment raises httpx.HTTPStatusError (not HmsApiError) on a 5xx --
+            # an intermittent HMS outage on any ONE candidate must not abort re-verifying
+            # the rest. Live-reported: one 503 out of ~20 locally-stored candidates
+            # (accumulated test data) propagated all the way out of this function,
+            # aborting the whole active-appointment-conflict / cancel / reschedule / status
+            # flow entirely -- the patient fell through to an unrelated generic reply
+            # instead of ever seeing this appointment resolved one way or the other.
             continue
         if not detail or detail.status_code in ("CANCELLED", "COMPLETED"):
             continue

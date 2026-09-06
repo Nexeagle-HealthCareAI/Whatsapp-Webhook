@@ -101,13 +101,20 @@ class _RecordingWhatsApp:
 
 
 class _RecordingDb:
-    def __init__(self, initial_state: dict | None = None, booked_appointments: list[dict] | None = None):
+    def __init__(
+        self, initial_state: dict | None = None, booked_appointments: list[dict] | None = None,
+        upcoming_active: tuple[bool, str | None] = (False, None),
+    ):
         self._state = initial_state
         self._booked = booked_appointments or []
         self.cleared = False
         self.cancelled_locally: list[str] = []
         self.rescheduled_locally: list[tuple] = []
         self.get_booked_calls = 0
+        self._upcoming_active = upcoming_active
+
+    async def get_upcoming_active_appointment(self, phone):
+        return self._upcoming_active
 
     async def get_conversation_state(self, phone):
         return self._state
@@ -789,6 +796,72 @@ def test_tapping_the_book_appointment_button_starts_a_fresh_booking_regardless_o
     )
 
 
+def test_book_appointment_with_active_appointment_shows_status_card_not_plain_text():
+    print("\n--- 'book with dr sharma' while a real appointment already exists -- rich status card, not intent_router's old plain-text question ---")
+    db_mock = _RecordingDb(
+        initial_state={"current_step": "confirming", "context": {"lang": "en"}},
+        booked_appointments=[{"id": "row1", "hms_appointment_id": "appt-1", "preferred_date": _TOMORROW}],
+        upcoming_active=(True, "2026-09-05"),
+    )
+    wa_mock = _RecordingWhatsApp()
+    nlu_result = {
+        "intent": "book_appointment", "entities": {"doctor_name": "Sharma"},
+        "confidence": "high", "detected_language": "en", "language_confidence": "high",
+    }
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), \
+             patch.object(conversation, "whatsapp_client", wa_mock), \
+             patch.object(conversation.intent_router, "db", db_mock), \
+             patch.object(conversation.nlu_client, "classify_message", AsyncMock(return_value=nlu_result)), \
+             patch.object(conversation.hms_client, "get_appointment", AsyncMock(return_value=_LIVE_APPT)):
+            async with httpx.AsyncClient() as client:
+                await conversation.handle_message(client, "919876543210", "User", "text", "book an appointment with dr sharma")
+
+    run(_run())
+    check(len(wa_mock.buttons) == 1, "shows the rich status card as buttons, not a plain-text question")
+    body_text, buttons = wa_mock.buttons[0]
+    check("Dr. A" in body_text, f"card names the real doctor on the existing appointment, got {body_text!r}")
+    button_ids = [bid for bid, _ in buttons]
+    check(button_ids == ["cancel_this_appointment", "update_this_appointment", "start_booking"], f"offers Cancel/Update/Book Another, got {button_ids!r}")
+    check(
+        db_mock._state is not None and db_mock._state["current_step"] == "viewing_appointment_status",
+        f"lands on the read-only status step, got {db_mock._state!r}",
+    )
+    check(
+        db_mock._state["context"].get("pending_doctor_name") == "Sharma",
+        f"the doctor name typed this turn survives so Book Another can reuse it, got {db_mock._state['context']!r}",
+    )
+
+
+def test_tapping_book_another_from_conflict_status_seeds_the_doctor_search():
+    print("\n--- Tapping Book Another after a booking-conflict card reuses the doctor name instead of starting blank ---")
+    db_mock = _RecordingDb(
+        initial_state={
+            "current_step": "viewing_appointment_status",
+            "context": {"lang": "en", "pending_doctor_name": "Sharma"},
+        },
+    )
+    wa_mock = _RecordingWhatsApp()
+    search_flow_mock = AsyncMock(return_value=False)
+    search_miss_mock = AsyncMock()
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), \
+             patch.object(conversation, "whatsapp_client", wa_mock), \
+             patch.object(conversation, "_search_doctors_flow", search_flow_mock), \
+             patch.object(conversation, "_handle_doctor_search_miss", search_miss_mock):
+            async with httpx.AsyncClient() as client:
+                await conversation.handle_message(client, "919876543210", "User", "button_reply", "start_booking")
+
+    run(_run())
+    check(search_flow_mock.await_count == 1, "tries the seeded doctor search instead of restarting from language selection")
+    seeded_context = search_flow_mock.await_args.args[2]
+    check(seeded_context.get("search_doctor_query") == "Sharma", f"seeds the search with the doctor name from the conflict card, got {seeded_context!r}")
+    check(search_miss_mock.await_count == 1, "falls through to the miss handler since the search was mocked to find nothing")
+    check(search_miss_mock.await_args.args[3] == "Sharma", "miss handler still gets the same query, not a blank one")
+
+
 if __name__ == "__main__":
     test_no_active_appointment_sends_message_and_clears_state()
     test_single_live_appointment_goes_straight_to_confirmation()
@@ -815,6 +888,8 @@ if __name__ == "__main__":
     test_check_my_appointment_from_a_returning_user_also_shows_read_only_status()
     test_no_active_appointment_offers_a_tappable_book_appointment_button()
     test_tapping_the_book_appointment_button_starts_a_fresh_booking_regardless_of_state()
+    test_book_appointment_with_active_appointment_shows_status_card_not_plain_text()
+    test_tapping_book_another_from_conflict_status_seeds_the_doctor_search()
 
     print(f"\n{'=' * 60}")
     if failures:
