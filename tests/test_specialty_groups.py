@@ -808,7 +808,7 @@ def test_doctor_search_matching_and_formatting():
 
     rendered_doctors = []
     original_render_doctor_list = conversation._render_doctor_list
-    async def mock_render_doctor_list(client, phone, context, doctors, current_step=None):
+    async def mock_render_doctor_list(client, phone, context, doctors, current_step=None, **kwargs):
         rendered_doctors.extend(doctors)
     conversation._render_doctor_list = mock_render_doctor_list
 
@@ -828,6 +828,73 @@ def test_doctor_search_matching_and_formatting():
         city_index.get_all_doctors = original_get_all_doctors
         city_index.get_index = original_get_index
         conversation._render_doctor_list = original_render_doctor_list
+
+
+def test_doctor_name_search_asks_location_before_showing_ambiguous_matches():
+    print("\n--- Ambiguous doctor-name match (2+ same-named doctors, no location known yet) asks for location first ---")
+    # Live-reported: "dr sharma" matching several same-named doctors showed a bare "Here are
+    # the doctors available" list straight away, no location filter applied at all -- only
+    # lists of 10+ ever triggered the location ask before. resolve_doctor already narrows
+    # correctly by city/radius once location IS known (test_doctor_search_matching_and_formatting
+    # above proves that half); this proves the OTHER half -- that ambiguity with NO location
+    # known yet asks for it, at the doctor-name-search entry point specifically (not hospital
+    # or specialty/symptom lists, which pass the default threshold and must be unaffected).
+    import asyncio
+
+    class MockClient:
+        pass
+    mock_client = MockClient()
+
+    original_get_all_doctors = city_index.get_all_doctors
+    async def mock_get_all_doctors(*args, **kwargs):
+        return [
+            {"doctorId": "1", "fullName": "Dr. Sharma", "hospitalName": "Kishanganj General Hospital", "city": "Kishanganj"},
+            {"doctorId": "2", "fullName": "Dr. Sharma", "hospitalName": "Mumbai General Hospital", "city": "Mumbai"},
+        ]
+    city_index.get_all_doctors = mock_get_all_doctors
+
+    original_get_index = city_index.get_index
+    async def mock_get_index(*args, **kwargs):
+        return {}
+    city_index.get_index = mock_get_index
+
+    location_requests = []
+    original_send_loc = conversation.whatsapp_client.send_location_request
+    async def mock_send_location_request(client, phone, text):
+        location_requests.append(text)
+    conversation.whatsapp_client.send_location_request = mock_send_location_request
+
+    rendered_doctors = []
+    original_render_doctor_list = conversation._render_doctor_list
+    async def spy_render_doctor_list(*args, **kwargs):
+        # Real function, just recorded -- unlike the mock above, this one must actually run
+        # so the location-ask branch inside it gets exercised for real.
+        rendered_doctors.append((args, kwargs))
+        return await original_render_doctor_list(*args, **kwargs)
+    conversation._render_doctor_list = spy_render_doctor_list
+
+    original_db = conversation.db
+    class _NopDb:
+        async def save_conversation_state(self, phone, step, context):
+            pass
+        async def get_conversation_state(self, phone):
+            return None
+        async def clear_conversation_state(self, phone):
+            pass
+    conversation.db = _NopDb()
+
+    try:
+        context_no_location = {"search_doctor_query": "Sharma", "lang": "en"}
+        handled = asyncio.run(conversation._search_doctors_flow(mock_client, "123", context_no_location, "choosing_location"))
+        check(handled is True, "an ambiguous (non-zero) match is still reported as handled")
+        check(len(location_requests) == 1, f"asks for location instead of dumping the ambiguous list, got {len(location_requests)} location request(s)")
+        check("Sharma" in location_requests[0], f"names the doctor being searched for in the location ask, got {location_requests[0]!r}")
+    finally:
+        city_index.get_all_doctors = original_get_all_doctors
+        city_index.get_index = original_get_index
+        conversation.whatsapp_client.send_location_request = original_send_loc
+        conversation._render_doctor_list = original_render_doctor_list
+        conversation.db = original_db
 
 
 def test_extract_location_from_query():
@@ -2091,7 +2158,7 @@ def test_radius_auto_widens_without_confirm_tap():
 
     rendered = {}
 
-    async def mock_render(client, phone, context, doctors, current_step=None):
+    async def mock_render(client, phone, context, doctors, current_step=None, **kwargs):
         rendered["doctors"] = doctors
 
     wide_results = [{"doctorId": "far1", "fullName": "Dr. Far"}]

@@ -1015,22 +1015,35 @@ async def _send_doctor_list(client: httpx.AsyncClient, phone: str, context: Conv
 
 
 async def _render_doctor_list(
-    client: httpx.AsyncClient, phone: str, context: ConversationContext, doctors: list[dict], current_step: str | None = None
+    client: httpx.AsyncClient, phone: str, context: ConversationContext, doctors: list[dict], current_step: str | None = None,
+    *, min_matches_before_location_ask: int = 10,
 ) -> None:
     """Sorts, trims to WhatsApp's row cap, and sends. Shared by the normal radius search and
-    the opted-in wider search so both present results identically."""
+    the opted-in wider search so both present results identically.
+
+    min_matches_before_location_ask: how many matches before asking for location to narrow,
+    when location isn't known yet. Defaults to WhatsApp's own list cap (10) -- right for a
+    hospital's own doctor list (doctor_search.py's _resolve_hospital_search_match) or a
+    specialty/symptom list, where the patient already chose the narrowing factor (the
+    hospital, or specialty+location upstream) and asking again would be redundant. The
+    doctor-NAME-search entry point (_search_doctors_flow) passes 1 instead -- there, several
+    same-named doctors with no location known yet is exactly the ambiguity location should
+    resolve; resolve_doctor already narrows correctly by city/radius once it's known (see its
+    own docstring), so asking here and re-entering _search_doctors_flow (via
+    _advance_booking_flow's "doctor blank + search_doctor_query pending" branch) is enough."""
     lang = context.get("lang")
 
-    # More matches than WhatsApp's list can show (10 rows) and no location to narrow by yet
-    # — say so and ask, rather than silently showing only the first 10 with no indication
-    # more exist. Only meaningful for the name-search path: the specialty/symptom path
-    # already requires a location before it ever reaches this function.
+    # More matches than the threshold and no location to narrow by yet — say so and ask,
+    # rather than silently showing everyone with no indication more might exist, or (at the
+    # name-search threshold of 1) making the patient sift through same-named doctors at
+    # hospitals they'll never reach -- live-reported: "dr sharma" with several matches showed
+    # a bare "Here are the doctors available" list with no filtering at all.
     has_loc = context.get("patient_lat") is not None or context.get("city")
-    if len(doctors) > 10 and not has_loc:
+    if len(doctors) > min_matches_before_location_ask and not has_loc:
         query = context.get("search_doctor_query", "")
         await whatsapp_client.send_location_request(
             client, phone,
-            t("doctor_too_many_ask_location", lang, count=len(doctors), query=query),
+            t("doctor_ambiguous_ask_location", lang, count=len(doctors), query=query),
         )
         await _transition_to(phone, "choosing_location", context, current_step)
         return

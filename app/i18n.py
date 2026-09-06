@@ -766,11 +766,11 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Zaroor! Aapke liye achha {specialty} dhoondte hain.",
         "bn": "অবশ্যই! আপনার জন্য একজন ভালো {specialty} খুঁজি।",
     },
-    "doctor_too_many_ask_location": {
-        "en": "We have {count}+ doctors matching '{query}' — share your location so I can find the right one quickly:",
-        "hi": "'{query}' नाम से हमारे पास {count}+ डॉक्टर हैं — सही वाले तक जल्दी पहुंचने के लिए कृपया अपनी लोकेशन शेयर करें:",
-        "hg": "'{query}' naam se hamare paas {count}+ doctors hain — sahi wale tak jaldi pahunchne ke liye apni location share kar dijiye:",
-        "bn": "'{query}' নামে আমাদের কাছে {count}+ ডাক্তার আছেন — সঠিকজনকে দ্রুত খুঁজে পেতে অনুগ্রহ করে আপনার লোকেশন শেয়ার করুন:",
+    "doctor_ambiguous_ask_location": {
+        "en": "We found {count} doctors matching '{query}' — share your location so I can find the right one quickly:",
+        "hi": "'{query}' नाम से हमें {count} डॉक्टर मिले हैं — सही वाले तक जल्दी पहुंचने के लिए कृपया अपनी लोकेशन शेयर करें:",
+        "hg": "'{query}' naam se humein {count} doctors mile hain — sahi wale tak jaldi pahunchne ke liye apni location share kar dijiye:",
+        "bn": "'{query}' নামে আমরা {count} জন ডাক্তার পেয়েছি — সঠিকজনকে দ্রুত খুঁজে পেতে অনুগ্রহ করে আপনার লোকেশন শেয়ার করুন:",
     },
     "doctor_match_found_detailed": {
         "en": "Found {doctor} for you — {details}.",

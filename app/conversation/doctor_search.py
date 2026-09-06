@@ -147,7 +147,9 @@ async def _search_doctors_flow(client, phone: str, context: dict, current_step: 
                 hospital_id=hospital_id, lead_type="DoctorNameSearch", search_query=query, mobile=phone,
             )
 
-    await conversation._render_doctor_list(client, phone, context, resolution.candidates, current_step)
+    await conversation._render_doctor_list(
+        client, phone, context, resolution.candidates, current_step, min_matches_before_location_ask=1,
+    )
     return True
 
 
