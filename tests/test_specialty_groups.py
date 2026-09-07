@@ -119,9 +119,11 @@ LIVE_SPECIALTIES = [
 # vs list row titles (cap 24). Kept explicit rather than inferred, so adding a string
 # to the wrong bucket here is a deliberate act rather than an accident.
 BUTTON_TITLE_KEYS = [
-    "search_mode_symptom", "search_mode_browse",
+    "search_mode_symptom", "search_mode_name", "search_mode_browse",
     "date_today", "date_tomorrow", "confirm_btn", "cancel_btn", "search_wider_yes",
     "change_doctor_btn", "update_details_btn",
+    "reuse_last_search_yes_btn", "reuse_last_search_change_location_btn",
+    "reuse_last_search_change_specialty_btn",
 ]
 LIST_ACTION_KEYS = [
     "specialty_group_button", "specialty_list_button", "sort_button", "doctor_list_button",

@@ -401,11 +401,15 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Specialty dekhein",
         "bn": "বিশেষজ্ঞতা খুঁজুন",
     },
+    # Sent as a quick-reply button label -- _MAX_BUTTON_TITLE is 20 chars, and every one
+    # of these was over budget (21-31 chars), silently truncated by send_buttons's own
+    # title[:_MAX_BUTTON_TITLE] slicing ("Search by doctor name" -> "Search by doctor nam",
+    # live-reported). Shortened, not just English.
     "search_mode_name": {
-        "en": "Search by doctor name",
-        "hi": "डॉक्टर के नाम से खोजें",
-        "hg": "Doctor ke naam se search karein",
-        "bn": "ডাক্তারের নাম দিয়ে খুঁজুন",
+        "en": "Search by name",
+        "hi": "नाम से खोजें",
+        "hg": "Naam se khojein",
+        "bn": "নাম দিয়ে খুঁজুন",
     },
     "doctor_name_ask": {
         "en": "Please type the name of the doctor you are looking for:",
