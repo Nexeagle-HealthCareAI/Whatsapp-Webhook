@@ -2918,6 +2918,117 @@ def test_typed_city_in_choosing_location_is_not_hijacked_by_casual_chat():
         conversation.nlu_client.generate_conversational_response = original_generate
 
 
+def test_typed_doctor_name_in_choosing_search_mode_is_not_hijacked_by_casual_chat():
+    """Live-reported: typing "Dr. Avinash" directly (instead of tapping "Search by doctor
+    name") while the bot was at choosing_search_mode got NLU-classified out_of_scope (a bare
+    name carries no NLU-extracted doctor_name entity -- expected), which handle_message's
+    off-topic-casual-chat fallback then took as license to reply -- and since that LLM call
+    itself failed here, the patient saw the literal untranslated string "error_nlu_fallback"
+    followed by the SAME "How would you like to find a doctor?" prompt again. Root cause:
+    choosing_search_mode was missing from the fallback's exclusion list, even though
+    _handle_choosing_search_mode already handles a directly-typed doctor name correctly via
+    _is_doctor_search_query + _search_doctors_flow -- it just never got the chance to run.
+    Goes through the full handle_message path, same shape as the choosing_location test
+    above."""
+    import asyncio
+
+    class MockDB:
+        def __init__(self):
+            self.state = {}
+
+        async def get_conversation_state(self, phone):
+            if phone in self.state:
+                step, ctx = self.state[phone]
+                return {"current_step": step, "context": ctx}
+            return None
+
+        async def save_conversation_state(self, phone, step, context):
+            self.state[phone] = (step, context)
+
+        async def clear_conversation_state(self, phone):
+            self.state.pop(phone, None)
+
+    db_mock = MockDB()
+    original_db = conversation.db
+    conversation.db = db_mock
+
+    sent_texts_direct, sent_texts = [], []
+
+    async def mock_send_text_direct(client, to, text):
+        sent_texts_direct.append(text)
+
+    async def mock_send_text(client, to, text):
+        sent_texts.append(text)
+
+    async def mock_send_noop(*args, **kwargs):
+        pass
+
+    original_send_text_direct = conversation.whatsapp_client.send_text_direct
+    original_send_text = conversation.whatsapp_client.send_text
+    original_send_location_request = conversation.whatsapp_client.send_location_request
+    original_send_list = conversation.whatsapp_client.send_list
+    original_send_buttons = conversation.whatsapp_client.send_buttons
+    conversation.whatsapp_client.send_text_direct = mock_send_text_direct
+    conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_location_request = mock_send_noop
+    conversation.whatsapp_client.send_list = mock_send_noop
+    conversation.whatsapp_client.send_buttons = mock_send_noop
+
+    original_get_all_doctors = city_index.get_all_doctors
+    async def mock_get_all_doctors(*args, **kwargs):
+        return [{"doctorId": "1", "fullName": "Dr. Avinash", "hospitalName": "Kishanganj General Hospital", "city": "Kishanganj"}]
+    city_index.get_all_doctors = mock_get_all_doctors
+
+    original_get_index = city_index.get_index
+    async def mock_get_index(*args, **kwargs):
+        return {}
+    city_index.get_index = mock_get_index
+
+    async def mock_classify_message(client, text):
+        # Exactly what a bare doctor name gets classified as in real logs -- no recognizable
+        # intent, no entities.
+        return {
+            "intent": "out_of_scope", "entities": {}, "confidence": "low",
+            "detected_language": None, "language_confidence": None,
+            "_validated": True, "_had_hallucination": False,
+        }
+    original_classify = conversation.nlu_client.classify_message
+    conversation.nlu_client.classify_message = mock_classify_message
+
+    casual_chat_calls = []
+    async def spy_generate_conversational_response(*args, **kwargs):
+        casual_chat_calls.append((args, kwargs))
+        return "should never be sent"
+    original_generate = conversation.nlu_client.generate_conversational_response
+    conversation.nlu_client.generate_conversational_response = spy_generate_conversational_response
+
+    mock_client = object()
+    try:
+        booking = conversation.booking_slots.empty()
+        conversation.booking_slots.fill(booking, "lang", "en", source="user")
+        db_mock.state["avinashuser"] = ("choosing_search_mode", {"lang": "en", "booking": booking})
+
+        asyncio.run(conversation.handle_message(mock_client, "avinashuser", "Patient", "text", "Dr. Avinash"))
+
+        check(len(casual_chat_calls) == 0, f"must not fall into the casual-chat fallback for a plain typed doctor name, got {len(casual_chat_calls)} call(s)")
+        check(not any("error_nlu_fallback" in t for t in sent_texts + sent_texts_direct), f"must never leak a raw i18n key to the patient, got sent_texts={sent_texts!r} sent_texts_direct={sent_texts_direct!r}")
+        check(any("Avinash" in t for t in sent_texts_direct), f"the real doctor search must actually run and resolve, got sent_texts_direct={sent_texts_direct!r}")
+
+        step, ctx = db_mock.state.get("avinashuser", (None, {}))
+        check(step != "choosing_search_mode", f"must advance past choosing_search_mode once the doctor resolves, got {step!r}")
+    finally:
+        conversation.db = original_db
+        conversation.whatsapp_client.send_text_direct = original_send_text_direct
+        conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_location_request = original_send_location_request
+        conversation.whatsapp_client.send_list = original_send_list
+        conversation.whatsapp_client.send_buttons = original_send_buttons
+        city_index.get_all_doctors = original_get_all_doctors
+        city_index.get_index = original_get_index
+        conversation.nlu_client.classify_message = original_classify
+        conversation.nlu_client.generate_conversational_response = original_generate
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:

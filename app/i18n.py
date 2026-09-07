@@ -289,6 +289,17 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Ab aur peeche nahi ja sakte. Phir se shuru kar rahe hain...",
         "bn": "আর পিছনে যাওয়া যাবে না। আবার শুরু করা হচ্ছে...",
     },
+    # Sent when generate_conversational_response (the casual-chat LLM call) fails or returns
+    # nothing -- t()'s own fallback for a genuinely missing key is the raw key string itself
+    # (see t()'s docstring), which is exactly what a patient saw on screen before this key
+    # existed here. Kept deliberately generic since the caller has no idea what the patient
+    # actually meant.
+    "error_nlu_fallback": {
+        "en": "Sorry, I didn't quite catch that. Let's continue:",
+        "hi": "माफ़ कीजिए, मैं समझ नहीं पाया। चलिए आगे बढ़ते हैं:",
+        "hg": "Sorry, samajh nahi paya. Chaliye aage badhte hain:",
+        "bn": "দুঃখিত, বুঝতে পারিনি। চলুন এগিয়ে যাই:",
+    },
     "you": {"en": "You", "hi": "आप", "hg": "Aap", "bn": "আপনি"},
     "clinic_unknown": {"en": "Clinic", "hi": "क्लिनिक", "hg": "Clinic", "bn": "ক্লিনিক"},
     "patient_details_prompt_flow": {

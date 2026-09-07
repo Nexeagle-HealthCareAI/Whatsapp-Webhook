@@ -827,6 +827,15 @@ async def handle_message(
                     # bot was in choosing_location produced two casual "Hi there!" replies and
                     # never once actually resolved the city.
                     "choosing_location", "awaiting_reschedule_date",
+                    # _handle_choosing_search_mode already handles a directly-typed doctor name
+                    # here via _is_doctor_search_query + _search_doctors_flow (a patient typing
+                    # "Dr. Avinash" instead of tapping "Search by doctor name" is a completely
+                    # normal reply, not off-topic) -- without this exclusion that never got a
+                    # chance to run, since a bare doctor name usually carries no NLU-extracted
+                    # entity either. Live-reported: typing "Dr. Avinash" here got a casual-chat
+                    # reply (or, when that LLM call itself failed, the literal untranslated
+                    # string "error_nlu_fallback") followed by the same search-mode prompt again.
+                    "choosing_search_mode",
                 ):
                     try:
                         dynamic_reply = await nlu_client.generate_conversational_response(client, "general_chat", context, input_value)
