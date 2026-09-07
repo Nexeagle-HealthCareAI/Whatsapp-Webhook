@@ -9,6 +9,9 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app import db, i18n
+# Pure, no I/O -- imported directly rather than reached via `db.` so it isn't part of the
+# mockable database surface every test's db stub would otherwise need to implement.
+from app.db.patient_last_search import is_last_search_fresh as _is_last_search_fresh
 from app.messengers import city_index, conversation_log_queue, hms_client, symptom_client, whatsapp_client
 from app.messengers.redis_client import get_redis
 from app.decision_maker import booking_slots
@@ -74,6 +77,9 @@ from app.conversation.appointment_actions import (
     _handle_viewing_appointment_status, _handle_awaiting_reschedule_date,
     _prompt_appointment_choice, _prompt_appointment_confirm,
     _prompt_viewing_appointment_status, _prompt_awaiting_reschedule_date,
+)
+from app.conversation.last_search import (
+    _prompt_confirming_last_search, _handle_confirming_last_search,
 )
 
 logger = logging.getLogger("conversation")
@@ -283,10 +289,11 @@ async def handle_message(
     )
     # "Book Appointment" button offered after a no-active-appointment response (see
     # appointment_actions.py's _start_appointment_action_flow) -- that response clears
-    # conversation_state right after sending it, so this tap usually arrives with no prior
-    # state to dispatch on; same "begin a fresh conversation" entry point any other
-    # zero-state message would reach via _confirm_or_start_language's own no-language-detected
-    # fallback, just reached directly since a button tap never carries text to guess from.
+    # conversation_state right after sending it (dropping any stale doctor/location/slot from
+    # whatever was being booked before), but deliberately keeps ONLY lang, so this tap
+    # usually arrives with just that much prior state. A patient who's already told the bot
+    # their language shouldn't have to pick it again just because there was no active
+    # appointment to show -- see the pending_lang branch below.
     #
     # Exception: tapped from the active-appointment-conflict status card (see
     # routed.action == "active_appointment_conflict" below) with a doctor name the patient
@@ -303,6 +310,32 @@ async def handle_message(
             if await _search_doctors_flow(client, phone, new_context, "awaiting_doctor_name"):
                 return
             await _handle_doctor_search_miss(client, phone, new_context, pending_doctor_name)
+            return
+        if pending_lang:
+            # Language is already known this conversation (either the exception case above
+            # minus a doctor name, or the plain no-active-appointment screen, which now keeps
+            # ONLY lang across its own state clear -- see appointment_actions.py) -- skip
+            # re-asking it. If a location+specialty search is also on record from within the
+            # last 24h, offer to reuse it (confirm-first, never silent -- see
+            # app/conversation/last_search.py's module docstring for why); otherwise go
+            # straight to location, same as any other already-in-flow booking.
+            last_search = await db.get_last_search(phone)
+            if _is_last_search_fresh(last_search):
+                new_context = {
+                    "lang": pending_lang, "session_id": context.get("session_id"),
+                    "last_search_specialty": last_search["last_specialty_category"],
+                    "last_search_city": last_search["last_city"],
+                    "last_search_location_text": last_search["last_location_text"],
+                    "last_search_lat": last_search["last_patient_lat"],
+                    "last_search_lng": last_search["last_patient_lng"],
+                }
+                await _transition_to(phone, "confirming_last_search", new_context, current_step)
+                await _prompt_confirming_last_search(client, phone, new_context)
+                return
+            booking = booking_slots.empty()
+            booking_slots.fill(booking, "lang", pending_lang, source="user")
+            new_context = {"lang": pending_lang, "booking": booking, "session_id": context.get("session_id")}
+            await _advance_booking_flow(client, phone, new_context, booking)
             return
         await _start(client, phone)
         return
@@ -1603,6 +1636,10 @@ STEP_REGISTRY = {
     "confirming_wider_search": {
         "handler": _handle_confirming_wider_search,
         "prompt": lambda client, phone, context: None,
+    },
+    "confirming_last_search": {
+        "handler": _handle_confirming_last_search,
+        "prompt": _prompt_confirming_last_search,
     },
     "choosing_doctor": {
         "handler": _handle_choosing_doctor,

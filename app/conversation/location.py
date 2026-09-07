@@ -204,6 +204,17 @@ async def _handle_choosing_location(client, phone, input_type, input_value, cont
         if context.get("patient_lat") is not None:
             location_val = {"lat": context["patient_lat"], "lng": context["patient_lng"], "city": context.get("city")}
         booking_slots.fill(booking, "location", location_val, raw=context.get("location_text"), source="user")
+        # Recorded independent of conversation_state (which gets wiped on a full restart) so
+        # a later "Book Appointment" tap can offer to reuse it -- see app/conversation/
+        # last_search.py. Best-effort: never let a logging-adjacent write break location
+        # capture, the actual booking flow doesn't depend on this succeeding.
+        try:
+            await conversation.db.save_last_location(
+                phone, context.get("city"), context.get("location_text"),
+                context.get("patient_lat"), context.get("patient_lng"),
+            )
+        except Exception as exc:
+            conversation.logger.warning("Failed to save last-known location for %s: %s", phone, exc)
     else:
         booking_slots.mark_notfound(booking, "location", raw=context.get("location_text"))
 

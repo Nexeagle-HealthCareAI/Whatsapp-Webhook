@@ -267,6 +267,46 @@ def test_stale_language_pick_during_choosing_location_switches_language_and_reas
         conversation.db = original_db
 
 
+def test_resolving_a_location_saves_it_as_the_patients_last_known_location():
+    """Feeds the "still looking near {city}?" reuse prompt on a later Book Appointment tap
+    (app/conversation/last_search.py) -- independent of conversation_state, which gets wiped
+    on a full restart. Must fire on every real resolution, not just this one flow."""
+    original_db = conversation.db
+    original_advance = conversation._advance_booking_flow
+
+    class _RecordingDb:
+        def __init__(self):
+            self.saved_locations = []
+
+        async def save_last_location(self, phone, city, location_text, lat, lng):
+            self.saved_locations.append((phone, city, location_text, lat, lng))
+
+    db_mock = _RecordingDb()
+
+    async def mock_advance(client, phone, context, booking):
+        pass
+
+    original_search_locations = location_client.search_locations
+    location_client.search_locations = AsyncMock(return_value=[MUMBAI])
+
+    conversation.db = db_mock
+    conversation._advance_booking_flow = mock_advance
+    try:
+        booking = booking_slots.empty()
+        booking_slots.fill(booking, "lang", "en", source="user")
+        context = {"lang": "en", "booking": booking}
+        run(location_module._handle_choosing_location(None, "919876543210", "text", "mumbai", context))
+
+        check(len(db_mock.saved_locations) == 1, f"must record the resolved location, got {db_mock.saved_locations!r}")
+        phone, city, location_text, lat, lng = db_mock.saved_locations[0]
+        check(city == "Mumbai", f"records the resolved city, got {city!r}")
+        check(lat == 18.98, f"records the resolved coordinates, got lat={lat!r}")
+    finally:
+        conversation.db = original_db
+        conversation._advance_booking_flow = original_advance
+        location_client.search_locations = original_search_locations
+
+
 if __name__ == "__main__":
     test_single_match_resolves_directly_with_coordinates()
     test_single_match_without_coordinates_still_sets_city()
@@ -277,6 +317,7 @@ if __name__ == "__main__":
     test_stale_or_unknown_list_reply_id_reprompts_the_same_list()
     test_list_reply_with_no_active_location_list_reprompts_instead_of_sending_an_empty_list()
     test_stale_language_pick_during_choosing_location_switches_language_and_reasks()
+    test_resolving_a_location_saves_it_as_the_patients_last_known_location()
 
     print("\n" + "=" * 50)
     if failures:

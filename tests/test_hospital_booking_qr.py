@@ -306,7 +306,10 @@ def test_check_status_with_no_appointment_at_this_hospital_is_scoped_not_global(
     check("Purnea General Hospital" in message_text, f"names the scanned hospital in the empty-state message, got: {message_text!r}")
     button_ids = [bid for bid, _ in wa_mock.buttons[0][1]] if wa_mock.buttons else []
     check(button_ids == ["start_booking"], f"offers the Book Appointment button as the next step, got {button_ids!r}")
-    check(db_mock._state is None, "conversation state is cleared, same as the generic no-active-appointment path")
+    check(
+        db_mock._state == {"current_step": "post_no_active_appointment", "context": {"lang": "en"}},
+        f"stale booking state is cleared but lang is kept so a Book Appointment tap can skip re-asking it, got {db_mock._state!r}",
+    )
 
 
 if __name__ == "__main__":

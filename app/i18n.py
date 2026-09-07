@@ -1019,6 +1019,35 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "{hospital} mein aapki koi active appointment nahi mili. Book karne ke liye neeche tap karein, ya \"book appointment\" type karein.",
         "bn": "{hospital}-এ আপনার কোনো সক্রিয় অ্যাপয়েন্টমেন্ট পাওয়া যায়নি। বুক করতে নিচে ট্যাপ করুন, অথবা \"book appointment\" টাইপ করুন।",
     },
+    # See app/conversation/last_search.py -- offered on a "Book Appointment" tap when both a
+    # location and a specialty were resolved within the last 24h. Always a confirm, never
+    # silent reuse (a shared family phone number could mean the last search wasn't even the
+    # same person).
+    "reuse_last_search_prompt": {
+        "en": "Last time you looked for {specialty} near {city} — still looking for the same thing?",
+        "hi": "पिछली बार आपने {city} के पास {specialty} खोजा था — क्या अभी भी वही चाहिए?",
+        "hg": "Pichli baar aapne {city} ke paas {specialty} khoja tha — kya abhi bhi wahi chahiye?",
+        "bn": "আগেরবার আপনি {city}-এর কাছে {specialty} খুঁজেছিলেন — এখনও কি একই জিনিস চাই?",
+    },
+    "reuse_last_search_yes_btn": {"en": "Yes", "hi": "हां", "hg": "Haan", "bn": "হ্যাঁ"},
+    "reuse_last_search_change_location_btn": {
+        "en": "Change Location",
+        "hi": "स्थान बदलें",
+        "hg": "Location Badlein",
+        "bn": "লোকেশন পরিবর্তন",
+    },
+    "reuse_last_search_change_specialty_btn": {
+        "en": "Change Specialty",
+        "hi": "विशेषज्ञता बदलें",
+        "hg": "Specialty Badlein",
+        "bn": "বিশেষত্ব পরিবর্তন",
+    },
+    "reuse_last_search_choose_hint": {
+        "en": "Please tap Yes, Change Location, or Change Specialty.",
+        "hi": "कृपया हां, स्थान बदलें, या विशेषज्ञता बदलें में से कोई एक चुनें।",
+        "hg": "Kripya Haan, Location Badlein, ya Specialty Badlein mein se koi ek chunein.",
+        "bn": "অনুগ্রহ করে হ্যাঁ, লোকেশন পরিবর্তন, বা বিশেষত্ব পরিবর্তন থেকে একটি বেছে নিন।",
+    },
 }
 
 

@@ -89,8 +89,12 @@ class _RecordingWhatsApp:
         self.texts: list[str] = []
         self.lists: list[tuple] = []
         self.buttons: list[tuple] = []
+        self.location_requests: list[str] = []
 
     async def send_text(self, client, to, body):
+        self.texts.append(body)
+
+    async def send_text_direct(self, client, to, body):
         self.texts.append(body)
 
     async def send_list(self, client, to, body_text, button_label, rows, section_title="Options"):
@@ -99,11 +103,15 @@ class _RecordingWhatsApp:
     async def send_buttons(self, client, to, body_text, buttons):
         self.buttons.append((body_text, buttons))
 
+    async def send_location_request(self, client, to, body):
+        self.location_requests.append(body)
+
 
 class _RecordingDb:
     def __init__(
         self, initial_state: dict | None = None, booked_appointments: list[dict] | None = None,
         upcoming_active: tuple[bool, str | None] = (False, None),
+        last_search: dict | None = None,
     ):
         self._state = initial_state
         self._booked = booked_appointments or []
@@ -112,6 +120,12 @@ class _RecordingDb:
         self.rescheduled_locally: list[tuple] = []
         self.get_booked_calls = 0
         self._upcoming_active = upcoming_active
+        # None by default -- existing tests that don't care about the last-search reuse
+        # feature never see it kick in, same as a patient with no search on record.
+        self._last_search = last_search
+
+    async def get_last_search(self, phone):
+        return self._last_search
 
     async def get_upcoming_active_appointment(self, phone):
         return self._upcoming_active
@@ -162,7 +176,10 @@ def test_no_active_appointment_sends_message_and_clears_state():
         wa_mock.buttons and wa_mock.buttons[0][1] and wa_mock.buttons[0][1][0][0] == "start_booking",
         f"offers a tappable start_booking button, not just the typed fallback, got {wa_mock.buttons!r}",
     )
-    check(db_mock.cleared is True, "clears conversation state")
+    check(
+        db_mock._state == {"current_step": "post_no_active_appointment", "context": {"lang": "en"}},
+        f"clears stale booking state but keeps lang so a Book Appointment tap can skip re-asking it, got {db_mock._state!r}",
+    )
 
 
 def test_single_live_appointment_goes_straight_to_confirmation():
@@ -267,7 +284,10 @@ def test_cancelled_local_candidate_is_filtered_out_via_live_reverification():
 
     run(_run())
     check(len(wa_mock.buttons) == 1, "treats it as having no active appointment")
-    check(db_mock.cleared is True, "clears conversation state rather than confirming a cancel on an already-cancelled appointment")
+    check(
+        db_mock._state == {"current_step": "post_no_active_appointment", "context": {"lang": "en"}},
+        f"clears stale booking state rather than confirming a cancel on an already-cancelled appointment, got {db_mock._state!r}",
+    )
 
 
 def test_appointment_more_than_a_day_past_its_date_is_excluded_even_if_status_is_stale():
@@ -290,7 +310,10 @@ def test_appointment_more_than_a_day_past_its_date_is_excluded_even_if_status_is
 
     run(_run())
     check(len(wa_mock.buttons) == 1, "treats a many-days-old appointment as not active, even with statusCode still FUTURE")
-    check(db_mock.cleared is True, "clears conversation state")
+    check(
+        db_mock._state == {"current_step": "post_no_active_appointment", "context": {"lang": "en"}},
+        f"clears stale booking state, got {db_mock._state!r}",
+    )
 
 
 def test_appointment_from_yesterday_is_still_within_the_grace_window():
@@ -777,9 +800,11 @@ def test_no_active_appointment_offers_a_tappable_book_appointment_button():
 
 def test_tapping_the_book_appointment_button_starts_a_fresh_booking_regardless_of_state():
     print("\n--- Tapping the Book Appointment button always starts fresh, even with no prior conversation_state ---")
-    # The button is offered right after _start_appointment_action_flow calls
-    # db.clear_conversation_state -- so by the time a patient could actually tap it, there is
-    # no conversation_state left for this phone at all. The tap must still work.
+    # Covers the genuinely-no-state case directly (nothing ever saved for this phone, e.g. a
+    # very first interaction) -- distinct from test_no_active_appointment_sends_message_and_
+    # clears_state's case, where lang IS kept across the state clear. Both must still work:
+    # this proves the "restart from language" fallback still holds when there's truly nothing
+    # to reuse, not just when a doctor/lang happens to be pre-seeded.
     db_mock = _RecordingDb(initial_state=None)
     wa_mock = _RecordingWhatsApp()
 
@@ -793,6 +818,99 @@ def test_tapping_the_book_appointment_button_starts_a_fresh_booking_regardless_o
     check(
         db_mock._state is not None and db_mock._state["current_step"] == "choosing_language",
         f"transitions to choosing_language, got {db_mock._state!r}",
+    )
+
+
+def test_tapping_book_appointment_after_no_active_appointment_skips_straight_to_location():
+    print("\n--- Tapping Book Appointment right after 'no active appointment' reuses the known language, skips re-asking it ---")
+    # Live-reported: after "we couldn't find an active appointment" cleared conversation_state
+    # (dropping any stale doctor/location/slot), tapping the offered Book Appointment button
+    # restarted the WHOLE flow from language selection -- even though the patient had already
+    # picked a language earlier the same conversation. Fix: that clear now deliberately keeps
+    # ONLY lang (see appointment_actions.py, under the "post_no_active_appointment" step), and
+    # this handler reuses it instead of calling _start().
+    db_mock = _RecordingDb(initial_state={"current_step": "post_no_active_appointment", "context": {"lang": "en"}})
+    wa_mock = _RecordingWhatsApp()
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), patch.object(conversation, "whatsapp_client", wa_mock):
+            async with httpx.AsyncClient() as client:
+                await conversation.handle_message(client, "919876543210", "User", "button_reply", "start_booking")
+
+    run(_run())
+    check(len(wa_mock.lists) == 0, "must not re-ask language -- no language-choice list sent")
+    check(len(wa_mock.location_requests) == 1, f"skips straight to asking for location, got location_requests={wa_mock.location_requests!r}")
+    check(
+        db_mock._state is not None and db_mock._state["current_step"] == "choosing_location",
+        f"lands on choosing_location, not choosing_language, got {db_mock._state!r}",
+    )
+    check(
+        db_mock._state["context"].get("lang") == "en",
+        f"the previously-known language is carried forward, got lang={db_mock._state['context'].get('lang')!r}",
+    )
+
+
+def test_tapping_book_appointment_with_a_fresh_last_search_offers_reuse_instead_of_location():
+    print("\n--- Tapping Book Appointment with a fresh last search offers to reuse it instead of asking for location ---")
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    fresh_last_search = {
+        "last_city": "Kishanganj", "last_location_text": "kishanganj",
+        "last_patient_lat": 26.1, "last_patient_lng": 87.9,
+        "location_updated_at": now - timedelta(hours=1),
+        "last_specialty_category": "Cardiologist (Heart)",
+        "specialty_updated_at": now - timedelta(hours=2),
+    }
+    db_mock = _RecordingDb(
+        initial_state={"current_step": "post_no_active_appointment", "context": {"lang": "en"}},
+        last_search=fresh_last_search,
+    )
+    wa_mock = _RecordingWhatsApp()
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), patch.object(conversation, "whatsapp_client", wa_mock):
+            async with httpx.AsyncClient() as client:
+                await conversation.handle_message(client, "919876543210", "User", "button_reply", "start_booking")
+
+    run(_run())
+    check(len(wa_mock.location_requests) == 0, "must not ask for location when a fresh reuse candidate exists")
+    check(len(wa_mock.buttons) == 1, f"sends the reuse-confirm buttons instead, got {wa_mock.buttons!r}")
+    body_text, buttons = wa_mock.buttons[0] if wa_mock.buttons else ("", [])
+    check("Cardiologist (Heart)" in body_text and "Kishanganj" in body_text, f"names the specialty and city being offered for reuse, got {body_text!r}")
+    check(
+        db_mock._state is not None and db_mock._state["current_step"] == "confirming_last_search",
+        f"lands on confirming_last_search, got {db_mock._state!r}",
+    )
+
+
+def test_tapping_book_appointment_with_a_stale_last_search_falls_back_to_location():
+    print("\n--- A stale (>24h) last search must NOT trigger the reuse prompt -- existing fallback still applies ---")
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    stale_last_search = {
+        "last_city": "Kishanganj", "last_location_text": "kishanganj",
+        "last_patient_lat": 26.1, "last_patient_lng": 87.9,
+        "location_updated_at": now - timedelta(hours=30),
+        "last_specialty_category": "Cardiologist (Heart)",
+        "specialty_updated_at": now - timedelta(hours=30),
+    }
+    db_mock = _RecordingDb(
+        initial_state={"current_step": "post_no_active_appointment", "context": {"lang": "en"}},
+        last_search=stale_last_search,
+    )
+    wa_mock = _RecordingWhatsApp()
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), patch.object(conversation, "whatsapp_client", wa_mock):
+            async with httpx.AsyncClient() as client:
+                await conversation.handle_message(client, "919876543210", "User", "button_reply", "start_booking")
+
+    run(_run())
+    check(len(wa_mock.buttons) == 0, "must not offer to reuse a stale (>24h) search")
+    check(len(wa_mock.location_requests) == 1, f"falls back to the plain skip-to-location behavior, got location_requests={wa_mock.location_requests!r}")
+    check(
+        db_mock._state is not None and db_mock._state["current_step"] == "choosing_location",
+        f"lands on choosing_location as before, got {db_mock._state!r}",
     )
 
 
@@ -888,6 +1006,9 @@ if __name__ == "__main__":
     test_check_my_appointment_from_a_returning_user_also_shows_read_only_status()
     test_no_active_appointment_offers_a_tappable_book_appointment_button()
     test_tapping_the_book_appointment_button_starts_a_fresh_booking_regardless_of_state()
+    test_tapping_book_appointment_after_no_active_appointment_skips_straight_to_location()
+    test_tapping_book_appointment_with_a_fresh_last_search_offers_reuse_instead_of_location()
+    test_tapping_book_appointment_with_a_stale_last_search_falls_back_to_location()
     test_book_appointment_with_active_appointment_shows_status_card_not_plain_text()
     test_tapping_book_another_from_conflict_status_seeds_the_doctor_search()
 

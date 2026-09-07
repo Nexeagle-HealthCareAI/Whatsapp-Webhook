@@ -172,11 +172,14 @@ async def _start_appointment_action_flow(
         # A tappable button, not just the typed "book appointment" fallback mentioned in the
         # same message -- tapping is more reliable than typing for most patients. The button
         # id (start_booking) is handled in __init__.py's handle_message regardless of
-        # conversation state, since clear_conversation_state right below wipes it before any
-        # tap on this button could arrive. Deliberately still the generic (not hospital-scoped)
-        # booking button even when hospital_id_filter is set -- only the message text names the
-        # hospital; re-scoping the button itself to that one hospital would need its own
-        # state-surviving-a-clear handler for one edge case, not worth it for now.
+        # conversation state, since the save right below wipes any stale doctor/location/slot
+        # before any tap on this button could arrive -- it deliberately keeps ONLY lang (not a
+        # full clear_conversation_state) so that handler can skip straight to location instead
+        # of re-asking a language the patient already picked. Deliberately still the generic
+        # (not hospital-scoped) booking button even when hospital_id_filter is set -- only the
+        # message text names the hospital; re-scoping the button itself to that one hospital
+        # would need its own state-surviving-a-clear handler for one edge case, not worth it
+        # for now.
         message = (
             t("no_active_appointment_at_hospital", lang, hospital=hospital.get("name") or "")
             if hospital_id_filter else t("no_active_appointment", lang)
@@ -185,7 +188,10 @@ async def _start_appointment_action_flow(
             client, phone, message,
             [("start_booking", t("book_appointment_btn", lang))],
         )
-        await conversation.db.clear_conversation_state(phone)
+        # Step name deliberately isn't in STEP_REGISTRY -- any turn other than a "start_booking"
+        # tap (e.g. the patient types something instead) hits handle_message's own "unrecognized
+        # step -- restart cleanly" fallback, same as truly having no state at all.
+        await conversation.db.save_conversation_state(phone, "post_no_active_appointment", {"lang": lang})
         return
 
     if len(live_candidates) == 1:

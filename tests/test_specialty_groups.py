@@ -1512,7 +1512,10 @@ def test_wit_nlu_integration():
         asyncio.run(conversation.handle_message(mock_client, "123", "User", "text", "cancel please"))
         
         state = asyncio.run(db_mock.get_conversation_state("123"))
-        check(state is None, "NLU cancel should clear conversation state")
+        check(
+            state == {"current_step": "post_no_active_appointment", "context": {"lang": "en"}},
+            f"NLU cancel should clear stale booking state but keep lang, got {state!r}",
+        )
         # No appointment is mocked as booked (MockDB.get_booked_appointments_for_phone
         # returns []), so "cancel please" now correctly reports nothing to cancel instead
         # of the old stub's always-say-"cancelled" wording (see docs/architecture.md --
