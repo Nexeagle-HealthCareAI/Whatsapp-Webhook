@@ -20,7 +20,15 @@ PRIMARY_NLU = {
                                            # earlier version of this config pointed at Grok's
                                            # api.x.ai by mistake, which is why a real Groq key
                                            # got rejected there as "Incorrect API key provided."
-    "model": "openai/gpt-oss-120b",        # Model name identifier
+    "model": "llama-3.3-70b-versatile",    # Plain instruct model, not a reasoning one --
+                                           # the earlier openai/gpt-oss-120b silently returned
+                                           # an EMPTY message.content on every call (a
+                                           # documented Groq/gpt-oss bug: it spends max_tokens
+                                           # on hidden reasoning tokens before ever writing a
+                                           # final answer, and 300 is well under the ~1000
+                                           # floor needed to avoid that). Llama has no hidden
+                                           # reasoning phase, so this whole failure class
+                                           # doesn't apply to it.
     "endpoint": "https://api.groq.com/openai/v1/chat/completions",
     # Which app.config.Settings field holds this provider's key. To add a new provider:
     # add its own `<provider>_api_key` field to Settings, then point a new config dict here
