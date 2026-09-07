@@ -79,6 +79,7 @@ class _RecordingWhatsApp:
         self.texts: list[str] = []
         self.lists: list[tuple] = []
         self.buttons: list[tuple] = []
+        self.location_requests: list[str] = []
 
     async def send_text(self, client, to, body):
         self.texts.append(body)
@@ -91,6 +92,9 @@ class _RecordingWhatsApp:
 
     async def send_buttons(self, client, to, body_text, buttons):
         self.buttons.append((body_text, buttons))
+
+    async def send_location_request(self, client, to, body):
+        self.location_requests.append(body)
 
     async def send_typing_indicator(self, client, message_id):
         pass
@@ -290,8 +294,9 @@ def test_tapping_check_status_shows_only_this_hospitals_appointment():
 
 def test_check_status_with_no_appointment_at_this_hospital_is_scoped_not_global():
     print("\n--- Check Appointment Status when the patient has an appointment elsewhere but NOT at this hospital ---")
+    scanned_at = conversation._clinic_now().isoformat()
     db_mock = _RecordingDb(
-        initial_state={"current_step": "choosing_hospital_action", "context": {"lang": "en", "qr_hospital": HOSPITAL}},
+        initial_state={"current_step": "choosing_hospital_action", "context": {"lang": "en", "qr_hospital": HOSPITAL, "qr_scanned_at": scanned_at}},
         booked_appointments=[LOCAL_ROW_HOSP2],
     )
     wa_mock = _RecordingWhatsApp()
@@ -310,9 +315,46 @@ def test_check_status_with_no_appointment_at_this_hospital_is_scoped_not_global(
     button_ids = [bid for bid, _ in wa_mock.buttons[0][1]] if wa_mock.buttons else []
     check(button_ids == ["start_booking"], f"offers the Book Appointment button as the next step, got {button_ids!r}")
     check(
-        db_mock._state == {"current_step": "post_no_active_appointment", "context": {"lang": "en"}},
-        f"stale booking state is cleared but lang is kept so a Book Appointment tap can skip re-asking it, got {db_mock._state!r}",
+        db_mock._state == {"current_step": "post_no_active_appointment", "context": {"lang": "en", "qr_hospital": HOSPITAL, "qr_scanned_at": scanned_at}},
+        f"stale booking state is cleared but lang AND the hospital-QR scoping are kept so a Book Appointment tap can skip straight to this hospital's doctors, got {db_mock._state!r}",
     )
+
+
+def test_book_appointment_after_no_appointment_found_skips_straight_to_hospital_doctors():
+    print("\n--- Live-reported bug: QR scan -> Check Status -> no appointment -> Book Appointment asked for LOCATION instead of showing this hospital's doctors ---")
+    scanned_at = conversation._clinic_now().isoformat()
+    db_mock = _RecordingDb(
+        initial_state={"current_step": "choosing_hospital_action", "context": {"lang": "en", "qr_hospital": HOSPITAL, "qr_scanned_at": scanned_at}},
+        booked_appointments=[],
+    )
+    wa_mock = _RecordingWhatsApp()
+    lead_calls = []
+
+    async def _record_lead(**kwargs):
+        lead_calls.append(kwargs)
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), \
+             patch.object(conversation, "whatsapp_client", wa_mock), \
+             patch.object(conversation.hms_client, "list_doctors_at_hospital", AsyncMock(return_value=TWO_DOCTORS)), \
+             patch.object(conversation.hms_client, "record_lead", AsyncMock(side_effect=_record_lead)):
+            async with httpx.AsyncClient() as client:
+                # Turn 1: Check Status finds nothing at this hospital.
+                await conversation.handle_message(client, "919876543210", "Test", "button_reply", "hospbook_status", "msg9")
+                check(
+                    db_mock._state["context"].get("qr_hospital") == HOSPITAL,
+                    f"hospital-QR scoping must survive the no-active-appointment state clear, got {db_mock._state!r}",
+                )
+                wa_mock.buttons.clear()
+
+                # Turn 2: tap the Book Appointment button THAT message offered.
+                await conversation.handle_message(client, "919876543210", "Test", "button_reply", "start_booking", "msg10")
+
+    run(_run())
+    check(len(wa_mock.location_requests) == 0, f"must NOT ask for location -- the hospital is already known, got location_requests={wa_mock.location_requests!r}")
+    check(len(wa_mock.lists) == 1, "goes straight to a doctor-choice list, same as tapping Book Appointment from the original welcome menu")
+    check(len(wa_mock.lists[0][2]) == 2, "list carries this hospital's own doctors")
+    check(lead_calls and lead_calls[0]["lead_type"] == "HospitalQRScan", f"still attributes the lead to the QR scan, got {lead_calls!r}")
 
 
 def test_typed_doctor_name_within_15_min_of_qr_scan_is_scoped_to_that_hospital():
@@ -364,6 +406,7 @@ if __name__ == "__main__":
     test_valid_hospital_no_lang_yet_asks_language_then_resumes_to_the_menu()
     test_tapping_check_status_shows_only_this_hospitals_appointment()
     test_check_status_with_no_appointment_at_this_hospital_is_scoped_not_global()
+    test_book_appointment_after_no_appointment_found_skips_straight_to_hospital_doctors()
     test_typed_doctor_name_within_15_min_of_qr_scan_is_scoped_to_that_hospital()
 
     print("\n" + "=" * 50)

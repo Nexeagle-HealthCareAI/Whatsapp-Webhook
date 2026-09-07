@@ -315,10 +315,32 @@ async def handle_message(
             # Language is already known this conversation (either the exception case above
             # minus a doctor name, or the plain no-active-appointment screen, which now keeps
             # ONLY lang across its own state clear -- see appointment_actions.py) -- skip
-            # re-asking it. If a location+specialty search is also on record from within the
-            # last 24h, offer to reuse it (confirm-first, never silent -- see
-            # app/conversation/last_search.py's module docstring for why); otherwise go
-            # straight to location, same as any other already-in-flow booking.
+            # re-asking it.
+            #
+            # Still within the hospital-QR lock window (see _qr_locked_hospital_id) -- go
+            # straight to THAT hospital's own doctor list, same as the welcome menu's own
+            # Book Appointment button, rather than asking for location/search-mode the
+            # generic flow below would otherwise need. Live-reported: scanning a hospital's
+            # QR, tapping Check Status, finding nothing, then tapping Book Appointment from
+            # that screen asked for location -- confusing when the bot already knows exactly
+            # which hospital the patient is at.
+            qr_hospital = context.get("qr_hospital")
+            if qr_hospital and _qr_locked_hospital_id(context):
+                booking = booking_slots.empty()
+                booking_slots.fill(booking, "lang", pending_lang, source="user")
+                new_context = {
+                    "lang": pending_lang, "booking": booking, "session_id": context.get("session_id"),
+                    "qr_hospital": qr_hospital, "qr_scanned_at": context.get("qr_scanned_at"),
+                }
+                await _resolve_hospital_search_match(
+                    client, phone, new_context, qr_hospital, qr_hospital.get("name") or "", current_step,
+                    lead_type="HospitalQRScan",
+                )
+                return
+            # If a location+specialty search is also on record from within the last 24h,
+            # offer to reuse it (confirm-first, never silent -- see app/conversation/
+            # last_search.py's module docstring for why); otherwise go straight to location,
+            # same as any other already-in-flow booking.
             last_search = await db.get_last_search(phone)
             if _is_last_search_fresh(last_search):
                 new_context = {

@@ -1012,10 +1012,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "bn": "{hospital}-এ আপনাকে স্বাগতম! আমি আপনাকে কীভাবে সাহায্য করতে পারি?",
     },
     "check_appointment_status_btn": {
-        "en": "Check Status",
-        "hi": "स्थिति देखें",
-        "hg": "Check Status",
-        "bn": "স্ট্যাটাস দেখুন",
+        "en": "My Appointment",
+        "hi": "मेरी अपॉइंटमेंट",
+        "hg": "Meri Appointment",
+        "bn": "আমার বুকিং",
     },
     "no_active_appointment_at_hospital": {
         "en": "We couldn't find an active appointment for you at {hospital}. Tap below to book one, or just type \"book appointment\".",

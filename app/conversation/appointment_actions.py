@@ -175,11 +175,7 @@ async def _start_appointment_action_flow(
         # conversation state, since the save right below wipes any stale doctor/location/slot
         # before any tap on this button could arrive -- it deliberately keeps ONLY lang (not a
         # full clear_conversation_state) so that handler can skip straight to location instead
-        # of re-asking a language the patient already picked. Deliberately still the generic
-        # (not hospital-scoped) booking button even when hospital_id_filter is set -- only the
-        # message text names the hospital; re-scoping the button itself to that one hospital
-        # would need its own state-surviving-a-clear handler for one edge case, not worth it
-        # for now.
+        # of re-asking a language the patient already picked.
         message = (
             t("no_active_appointment_at_hospital", lang, hospital=hospital.get("name") or "")
             if hospital_id_filter else t("no_active_appointment", lang)
@@ -188,10 +184,20 @@ async def _start_appointment_action_flow(
             client, phone, message,
             [("start_booking", t("book_appointment_btn", lang))],
         )
+        # Also keeps qr_hospital/qr_scanned_at when present -- live-reported: scanning a
+        # hospital's QR, tapping Check Status, finding nothing, then tapping Book Appointment
+        # from THIS screen dropped the hospital-QR scoping entirely (only lang survived),
+        # so start_booking's handler fell into the generic location-ask flow instead of
+        # going straight to the scanned hospital's own doctor list -- confusing when the
+        # bot already knows exactly which hospital the patient is at.
+        post_context = {"lang": lang}
+        if context.get("qr_hospital"):
+            post_context["qr_hospital"] = context["qr_hospital"]
+            post_context["qr_scanned_at"] = context.get("qr_scanned_at")
         # Step name deliberately isn't in STEP_REGISTRY -- any turn other than a "start_booking"
         # tap (e.g. the patient types something instead) hits handle_message's own "unrecognized
         # step -- restart cleanly" fallback, same as truly having no state at all.
-        await conversation.db.save_conversation_state(phone, "post_no_active_appointment", {"lang": lang})
+        await conversation.db.save_conversation_state(phone, "post_no_active_appointment", post_context)
         return
 
     if len(live_candidates) == 1:
