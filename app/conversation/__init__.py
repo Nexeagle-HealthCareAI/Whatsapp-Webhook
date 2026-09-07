@@ -960,6 +960,29 @@ def _clinic_now() -> datetime:
     return datetime.now(ZoneInfo(settings.clinic_timezone))
 
 
+_QR_HOSPITAL_LOCK_MINUTES = 15
+
+
+def _qr_locked_hospital_id(context: ConversationContext) -> str | None:
+    """The hospital a patient's search should be silently scoped to, if they scanned this
+    hospital's QR within the last _QR_HOSPITAL_LOCK_MINUTES -- makes the QR feel genuinely
+    hospital-dedicated rather than just a one-time welcome message. Deliberately invisible:
+    no message says scoping started or stopped, in either direction. Fails safe (returns
+    None, i.e. unscoped) on any missing/malformed data rather than raising -- a corrupted
+    timestamp must never crash a doctor search, worst case it just stops scoping."""
+    hospital = context.get("qr_hospital")
+    scanned_at = context.get("qr_scanned_at")
+    if not hospital or not scanned_at:
+        return None
+    try:
+        scanned = datetime.fromisoformat(scanned_at)
+    except (TypeError, ValueError):
+        return None
+    if _clinic_now() - scanned > timedelta(minutes=_QR_HOSPITAL_LOCK_MINUTES):
+        return None
+    return hospital.get("hospitalId")
+
+
 async def _fetch_doctors_near(
     specialty_category: str, context: ConversationContext, radius_km: float, index: dict, cache: dict
 ) -> list[dict]:
@@ -1020,7 +1043,15 @@ async def _send_doctor_list(client: httpx.AsyncClient, phone: str, context: Conv
 
     doctors: list[dict] = []
     used_radius: float | None = None
-    if context.get("patient_lat") is not None:
+    locked_hospital_id = _qr_locked_hospital_id(context)
+    if locked_hospital_id:
+        # 15-minute hospital-QR search lock -- radius/city narrowing below is meaningless
+        # once a specific hospital is already known, so fetch scoped to it directly and skip
+        # straight to the shared "no doctors" / render logic below. Falls through to that
+        # SAME empty-state message on zero results -- deliberately no hospital-lock-specific
+        # copy, the whole point is this stays invisible to the patient either way.
+        doctors = await hms_client.list_doctors(specialty_category, page_size=50, hospital_id=locked_hospital_id)
+    elif context.get("patient_lat") is not None:
         index = await _safe_city_index()
         fetch_cache: dict[str, list[dict]] = {}
         # Progressively wider bands, nearest first, stopping at the first non-empty result.

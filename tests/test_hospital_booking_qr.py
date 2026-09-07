@@ -83,6 +83,9 @@ class _RecordingWhatsApp:
     async def send_text(self, client, to, body):
         self.texts.append(body)
 
+    async def send_text_direct(self, client, to, body):
+        self.texts.append(body)
+
     async def send_list(self, client, to, body_text, button_label, rows, section_title="Options"):
         self.lists.append((body_text, button_label, rows))
 
@@ -312,6 +315,47 @@ def test_check_status_with_no_appointment_at_this_hospital_is_scoped_not_global(
     )
 
 
+def test_typed_doctor_name_within_15_min_of_qr_scan_is_scoped_to_that_hospital():
+    print("\n--- Typing a doctor's name within 15 min of the QR scan is silently scoped to that hospital ---")
+    # Real scenario the 15-minute hospital-QR search lock exists for: the patient doesn't
+    # tap "Book Appointment" -- they navigate to "search by doctor name" and just type a
+    # name. qr_hospital/qr_scanned_at survive that navigation (context is always spread
+    # forward, never rebuilt from scratch on this path -- see _transition_to), so the lock
+    # should still apply here exactly as it does from the menu button.
+    same_name_at_two_hospitals = [
+        {"doctorId": "d1", "fullName": "Dr. A. Sharma", "hospitalId": "hosp-1", "hospitalName": "Purnea General Hospital", "city": "Purnea"},
+        {"doctorId": "d2", "fullName": "Dr. A. Sharma", "hospitalId": "hosp-2", "hospitalName": "Star Hospital", "city": "Purnea"},
+    ]
+    db_mock = _RecordingDb(initial_state={
+        "current_step": "awaiting_doctor_name",
+        "context": {
+            "lang": "en", "qr_hospital": HOSPITAL,
+            "qr_scanned_at": conversation._clinic_now().isoformat(),
+        },
+    })
+    wa_mock = _RecordingWhatsApp()
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), \
+             patch.object(conversation, "whatsapp_client", wa_mock), \
+             patch.object(conversation.city_index, "get_all_doctors", AsyncMock(return_value=same_name_at_two_hospitals)), \
+             patch.object(conversation.city_index, "get_index", AsyncMock(return_value={})), \
+             patch.object(conversation.hms_client, "record_lead", AsyncMock()):
+            async with httpx.AsyncClient() as client:
+                await conversation.handle_message(client, "919876543210", "Test", "text", "Dr Sharma", "msg8")
+
+    run(_run())
+    # Unscoped, "Sharma" would match BOTH doctors (one at each hospital) -> ambiguous "many".
+    # Locked to hosp-1, only ITS Sharma is even in the candidate pool -> resolves straight to
+    # a single match, no disambiguation needed and no leak of the hosp-2 doctor.
+    check(len(wa_mock.texts) >= 1, f"resolves directly to a single-match message, got texts={wa_mock.texts!r}")
+    check(
+        any("hosp-2" not in t and "Star Hospital" not in t for t in wa_mock.texts),
+        f"must never surface the same-named doctor at the OTHER hospital, got texts={wa_mock.texts!r}",
+    )
+    check(len(wa_mock.lists) == 0, "must not show a disambiguation list -- the lock already narrowed it to one")
+
+
 if __name__ == "__main__":
     test_trigger_pattern_matches_and_ignores()
     test_invalid_hospital_code_sends_error_and_preserves_state()
@@ -320,6 +364,7 @@ if __name__ == "__main__":
     test_valid_hospital_no_lang_yet_asks_language_then_resumes_to_the_menu()
     test_tapping_check_status_shows_only_this_hospitals_appointment()
     test_check_status_with_no_appointment_at_this_hospital_is_scoped_not_global()
+    test_typed_doctor_name_within_15_min_of_qr_scan_is_scoped_to_that_hospital()
 
     print("\n" + "=" * 50)
     if failures:

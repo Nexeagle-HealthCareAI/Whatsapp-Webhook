@@ -157,13 +157,23 @@ def resolve_doctor(
     city: str | None = None,
     patient_lat: float | None = None,
     patient_lng: float | None = None,
+    hospital_id: str | None = None,
 ) -> Resolution:
     """Name match, then narrow by location the same way
     conversation._search_doctors_flow already does — a name overlapping several
     doctors nationwide should resolve against the ones actually reachable, not
     force the patient to disambiguate strangers three states away. Falls back to
     the unnarrowed match list if location narrows it to nothing (a stale/wrong
-    city shouldn't hide an otherwise-good name match)."""
+    city shouldn't hide an otherwise-good name match).
+
+    hospital_id (the 15-minute hospital-QR search lock, see
+    app/conversation/__init__.py's _qr_locked_hospital_id) narrows the POOL before any
+    name-matching happens at all, not the result after -- filtering after the fact would
+    mean a zero/one/many status already decided against the wrong (unscoped) pool, e.g.
+    "many matches, ask for location" when actually only one of those matches is even at
+    the locked hospital."""
+    if hospital_id:
+        doctors_pool = [d for d in doctors_pool if d.get("hospitalId") == hospital_id]
     matches = match_doctor_by_query(raw_query, doctors_pool)
     if not matches:
         return Resolution(status="zero", candidates=[])

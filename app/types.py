@@ -34,4 +34,6 @@ class ConversationContext(TypedDict, total=False):
     last_search_location_text: Optional[str]
     last_search_lat: Optional[float]
     last_search_lng: Optional[float]
+    qr_hospital: dict[str, Any]
+    qr_scanned_at: Optional[str]
     _history: list[str]

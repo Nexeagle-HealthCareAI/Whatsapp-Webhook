@@ -3034,6 +3034,111 @@ def test_typed_doctor_name_in_choosing_search_mode_is_not_hijacked_by_casual_cha
         conversation.nlu_client.generate_conversational_response = original_generate
 
 
+def test_qr_locked_hospital_id_respects_the_15_minute_window():
+    print("\n--- 15-minute hospital-QR search lock: freshness check ---")
+    from datetime import datetime
+
+    hospital = {"hospitalId": "hosp-A", "name": "Purnea General Hospital"}
+
+    fresh_ctx = {"qr_hospital": hospital, "qr_scanned_at": (conversation._clinic_now() - timedelta(minutes=5)).isoformat()}
+    check(conversation._qr_locked_hospital_id(fresh_ctx) == "hosp-A", "within 15 min -> locked to the scanned hospital")
+
+    stale_ctx = {"qr_hospital": hospital, "qr_scanned_at": (conversation._clinic_now() - timedelta(minutes=20)).isoformat()}
+    check(conversation._qr_locked_hospital_id(stale_ctx) is None, "past 15 min -> no longer locked")
+
+    no_hospital_ctx = {"qr_scanned_at": conversation._clinic_now().isoformat()}
+    check(conversation._qr_locked_hospital_id(no_hospital_ctx) is None, "no qr_hospital at all -> not locked")
+
+    no_timestamp_ctx = {"qr_hospital": hospital}
+    check(conversation._qr_locked_hospital_id(no_timestamp_ctx) is None, "qr_hospital set but no qr_scanned_at -> not locked")
+
+    malformed_ctx = {"qr_hospital": hospital, "qr_scanned_at": "not-a-real-timestamp"}
+    check(conversation._qr_locked_hospital_id(malformed_ctx) is None, "malformed timestamp fails safe to unlocked, not a crash")
+
+
+def test_send_doctor_list_scopes_to_locked_hospital_and_skips_radius_search():
+    print("\n--- _send_doctor_list under the hospital-QR lock: hospital_id passed, radius/city logic bypassed ---")
+    import asyncio
+
+    hospital = {"hospitalId": "hosp-A", "name": "Purnea General Hospital"}
+
+    list_doctors_calls = []
+    async def mock_list_doctors(specialty_category, page_size=10, city=None, hospital_id=None):
+        list_doctors_calls.append({"specialty_category": specialty_category, "city": city, "hospital_id": hospital_id})
+        return [{"doctorId": "1", "fullName": "Dr. A", "hospitalId": "hosp-A", "fee": 500}]
+
+    async def poison_fetch_doctors_near(*args, **kwargs):
+        raise AssertionError("_fetch_doctors_near must not run when the hospital-QR lock is active -- radius search is meaningless once a specific hospital is already known")
+
+    original_list_doctors = conversation.hms_client.list_doctors
+    original_fetch_near = conversation._fetch_doctors_near
+    original_render = conversation._render_doctor_list
+    conversation.hms_client.list_doctors = mock_list_doctors
+    conversation._fetch_doctors_near = poison_fetch_doctors_near
+
+    rendered = []
+    async def mock_render(*args, **kwargs):
+        rendered.append((args, kwargs))
+    conversation._render_doctor_list = mock_render
+
+    try:
+        context = {
+            "lang": "en", "specialty_category": "Cardiologist (Heart)",
+            "patient_lat": 26.1, "patient_lng": 87.9,  # would normally trigger the GPS-radius path
+            "qr_hospital": hospital, "qr_scanned_at": conversation._clinic_now().isoformat(),
+        }
+        asyncio.run(conversation._send_doctor_list(None, "919876543210", context))
+
+        check(len(list_doctors_calls) == 1, f"must call list_doctors exactly once, got {len(list_doctors_calls)}")
+        check(list_doctors_calls[0]["hospital_id"] == "hosp-A", f"must pass the locked hospital_id through, got {list_doctors_calls[0]!r}")
+        check(len(rendered) == 1, "still renders the (scoped) doctor list normally")
+    finally:
+        conversation.hms_client.list_doctors = original_list_doctors
+        conversation._fetch_doctors_near = original_fetch_near
+        conversation._render_doctor_list = original_render
+
+
+def test_send_doctor_list_unlocked_still_uses_radius_search_as_before():
+    print("\n--- _send_doctor_list with NO active hospital lock behaves exactly as before ---")
+    import asyncio
+
+    async def mock_fetch_near(specialty_category, context, radius_km, index, cache):
+        return [{"doctorId": "1", "fullName": "Dr. A", "fee": 500}]
+
+    async def poison_list_doctors(*args, **kwargs):
+        raise AssertionError("list_doctors must not be called directly when there's no hospital lock and GPS coordinates are present -- the radius path should run instead")
+
+    async def mock_safe_city_index():
+        return {}
+
+    original_fetch_near = conversation._fetch_doctors_near
+    original_list_doctors = conversation.hms_client.list_doctors
+    original_safe_index = conversation._safe_city_index
+    original_render = conversation._render_doctor_list
+    conversation._fetch_doctors_near = mock_fetch_near
+    conversation.hms_client.list_doctors = poison_list_doctors
+    conversation._safe_city_index = mock_safe_city_index
+
+    rendered = []
+    async def mock_render(*args, **kwargs):
+        rendered.append((args, kwargs))
+    conversation._render_doctor_list = mock_render
+
+    try:
+        context = {
+            "lang": "en", "specialty_category": "Cardiologist (Heart)",
+            "patient_lat": 26.1, "patient_lng": 87.9,
+            # no qr_hospital / qr_scanned_at at all -- must behave exactly as before this feature
+        }
+        asyncio.run(conversation._send_doctor_list(None, "919876543210", context))
+        check(len(rendered) == 1, "unlocked GPS search still resolves and renders normally")
+    finally:
+        conversation._fetch_doctors_near = original_fetch_near
+        conversation.hms_client.list_doctors = original_list_doctors
+        conversation._safe_city_index = original_safe_index
+        conversation._render_doctor_list = original_render
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:

@@ -67,17 +67,25 @@ async def list_hospitals() -> list[dict[str, Any]]:
 
 @_retry_network_errors
 async def list_doctors(
-    specialty_category: str, page_size: int = 10, city: str | None = None
+    specialty_category: str, page_size: int = 10, city: str | None = None, hospital_id: str | None = None
 ) -> list[dict[str, Any]]:
     """city narrows the search server-side. Without it this returns one page of doctors for
     the whole country, and any client-side "nearest" sort is then only sorting whatever
     arbitrary slice came back — which silently hides the genuinely nearest doctor as soon as
     a specialty has more doctors than fit on a page. `city` is matched case-insensitively
     but exactly by the API, so callers must pass a name that exists (see
-    app/city_index.py) rather than raw patient text."""
+    app/city_index.py) rather than raw patient text.
+
+    hospital_id narrows to one specific hospital server-side, same "hospitalId" param
+    list_doctors_at_hospital below already proves this endpoint accepts -- used by the
+    15-minute hospital-QR search lock (app/conversation/__init__.py's
+    _qr_locked_hospital_id) so a specialty/symptom search during that window only sees
+    doctors at the scanned hospital, not the whole city/network."""
     params: dict[str, Any] = {"specialtyCategory": specialty_category, "pageSize": page_size}
     if city:
         params["city"] = city
+    if hospital_id:
+        params["hospitalId"] = hospital_id
     client = _get_client()
     response = await client.get("/public/doctors", params=params, headers=_headers())
     response.raise_for_status()

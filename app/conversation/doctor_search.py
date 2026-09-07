@@ -114,7 +114,12 @@ async def _search_doctors_flow(client, phone: str, context: dict, current_step: 
     lat, lng = context.get("patient_lat"), context.get("patient_lng")
     city = context.get("city")
 
-    resolution = resolve_doctor(query, all_docs, city=city, patient_lat=lat, patient_lng=lng)
+    # 15-minute hospital-QR search lock -- see conversation._qr_locked_hospital_id's
+    # docstring. Scopes a typed doctor-name search the same way _send_doctor_list already
+    # scopes a specialty/symptom search, so the restriction applies no matter which entry
+    # point the patient uses.
+    hospital_id = conversation._qr_locked_hospital_id(context)
+    resolution = resolve_doctor(query, all_docs, city=city, patient_lat=lat, patient_lng=lng, hospital_id=hospital_id)
     if resolution.status == "zero":
         return False
 

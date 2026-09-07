@@ -257,7 +257,10 @@ async def _handle_hospital_booking_trigger(client, phone: str, hospital_code: st
 async def _start_hospital_action_menu(client, phone: str, context: dict, hospital: dict, current_step: str | None) -> None:
     from app import conversation
 
-    new_context = {**context, "qr_hospital": hospital}
+    # qr_scanned_at powers the 15-minute hospital-QR search lock (see conversation.
+    # _qr_locked_hospital_id) -- stamped here, the one place both ways of reaching this menu
+    # (language already known, or resumed via pending_hospital once it's picked) converge.
+    new_context = {**context, "qr_hospital": hospital, "qr_scanned_at": conversation._clinic_now().isoformat()}
     await conversation._transition_to(phone, "choosing_hospital_action", new_context, current_step)
     await _send_hospital_action_menu(client, phone, context.get("lang"), hospital)
 

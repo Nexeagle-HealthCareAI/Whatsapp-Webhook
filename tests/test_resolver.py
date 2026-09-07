@@ -90,6 +90,38 @@ def test_doctor_resolution():
     check(r.candidates == [], "zero status carries no candidates")
 
 
+def test_doctor_resolution_with_hospital_lock():
+    # 15-minute hospital-QR search lock (app/conversation/__init__.py's
+    # _qr_locked_hospital_id) -- hospital_id must narrow the POOL before name-matching, so a
+    # same-named doctor at a DIFFERENT hospital never leaks into the result, and status is
+    # decided against the correctly-scoped pool from the start.
+    doctors = [
+        {"doctorId": "1", "fullName": "Dr. Amit Sharma", "hospitalId": "hosp-A", "city": "Kishanganj", "latitude": 26.10, "longitude": 87.95},
+        {"doctorId": "2", "fullName": "Dr. Amit Sharma", "hospitalId": "hosp-B", "city": "Kishanganj", "latitude": 26.10, "longitude": 87.95},
+        {"doctorId": "3", "fullName": "Dr. Manoj Kumar", "hospitalId": "hosp-A", "city": "Kishanganj", "latitude": 26.10, "longitude": 87.95},
+    ]
+
+    # Unscoped: two same-named Sharmas at two different hospitals -> many
+    r = resolve_doctor("Sharma", doctors)
+    check(r.status == "many", "unscoped: two same-named doctors at different hospitals -> many")
+
+    # Locked to hosp-A: only ITS Sharma is even in the candidate pool -> one, not many
+    r = resolve_doctor("Sharma", doctors, hospital_id="hosp-A")
+    check(r.status == "one", f"locked to hosp-A: only that hospital's Sharma is in the pool, got status={r.status!r}")
+    check(r.value["doctorId"] == "1", f"resolves to hosp-A's own Sharma, got {r.value.get('doctorId')!r}")
+
+    # Locked to a hospital with NO matching name at all -> genuine zero, no silent fallback
+    # to the unnarrowed pool (unlike city/GPS narrowing above, which DOES fall back --
+    # hospital_id is a strict scope, not a soft preference).
+    r = resolve_doctor("Xyzzy", doctors, hospital_id="hosp-A")
+    check(r.status == "zero", f"locked hospital with no matching name -> zero, not a fallback to the wider pool, got status={r.status!r}")
+
+    # A name unique network-wide but present at a hospital OTHER than the locked one must
+    # not leak through either.
+    r = resolve_doctor("Manoj", doctors, hospital_id="hosp-B")
+    check(r.status == "zero", f"Manoj exists only at hosp-A, locked to hosp-B -> zero, got status={r.status!r}")
+
+
 def test_location_resolution():
     index = {"Kishanganj": [[26.10, 87.95]], "Patna": [[25.61, 85.14]]}
 
@@ -109,6 +141,7 @@ def test_location_resolution():
 
 if __name__ == "__main__":
     test_doctor_resolution()
+    test_doctor_resolution_with_hospital_lock()
     test_location_resolution()
 
     print("\n" + "=" * 50)
