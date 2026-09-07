@@ -20,15 +20,20 @@ PRIMARY_NLU = {
                                            # earlier version of this config pointed at Grok's
                                            # api.x.ai by mistake, which is why a real Groq key
                                            # got rejected there as "Incorrect API key provided."
-    "model": "llama-3.3-70b-versatile",    # Plain instruct model, not a reasoning one --
-                                           # the earlier openai/gpt-oss-120b silently returned
-                                           # an EMPTY message.content on every call (a
-                                           # documented Groq/gpt-oss bug: it spends max_tokens
-                                           # on hidden reasoning tokens before ever writing a
-                                           # final answer, and 300 is well under the ~1000
-                                           # floor needed to avoid that). Llama has no hidden
-                                           # reasoning phase, so this whole failure class
-                                           # doesn't apply to it.
+    "model": "openai/gpt-oss-120b",        # Back to gpt-oss-120b -- llama-3.3-70b-versatile
+                                           # (tried briefly) turned out to have been
+                                           # DECOMMISSIONED by Groq on 2026-08-16 (see
+                                           # console.groq.com/docs/deprecations), so every
+                                           # single call to it 404'd with "model_not_found",
+                                           # a total NLU outage caught live. As of this
+                                           # writing gpt-oss-120b is Groq's own recommended
+                                           # replacement for nearly every deprecated model
+                                           # (llama-3.3-70b-versatile, llama-3.1-8b-instant,
+                                           # the llama-4 variants, qwen3-32b) -- there isn't
+                                           # a currently-available plain (non-reasoning)
+                                           # alternative left on Groq's lineup right now.
+                                           # gpt-oss's real issue (see below) was never the
+                                           # model choice -- it was max_tokens/reasoning_effort.
     "endpoint": "https://api.groq.com/openai/v1/chat/completions",
     # Which app.config.Settings field holds this provider's key. To add a new provider:
     # add its own `<provider>_api_key` field to Settings, then point a new config dict here
@@ -38,7 +43,16 @@ PRIMARY_NLU = {
     # -- Groq's API is OpenAI-compatible and takes the standard "Authorization: Bearer <key>",
     # which is nlu_client.py's default when auth_header isn't set.
     "temperature": 0.2,
-    "max_tokens": 300,
+    # gpt-oss is a reasoning model: it spends part of max_tokens on hidden reasoning tokens
+    # before ever writing the final answer. At the old max_tokens=300 with reasoning_effort
+    # unset (defaults to "medium"), it was burning the whole budget on reasoning and
+    # returning an EMPTY message.content on every single call -- a documented Groq/gpt-oss
+    # bug (community.groq.com), confirmed live via "Failed to parse groq response as JSON:
+    # Expecting value: line 1 column 1 (char 0)" on every classify call. reasoning_effort
+    # "low" plus enough headroom in max_tokens for both a short reasoning pass and the JSON
+    # answer avoids that.
+    "max_tokens": 1024,
+    "extra_body": {"reasoning_effort": "low"},
     "timeout": 5.0,                      # Timeout in seconds
 }
 
