@@ -3056,6 +3056,39 @@ def test_qr_locked_hospital_id_respects_the_15_minute_window():
     check(conversation._qr_locked_hospital_id(malformed_ctx) is None, "malformed timestamp fails safe to unlocked, not a crash")
 
 
+def test_should_trust_language_detection_distinguishes_direction():
+    print("\n--- Language auto-swap: low-confidence guesses are trusted toward Hindi/Hinglish/Bengali, never toward English ---")
+    # Live-reported: "Dr Payal Anand" (just a name) flipped an entire Hinglish conversation
+    # to English off the single loanword "dr" -- but the existing safety-triage test relies
+    # on a genuinely Hindi/Hinglish sentence ("mere papa behosh ho gaye hain...") still
+    # auto-swapping FROM English TO Hinglish on the same kind of low-confidence keyword
+    # score. Both must keep working -- only the swap-to-English direction is the bug.
+    check(conversation._should_trust_language_detection("en", False) is False, "low-confidence guess pointing at English is never trusted")
+    check(conversation._should_trust_language_detection("hg", False) is True, "low-confidence guess pointing at Hinglish IS trusted")
+    check(conversation._should_trust_language_detection("hi", False) is True, "low-confidence guess pointing at Hindi IS trusted")
+    check(conversation._should_trust_language_detection("bn", False) is True, "low-confidence guess pointing at Bengali IS trusted")
+    check(conversation._should_trust_language_detection("en", True) is True, "script-based (high-confidence) detection is always trusted, even for English")
+
+
+def test_has_searchable_location_treats_hospital_lock_as_a_known_location():
+    print("\n--- _has_searchable_location: a hospital-QR lock counts as a known location, no city/GPS needed ---")
+    hospital = {"hospitalId": "hosp-A", "name": "Purnea General Hospital"}
+    fresh_scan = conversation._clinic_now().isoformat()
+
+    check(conversation._has_searchable_location({"city": "Kishanganj"}) is True, "a plain typed city still counts")
+    check(conversation._has_searchable_location({"patient_lat": 26.1, "patient_lng": 87.9}) is True, "GPS coordinates still count")
+    check(conversation._has_searchable_location({}) is False, "nothing at all -> no searchable location")
+    check(
+        conversation._has_searchable_location({"qr_hospital": hospital, "qr_scanned_at": fresh_scan}) is True,
+        "an active hospital-QR lock counts as a known location too -- no city/GPS needed when the hospital itself is already fixed",
+    )
+    stale_scan = (conversation._clinic_now() - timedelta(minutes=20)).isoformat()
+    check(
+        conversation._has_searchable_location({"qr_hospital": hospital, "qr_scanned_at": stale_scan}) is False,
+        "an EXPIRED hospital-QR lock does not count -- falls back to needing a real city/GPS",
+    )
+
+
 def test_send_doctor_list_scopes_to_locked_hospital_and_skips_radius_search():
     print("\n--- _send_doctor_list under the hospital-QR lock: hospital_id passed, radius/city logic bypassed ---")
     import asyncio

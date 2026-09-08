@@ -357,6 +357,44 @@ def test_book_appointment_after_no_appointment_found_skips_straight_to_hospital_
     check(lead_calls and lead_calls[0]["lead_type"] == "HospitalQRScan", f"still attributes the lead to the QR scan, got {lead_calls!r}")
 
 
+def test_doctor_name_via_nlu_global_intent_within_qr_lock_skips_location_too():
+    print("\n--- Live-reported bug: a doctor name resolved via NLU (not the STEP_REGISTRY hot-swap) still asked for location during an active hospital-QR lock ---")
+    # Distinct code path from test_typed_doctor_name_within_15_min_of_qr_scan_is_scoped_to_
+    # that_hospital above: THAT one goes through _handle_awaiting_doctor_name (a step
+    # handler). This one reproduces "Dr Payal Anand" typed as a free-form reply while
+    # current_step is something else entirely (awaiting_patient_details, matching the live
+    # report) -- NLU resolves it to a doctor_name entity, and handle_message's "Prioritize
+    # NLU global intents" block (book_appointment/check_availability) used to check ONLY
+    # city/patient_lat for whether it's safe to search, never the hospital-QR lock -- so it
+    # asked for location even though the hospital was already fixed.
+    from app.referee.intent_router import RoutedResult
+
+    scanned_at = conversation._clinic_now().isoformat()
+    db_mock = _RecordingDb(initial_state={
+        "current_step": "awaiting_patient_details",
+        "context": {"lang": "hg", "qr_hospital": HOSPITAL, "qr_scanned_at": scanned_at},
+    })
+    wa_mock = _RecordingWhatsApp()
+    doctors_at_hospital = [{"doctorId": "d9", "fullName": "Dr. Payal Anand", "hospitalId": "hosp-1", "hospitalName": "Purnea General Hospital", "city": "Purnea"}]
+
+    routed = RoutedResult(action="proceed_to_business_logic", intent="book_appointment", entities={"doctor_name": "Payal Anand"}, confidence=0.9)
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), \
+             patch.object(conversation, "whatsapp_client", wa_mock), \
+             patch.object(conversation.nlu_client, "classify_message", AsyncMock(return_value={"intent": "book_appointment", "entities": {"doctor_name": "Payal Anand"}, "confidence": "high", "detected_language": None, "language_confidence": None})), \
+             patch.object(conversation.intent_router, "route_intent", AsyncMock(return_value=routed)), \
+             patch.object(conversation.city_index, "get_all_doctors", AsyncMock(return_value=doctors_at_hospital)), \
+             patch.object(conversation.city_index, "get_index", AsyncMock(return_value={})), \
+             patch.object(conversation.hms_client, "record_lead", AsyncMock()):
+            async with httpx.AsyncClient() as client:
+                await conversation.handle_message(client, "919876543210", "Test", "text", "Dr Payal Anand", "msg11")
+
+    run(_run())
+    check(len(wa_mock.location_requests) == 0, f"must NOT ask for location -- the hospital-QR lock already fixes the hospital, got location_requests={wa_mock.location_requests!r}")
+    check(len(wa_mock.texts) >= 1, f"resolves the doctor directly instead, got texts={wa_mock.texts!r}")
+
+
 def test_typed_doctor_name_within_15_min_of_qr_scan_is_scoped_to_that_hospital():
     print("\n--- Typing a doctor's name within 15 min of the QR scan is silently scoped to that hospital ---")
     # Real scenario the 15-minute hospital-QR search lock exists for: the patient doesn't
@@ -407,6 +445,7 @@ if __name__ == "__main__":
     test_tapping_check_status_shows_only_this_hospitals_appointment()
     test_check_status_with_no_appointment_at_this_hospital_is_scoped_not_global()
     test_book_appointment_after_no_appointment_found_skips_straight_to_hospital_doctors()
+    test_doctor_name_via_nlu_global_intent_within_qr_lock_skips_location_too()
     test_typed_doctor_name_within_15_min_of_qr_scan_is_scoped_to_that_hospital()
 
     print("\n" + "=" * 50)

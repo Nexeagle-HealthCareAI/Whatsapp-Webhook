@@ -401,8 +401,8 @@ async def handle_message(
     lang = context.get("lang")
     has_lang_init = lang is not None
     if input_type == "text" and input_value.strip() and has_lang_init:
-        detected_lang, _ = _detect_language(input_value)
-        if detected_lang and detected_lang != lang:
+        detected_lang, is_high_confidence = _detect_language(input_value)
+        if detected_lang and _should_trust_language_detection(detected_lang, is_high_confidence) and detected_lang != lang:
             logger.info("Auto-swapping language from %s to %s for user %s", lang, detected_lang, phone)
             lang = detected_lang
             context["lang"] = lang
@@ -658,7 +658,7 @@ async def handle_message(
                 new_context.pop("pending_specialty_is_symptom", None)
                 new_context.pop("search_symptom", None)
                 
-                has_loc = new_context.get("city") or (new_context.get("patient_lat") is not None and new_context.get("patient_lng") is not None)
+                has_loc = _has_searchable_location(new_context)
                 if new_context.get("lang") and has_loc:
                     await _transition_to(phone, "awaiting_doctor_name", new_context, current_step)
                     if await _search_doctors_flow(client, phone, new_context, "awaiting_doctor_name"):
@@ -680,7 +680,7 @@ async def handle_message(
                 if matched:
                     new_context["pending_specialty"] = matched
                     new_context["pending_specialty_is_symptom"] = False
-                    has_loc = new_context.get("city") or (new_context.get("patient_lat") is not None and new_context.get("patient_lng") is not None)
+                    has_loc = _has_searchable_location(new_context)
                     if new_context.get("lang") and has_loc:
                         await _send_sort_prompt(
                             client, phone, new_context, matched, current_step,
@@ -713,7 +713,7 @@ async def handle_message(
                 if matched:
                     new_context["pending_specialty"] = matched
                     new_context["pending_specialty_is_symptom"] = True
-                    has_loc = new_context.get("city") or (new_context.get("patient_lat") is not None and new_context.get("patient_lng") is not None)
+                    has_loc = _has_searchable_location(new_context)
                     if new_context.get("lang") and has_loc:
                         await _send_sort_prompt(
                             client, phone, new_context, matched, current_step,
@@ -1005,6 +1005,34 @@ def _qr_locked_hospital_id(context: ConversationContext) -> str | None:
     return hospital.get("hospitalId")
 
 
+def _should_trust_language_detection(detected_lang: str, is_high_confidence: bool) -> bool:
+    """Whether a mid-conversation _detect_language result is trustworthy enough to silently
+    flip the active language. A low-confidence keyword-overlap guess is trusted when it
+    points at Hindi/Hinglish/Bengali (the patient's own native-language content words are a
+    meaningful signal even without full script), but NOT when it points at English --
+    _detect_language's own comment already flags English keywords as "frequently used as
+    loanwords in other languages" (dr/doctor/book/etc. show up constantly inside otherwise
+    Hindi/Hinglish text), yet the caller used to trust any detection equally. Live-reported:
+    "Dr Payal Anand" -- just a name -- flipped an entire Hinglish conversation to English off
+    that single loanword. Script-based detection (is_high_confidence) is always trusted
+    regardless of which language it points at."""
+    return is_high_confidence or detected_lang != "en"
+
+
+def _has_searchable_location(context: ConversationContext) -> bool:
+    """True if a doctor search can proceed without asking the patient for a location --
+    either a real city/GPS is already known, OR the hospital-QR lock
+    (_qr_locked_hospital_id) already scopes the search to one specific hospital, which
+    needs no location narrowing at all. Live-reported gap: the "global NLU intent" doctor/
+    specialty/symptom dispatch below only ever checked city/GPS, so typing a doctor's name
+    while a hospital-QR lock was active still asked for location -- the lock only ever
+    protected _search_doctors_flow/_send_doctor_list directly, not every entry point that
+    eventually calls them."""
+    if context.get("city") or (context.get("patient_lat") is not None and context.get("patient_lng") is not None):
+        return True
+    return bool(_qr_locked_hospital_id(context))
+
+
 async def _fetch_doctors_near(
     specialty_category: str, context: ConversationContext, radius_km: float, index: dict, cache: dict
 ) -> list[dict]:
@@ -1142,7 +1170,7 @@ async def _render_doctor_list(
     # name-search threshold of 1) making the patient sift through same-named doctors at
     # hospitals they'll never reach -- live-reported: "dr sharma" with several matches showed
     # a bare "Here are the doctors available" list with no filtering at all.
-    has_loc = context.get("patient_lat") is not None or context.get("city")
+    has_loc = _has_searchable_location(context)
     if len(doctors) > min_matches_before_location_ask and not has_loc:
         query = context.get("search_doctor_query", "")
         await whatsapp_client.send_location_request(
