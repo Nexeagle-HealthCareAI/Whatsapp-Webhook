@@ -219,8 +219,17 @@ async def _resolve_hospital_search_match(
     try:
         doctors = await hms_client.list_doctors_at_hospital(hospital_id)
     except Exception as exc:
+        # A genuine fetch FAILURE (network error, HMS 503/timeout) -- distinct from "zero
+        # doctors" below, which is a real, successful answer. Live-reported: this used
+        # "search_doctor_not_found" ("we couldn't find a doctor matching '{query}'"), but
+        # `query` here is the HOSPITAL's own name (this function only ever runs once the
+        # hospital is already known/resolved, e.g. from the hospital-QR menu) -- worded as
+        # though the patient's own search term was bad, when actually 1HMS's own
+        # /public/doctors endpoint was down for a moment. error_hms is the same generic
+        # "something went wrong, try again" message every other HMS-fetch failure in this
+        # codebase already uses.
         conversation.logger.error("Failed to fetch doctors for hospital %s: %s", hospital_id, exc)
-        await conversation.whatsapp_client.send_text(client, phone, t("search_doctor_not_found", lang, query=query))
+        await conversation.whatsapp_client.send_text(client, phone, t("error_hms", lang))
         return
 
     if not doctors:

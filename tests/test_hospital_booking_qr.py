@@ -230,6 +230,37 @@ def test_tapping_book_from_menu_shows_hospital_doctor_list_and_records_qr_lead()
     check(lead_calls[0]["hospital_id"] == "hosp-1", "lead is attributed to the scanned hospital")
 
 
+def test_hospital_doctor_fetch_failure_sends_generic_retry_not_a_doctor_not_found_message():
+    print("\n--- Live-reported bug: a 503 fetching this hospital's doctors sent 'we couldn't find a doctor matching Star Hospital' -- wrong message for a backend failure ---")
+    # _resolve_hospital_search_match's except-branch used t("search_doctor_not_found",
+    # query=query) -- but query here is the HOSPITAL's own name (this function only ever
+    # runs once the hospital is already resolved), not something the patient typed. A
+    # transient 1HMS 503 on /public/doctors made the bot tell the patient their search
+    # term was bad, instead of "something went wrong, try again" -- misleading, and gives
+    # no indication a retry might just work.
+    db_mock = _RecordingDb(initial_state={"current_step": "choosing_hospital_action", "context": {"lang": "en", "qr_hospital": HOSPITAL}})
+    wa_mock = _RecordingWhatsApp()
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), \
+             patch.object(conversation, "whatsapp_client", wa_mock), \
+             patch.object(conversation.hms_client, "list_doctors_at_hospital", AsyncMock(side_effect=Exception("503 Service Unavailable"))), \
+             patch.object(conversation.hms_client, "record_lead", AsyncMock()):
+            async with httpx.AsyncClient() as client:
+                await conversation.handle_message(client, "919876543210", "Test", "button_reply", "hospbook_book", "msg14")
+
+    run(_run())
+    check(len(wa_mock.texts) == 1, f"sends exactly one message, got {wa_mock.texts!r}")
+    check(
+        not any("couldn't find a doctor matching" in t.lower() for t in wa_mock.texts),
+        f"must not claim the search term (the hospital's own name) didn't match anything, got texts={wa_mock.texts!r}",
+    )
+    check(
+        any("something went wrong" in t.lower() for t in wa_mock.texts),
+        f"must send the generic HMS-retry message instead, got texts={wa_mock.texts!r}",
+    )
+
+
 def test_valid_hospital_no_lang_yet_asks_language_then_resumes_to_the_menu():
     print("\n--- Valid hospital, language not yet known -- asks first, then resumes into the SAME hospital's welcome menu once picked ---")
     db_mock = _RecordingDb(initial_state=None)
@@ -503,6 +534,7 @@ if __name__ == "__main__":
     test_invalid_hospital_code_sends_error_and_preserves_state()
     test_valid_hospital_lang_known_shows_welcome_menu()
     test_tapping_book_from_menu_shows_hospital_doctor_list_and_records_qr_lead()
+    test_hospital_doctor_fetch_failure_sends_generic_retry_not_a_doctor_not_found_message()
     test_valid_hospital_no_lang_yet_asks_language_then_resumes_to_the_menu()
     test_tapping_check_status_shows_only_this_hospitals_appointment()
     test_check_status_with_no_appointment_at_this_hospital_is_scoped_not_global()
