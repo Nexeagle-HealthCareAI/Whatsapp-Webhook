@@ -31,10 +31,16 @@ def _is_5xx_error(exc: BaseException) -> bool:
     return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code >= 500
 
 
+# 5 attempts / max=8s (worst case ~7.5s of cumulative backoff) instead of the initial 3/max=4
+# (~1.5s) -- live logs confirmed the original budget IS what's firing (3 real attempts, all
+# hitting 5xx), it just isn't always long enough: a follow-up manual retry spaced a few more
+# seconds apart succeeded every time, meaning 1HMS's outage bursts for this endpoint can run
+# longer than ~1.5s. Widened only here, not on _retry_network_errors, for the same "scoped to
+# the one call site this was reported against" reasoning as above.
 _retry_5xx_errors = retry(
     retry=retry_if_exception(_is_5xx_error),
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=0.5, min=0.5, max=8),
     reraise=True,
 )
 

@@ -113,6 +113,26 @@ def test_list_doctors_at_hospital_retries_a_transient_5xx_and_succeeds():
     check(doctors == [{"doctorId": "d1", "fullName": "Dr. A"}], f"succeeds with the real doctor list once the retry lands, got {doctors!r}")
 
 
+def test_list_doctors_at_hospital_survives_a_longer_5xx_burst_after_widening_the_budget():
+    print("\n--- Live-reported (round 2): even with the retry fix live, 3 real attempts all hit 503 -- a manual retry moments later succeeded, so the outage burst outlasted the old 3-attempt/~1.5s budget. Widened to 5 attempts/~7.5s -- this proves 4 consecutive 503s (which would have exhausted the OLD budget) now still recover. ---")
+    calls = {"count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        if calls["count"] <= 4:
+            return httpx.Response(503, text="Service Unavailable")
+        return httpx.Response(200, json={"success": True, "doctors": [{"doctorId": "d1", "fullName": "Dr. A"}]})
+
+    async def _run():
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://hms.test")
+        with patch.object(hms_client, "_get_client", lambda: client):
+            return await hms_client.list_doctors_at_hospital("hosp-1")
+
+    doctors = run(_run())
+    check(calls["count"] == 5, f"needed all 5 attempts to outlast a 4-failure burst, got {calls['count']} call(s)")
+    check(doctors == [{"doctorId": "d1", "fullName": "Dr. A"}], f"succeeds once the burst finally clears, got {doctors!r}")
+
+
 def test_list_doctors_at_hospital_does_not_retry_a_4xx():
     print("\n--- A 4xx (client error, e.g. a bad hospitalId) must NOT be retried -- retrying won't fix a bad request ---")
     calls = {"count": 0}
@@ -139,6 +159,7 @@ if __name__ == "__main__":
     test_age_gender_guardian_sent_as_structured_patient_fields()
     test_missing_age_gender_guardian_omitted_not_sent_as_nulls()
     test_list_doctors_at_hospital_retries_a_transient_5xx_and_succeeds()
+    test_list_doctors_at_hospital_survives_a_longer_5xx_burst_after_widening_the_budget()
     test_list_doctors_at_hospital_does_not_retry_a_4xx()
 
     print("\n" + "=" * 50)
