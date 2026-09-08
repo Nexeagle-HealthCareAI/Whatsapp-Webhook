@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 from pydantic import BaseModel, Field
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.config import settings
 
@@ -13,6 +13,26 @@ logger = logging.getLogger("hms_client")
 
 _retry_network_errors = retry(
     retry=retry_if_exception_type((httpx.TransportError, httpx.TimeoutException)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
+    reraise=True,
+)
+
+
+def _is_5xx_error(exc: BaseException) -> bool:
+    """A 5xx HMS response means the server never even started processing the request
+    (unlike a timeout, where it's ambiguous whether it did) -- safe to retry. Live-reported:
+    1HMS's own /public/doctors intermittently 503s (confirmed transient -- a manual retry
+    seconds later succeeded), and this call had zero automatic retry for it, going straight
+    to a "try again" message a silent retry would likely have avoided. Deliberately its OWN
+    opt-in decorator, not folded into _retry_network_errors (shared by all 16 functions in
+    this file, several of them POST endpoints) -- scoped to just the one call site this was
+    reported against, not a blanket policy change made as a side effect."""
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code >= 500
+
+
+_retry_5xx_errors = retry(
+    retry=retry_if_exception(_is_5xx_error),
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
     reraise=True,
@@ -96,6 +116,7 @@ async def list_doctors(
 
 
 @_retry_network_errors
+@_retry_5xx_errors
 async def list_doctors_at_hospital(hospital_id: str, page_size: int = 10) -> list[dict[str, Any]]:
     """Doctors at one specific hospital, no specialty filter -- used by the hospital-name-search
     flow (conversation.py's _search_hospitals_flow) once a hospital match resolves, to show what

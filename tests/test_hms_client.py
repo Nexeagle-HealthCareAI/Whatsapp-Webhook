@@ -93,9 +93,53 @@ def test_missing_age_gender_guardian_omitted_not_sent_as_nulls():
           f"fullName/mobile still sent as before, got {patient!r}")
 
 
+def test_list_doctors_at_hospital_retries_a_transient_5xx_and_succeeds():
+    print("\n--- Live-reported: 1HMS's /public/doctors intermittently 503s -- confirmed transient, a manual retry seconds later succeeded ---")
+    calls = {"count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return httpx.Response(503, text="Service Unavailable")
+        return httpx.Response(200, json={"success": True, "doctors": [{"doctorId": "d1", "fullName": "Dr. A"}]})
+
+    async def _run():
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://hms.test")
+        with patch.object(hms_client, "_get_client", lambda: client):
+            return await hms_client.list_doctors_at_hospital("hosp-1")
+
+    doctors = run(_run())
+    check(calls["count"] == 2, f"retries once after the transient 503, got {calls['count']} call(s)")
+    check(doctors == [{"doctorId": "d1", "fullName": "Dr. A"}], f"succeeds with the real doctor list once the retry lands, got {doctors!r}")
+
+
+def test_list_doctors_at_hospital_does_not_retry_a_4xx():
+    print("\n--- A 4xx (client error, e.g. a bad hospitalId) must NOT be retried -- retrying won't fix a bad request ---")
+    calls = {"count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        return httpx.Response(404, text="Not Found")
+
+    async def _run():
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://hms.test")
+        with patch.object(hms_client, "_get_client", lambda: client):
+            await hms_client.list_doctors_at_hospital("hosp-1")
+
+    raised = False
+    try:
+        run(_run())
+    except httpx.HTTPStatusError:
+        raised = True
+    check(raised, "a 4xx still raises")
+    check(calls["count"] == 1, f"must NOT retry a 4xx -- exactly one call, got {calls['count']}")
+
+
 if __name__ == "__main__":
     test_age_gender_guardian_sent_as_structured_patient_fields()
     test_missing_age_gender_guardian_omitted_not_sent_as_nulls()
+    test_list_doctors_at_hospital_retries_a_transient_5xx_and_succeeds()
+    test_list_doctors_at_hospital_does_not_retry_a_4xx()
 
     print("\n" + "=" * 50)
     if failures:
