@@ -914,6 +914,49 @@ def test_tapping_book_appointment_with_a_stale_last_search_falls_back_to_locatio
     )
 
 
+def test_book_appointment_hospital_qr_lock_takes_priority_over_last_search_reuse():
+    print("\n--- An active hospital-QR lock takes priority over an unrelated fresh last-search reuse offer ---")
+    # Peer-review finding: the ordering is correct in the code (qr_hospital checked before
+    # last_search reuse in the start_booking handler), but nothing proved it -- if someone
+    # ever reorders those two blocks, a patient mid-hospital-QR-session would get offered an
+    # unrelated 24h-old search instead of going straight to THIS hospital's doctors.
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    fresh_last_search = {
+        "last_city": "Kishanganj", "last_location_text": "kishanganj",
+        "last_patient_lat": 26.1, "last_patient_lng": 87.9,
+        "location_updated_at": now - timedelta(hours=1),
+        "last_specialty_category": "Cardiologist (Heart)",
+        "specialty_updated_at": now - timedelta(hours=2),
+    }
+    hospital = {"hospitalId": "hosp-1", "name": "Purnea General Hospital"}
+    db_mock = _RecordingDb(
+        initial_state={
+            "current_step": "post_no_active_appointment",
+            "context": {"lang": "en", "qr_hospital": hospital, "qr_scanned_at": conversation._clinic_now().isoformat()},
+        },
+        last_search=fresh_last_search,
+    )
+    wa_mock = _RecordingWhatsApp()
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), \
+             patch.object(conversation, "whatsapp_client", wa_mock), \
+             patch.object(conversation.hms_client, "list_doctors_at_hospital", AsyncMock(return_value=[{"doctorId": "d1", "fullName": "Dr. A", "hospitalName": "Purnea General Hospital", "city": "Purnea"}])), \
+             patch.object(conversation.hms_client, "record_lead", AsyncMock()):
+            async with httpx.AsyncClient() as client:
+                await conversation.handle_message(client, "919876543210", "User", "button_reply", "start_booking")
+
+    run(_run())
+    reuse_button_ids = {bid for _, buttons in wa_mock.buttons for bid, _ in buttons} & {"reuse_yes", "reuse_change_location", "reuse_change_specialty"}
+    check(not reuse_button_ids, f"must not offer the unrelated last-search reuse prompt while hospital-locked, got reuse buttons among {wa_mock.buttons!r}")
+    check(len(wa_mock.location_requests) == 0, "must not ask for location either -- the hospital is already known")
+    check(
+        db_mock._state is None or db_mock._state.get("current_step") != "confirming_last_search",
+        f"must NOT land on confirming_last_search -- the hospital-QR lock takes priority, got {db_mock._state!r}",
+    )
+
+
 def test_book_appointment_with_active_appointment_shows_status_card_not_plain_text():
     print("\n--- 'book with dr sharma' while a real appointment already exists -- rich status card, not intent_router's old plain-text question ---")
     db_mock = _RecordingDb(
@@ -1009,6 +1052,7 @@ if __name__ == "__main__":
     test_tapping_book_appointment_after_no_active_appointment_skips_straight_to_location()
     test_tapping_book_appointment_with_a_fresh_last_search_offers_reuse_instead_of_location()
     test_tapping_book_appointment_with_a_stale_last_search_falls_back_to_location()
+    test_book_appointment_hospital_qr_lock_takes_priority_over_last_search_reuse()
     test_book_appointment_with_active_appointment_shows_status_card_not_plain_text()
     test_tapping_book_another_from_conflict_status_seeds_the_doctor_search()
 

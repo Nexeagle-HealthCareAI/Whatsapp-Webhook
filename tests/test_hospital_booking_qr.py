@@ -357,6 +357,68 @@ def test_book_appointment_after_no_appointment_found_skips_straight_to_hospital_
     check(lead_calls and lead_calls[0]["lead_type"] == "HospitalQRScan", f"still attributes the lead to the QR scan, got {lead_calls!r}")
 
 
+def test_stale_hospital_menu_button_still_works_after_moving_to_a_later_step():
+    print("\n--- Live-reported bug: tapping a STALE hospital-menu button while mid-way through a later step did nothing useful ---")
+    # WhatsApp keeps every past interactive message tappable forever. A patient who tapped
+    # Book Appointment, got the doctor-choice list, but then goes BACK and taps "My
+    # Appointment" on the ORIGINAL welcome menu message was getting routed to whatever step's
+    # handler is current (choosing_doctor here) -- which doesn't recognize hospbook_status as
+    # valid input for ITS OWN step, and just replied "please choose a doctor from the list
+    # above", silently swallowing the request entirely.
+    db_mock = _RecordingDb(
+        initial_state={
+            "current_step": "choosing_doctor",
+            "context": {"lang": "en", "qr_hospital": HOSPITAL, "qr_scanned_at": conversation._clinic_now().isoformat(), "doctor_options": {"d1": TWO_DOCTORS[0]}},
+        },
+        booked_appointments=[LOCAL_ROW_HOSP1],
+    )
+    wa_mock = _RecordingWhatsApp()
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), \
+             patch.object(conversation, "whatsapp_client", wa_mock), \
+             patch.object(conversation.hms_client, "get_appointment", AsyncMock(return_value=APPT_AT_HOSP1)):
+            async with httpx.AsyncClient() as client:
+                await conversation.handle_message(client, "919876543210", "Test", "button_reply", "hospbook_status", "msg12")
+
+    run(_run())
+    check(len(wa_mock.buttons) == 1, f"shows the real appointment-status card, not a generic reprompt, got buttons={wa_mock.buttons!r} texts={wa_mock.texts!r}")
+    status_text = wa_mock.buttons[0][0] if wa_mock.buttons else ""
+    check("Dr. A" in status_text, f"resolves the actual appointment status, got {status_text!r}")
+    check(not any("choose a doctor" in t.lower() for t in wa_mock.texts), f"must not fall through to the choosing_doctor step's generic reprompt, got texts={wa_mock.texts!r}")
+
+
+def test_hospital_menu_button_still_works_days_after_the_scan_unlike_the_search_lock():
+    print("\n--- The global hospbook_* button dispatch is intentionally NOT gated by the 15-minute search lock ---")
+    # Peer-review finding: the global dispatch's design deliberately does not check
+    # _qr_locked_hospital_id -- an explicit button tap naming its own hospital should always
+    # work, unlike the 15-minute IMPLICIT search-scoping lock. That distinction was never
+    # actually exercised with a genuinely stale (multi-day) qr_scanned_at -- every other test
+    # for this button used a fresh timestamp, so a future change accidentally gating this on
+    # the lock would have gone unnoticed.
+    days_old_scan = (conversation._clinic_now() - timedelta(days=3)).isoformat()
+    db_mock = _RecordingDb(
+        initial_state={
+            "current_step": "choosing_doctor",
+            "context": {"lang": "en", "qr_hospital": HOSPITAL, "qr_scanned_at": days_old_scan, "doctor_options": {"d1": TWO_DOCTORS[0]}},
+        },
+        booked_appointments=[],
+    )
+    wa_mock = _RecordingWhatsApp()
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), \
+             patch.object(conversation, "whatsapp_client", wa_mock), \
+             patch.object(conversation.hms_client, "list_doctors_at_hospital", AsyncMock(return_value=TWO_DOCTORS)), \
+             patch.object(conversation.hms_client, "record_lead", AsyncMock()):
+            async with httpx.AsyncClient() as client:
+                await conversation.handle_message(client, "919876543210", "Test", "button_reply", "hospbook_book", "msg13")
+
+    run(_run())
+    check(len(wa_mock.lists) == 1, f"still shows this hospital's doctor list even 3 days after the scan, got lists={wa_mock.lists!r}")
+    check(len(wa_mock.lists[0][2]) == 2, "list still carries this hospital's own doctors")
+
+
 def test_doctor_name_via_nlu_global_intent_within_qr_lock_skips_location_too():
     print("\n--- Live-reported bug: a doctor name resolved via NLU (not the STEP_REGISTRY hot-swap) still asked for location during an active hospital-QR lock ---")
     # Distinct code path from test_typed_doctor_name_within_15_min_of_qr_scan_is_scoped_to_
@@ -445,6 +507,8 @@ if __name__ == "__main__":
     test_tapping_check_status_shows_only_this_hospitals_appointment()
     test_check_status_with_no_appointment_at_this_hospital_is_scoped_not_global()
     test_book_appointment_after_no_appointment_found_skips_straight_to_hospital_doctors()
+    test_stale_hospital_menu_button_still_works_after_moving_to_a_later_step()
+    test_hospital_menu_button_still_works_days_after_the_scan_unlike_the_search_lock()
     test_doctor_name_via_nlu_global_intent_within_qr_lock_skips_location_too()
     test_typed_doctor_name_within_15_min_of_qr_scan_is_scoped_to_that_hospital()
 

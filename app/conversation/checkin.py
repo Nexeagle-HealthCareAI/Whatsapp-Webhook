@@ -278,6 +278,34 @@ async def _send_hospital_action_menu(client, phone: str, lang: str | None, hospi
     )
 
 
+async def _dispatch_hospbook_action(
+    client, phone: str, context: dict, current_step: str | None, input_value: str, hospital: dict,
+) -> None:
+    """What "hospbook_book"/"hospbook_status" actually do -- the ONE place this is expressed.
+    Shared by _handle_choosing_hospital_action below (reached via normal STEP_REGISTRY
+    dispatch while the patient is actually on this step) AND handle_message's own global
+    interception of these two button ids (__init__.py) -- WhatsApp keeps every past
+    interactive message tappable forever, so a patient can go back and tap the ORIGINAL
+    hospital-QR welcome menu after moving on to a completely different step, and that must
+    keep working too. The global interceptor's precondition (qr_hospital present) is a
+    superset of this step's own entry precondition, so it always fires first when reachable
+    from there -- this function still has to be correct on its own, not just as dead code
+    kept "just in case", since a patient typing something else on THIS step (not one of
+    these two ids) still reaches _handle_choosing_hospital_action normally."""
+    from app import conversation
+
+    if input_value == "hospbook_book":
+        await _resolve_hospital_search_match(
+            client, phone, context, hospital, hospital.get("name") or "", current_step,
+            lead_type="HospitalQRScan",
+        )
+        return
+
+    await conversation._start_appointment_action_flow(
+        client, phone, context, current_step, action="status", hospital=hospital,
+    )
+
+
 async def _handle_choosing_hospital_action(client, phone, input_type, input_value, context) -> None:
     from app import conversation
 
@@ -294,16 +322,7 @@ async def _handle_choosing_hospital_action(client, phone, input_type, input_valu
         await _send_hospital_action_menu(client, phone, lang, hospital)
         return
 
-    if input_value == "hospbook_book":
-        await _resolve_hospital_search_match(
-            client, phone, context, hospital, hospital.get("name") or "", "choosing_hospital_action",
-            lead_type="HospitalQRScan",
-        )
-        return
-
-    await conversation._start_appointment_action_flow(
-        client, phone, context, "choosing_hospital_action", action="status", hospital=hospital,
-    )
+    await _dispatch_hospbook_action(client, phone, context, "choosing_hospital_action", input_value, hospital)
 
 
 async def _prompt_choosing_hospital_action(client, phone, context) -> None:

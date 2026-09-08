@@ -68,6 +68,7 @@ from app.conversation.checkin import (
     _handle_checkin_trigger,
     _handle_checkin_awaiting_location, _handle_checkin_choosing_appointment, _finish_checkin,
     _start_hospital_action_menu, _handle_choosing_hospital_action, _prompt_choosing_hospital_action,
+    _dispatch_hospbook_action,
 )
 from app.conversation.appointment_actions import (
     _start_appointment_action_flow, _INTENT_TO_APPT_ACTION,
@@ -287,6 +288,22 @@ async def handle_message(
     await conversation_log_queue.log_event(
         get_redis(), context["session_id"], phone, "in", input_type, input_value, current_step
     )
+    # Hospital-QR welcome menu buttons (Book Appointment / My Appointment) -- handled
+    # regardless of conversation state, same reasoning as "start_booking" just below.
+    # WhatsApp keeps every past interactive message tappable forever, so a patient who has
+    # since moved on to a LATER step (e.g. picking a doctor from the list Book Appointment
+    # itself sent) can still go back and tap the ORIGINAL welcome menu message. Without this,
+    # that tap got routed to whatever step's handler is current instead -- which doesn't
+    # recognize "hospbook_book"/"hospbook_status" as valid input for ITS OWN step, and just
+    # replied with a generic "please choose from the list above", silently swallowing the
+    # patient's actual request. Live-reported: tapping "My Appointment" while mid-way through
+    # picking a doctor did nothing useful. Not gated by the 15-minute search lock
+    # (_qr_locked_hospital_id) -- that only governs how long IMPLICIT search scoping lasts,
+    # this is an explicit button tap naming its own hospital, which should just always work.
+    if input_type == "button_reply" and input_value in ("hospbook_book", "hospbook_status") and context.get("qr_hospital"):
+        await _dispatch_hospbook_action(client, phone, context, current_step, input_value, context["qr_hospital"])
+        return
+
     # "Book Appointment" button offered after a no-active-appointment response (see
     # appointment_actions.py's _start_appointment_action_flow) -- that response clears
     # conversation_state right after sending it (dropping any stale doctor/location/slot from
