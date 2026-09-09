@@ -1106,12 +1106,19 @@ async def _fetch_doctors_near(
 
 async def _send_doctor_list(client: httpx.AsyncClient, phone: str, context: ConversationContext) -> None:
     lang = context.get("lang")
-    specialty_category = context["specialty_category"]
+    specialty_category = context.get("specialty_category")
 
     doctors: list[dict] = []
     used_radius: float | None = None
     locked_hospital_id = _qr_locked_hospital_id(context)
-    if locked_hospital_id:
+    if locked_hospital_id and not specialty_category:
+        # Reached with a QR-locked hospital but no specialty ever searched -- e.g. "Different
+        # doctor" tapped after a hospital-QR "Book Appointment" found no slots today, which
+        # never went through a specialty/symptom search at all (see
+        # _resolve_hospital_search_match). Nothing to narrow by, so just re-list that same
+        # hospital's own doctors, same call _resolve_hospital_search_match itself uses.
+        doctors = await hms_client.list_doctors_at_hospital(locked_hospital_id, page_size=50)
+    elif locked_hospital_id:
         # 15-minute hospital-QR search lock -- radius/city narrowing below is meaningless
         # once a specific hospital is already known, so fetch scoped to it directly and skip
         # straight to the shared "no doctors" / render logic below. Falls through to that
@@ -1349,18 +1356,34 @@ async def _send_patient_details_flow(client: httpx.AsyncClient, phone: str, cont
 
     doctor_id = context.get("doctor_id")
     slots = []
+    fetch_failed = False
     if doctor_id:
         try:
             slots = await _get_offered_slots(doctor_id, lang)
         except Exception as exc:
             logger.error("Failed to load offered slots for Flow: %s", exc)
+            fetch_failed = True
 
     if not slots:
+        if fetch_failed:
+            # The doctor's real schedule was never actually checked -- live-reported: an
+            # intermittent 1HMS 503 on /public/doctors/{id}/availability (same backend
+            # flakiness as list_doctors_at_hospital) was silently swallowed here and treated
+            # the same as a confirmed empty calendar, telling the patient "today's timings
+            # are over" when we genuinely don't know that. error_hms is the same generic
+            # "try again" every other HMS-fetch failure in this codebase already uses.
+            await whatsapp_client.send_text(client, phone, t("error_hms", lang))
+            return
         await whatsapp_client.send_buttons(
             client, phone, t("today_shifts_over", lang),
             [("change_doctor", t("change_doctor_btn", lang))],
         )
-        await _transition_to(phone, "choosing_doctor", context, context.get("current_step"))
+        # "choosing_slot", not "choosing_doctor" -- _handle_choosing_slot is the handler that
+        # actually recognizes "change_doctor" as a button reply and re-sends a fresh doctor
+        # list (see slot_selection.py). choosing_doctor's own handler only accepts list_reply
+        # input, so a tap here used to be silently rejected with a generic "please choose from
+        # the list" hint that never offered a new list -- a dead end (live-reported).
+        await _transition_to(phone, "choosing_slot", context, context.get("current_step"))
         return
 
     # Reorder slots if a matching slot is resolved by time_of_day_hint

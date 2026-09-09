@@ -26,8 +26,11 @@ def _is_5xx_error(exc: BaseException) -> bool:
     seconds later succeeded), and this call had zero automatic retry for it, going straight
     to a "try again" message a silent retry would likely have avoided. Deliberately its OWN
     opt-in decorator, not folded into _retry_network_errors (shared by all 16 functions in
-    this file, several of them POST endpoints) -- scoped to just the one call site this was
-    reported against, not a blanket policy change made as a side effect."""
+    this file, several of them POST endpoints) -- scoped only to the GET endpoints that were
+    actually live-reported hitting this (list_doctors_at_hospital, get_doctor_availability --
+    the latter caught the exact same 1HMS flakiness live, silently mislabelled as "no slots
+    today" until _send_patient_details_flow was fixed to tell the two apart), not a blanket
+    policy change made as a side effect."""
     return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code >= 500
 
 
@@ -140,6 +143,7 @@ async def list_doctors_at_hospital(hospital_id: str, page_size: int = 10) -> lis
 
 
 @_retry_network_errors
+@_retry_5xx_errors
 async def get_doctor_availability(doctor_id: str, on_date: date_type) -> dict[str, Any]:
     params = {"date": on_date.isoformat()}
     client = _get_client()
