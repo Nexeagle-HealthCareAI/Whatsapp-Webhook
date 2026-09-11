@@ -121,7 +121,7 @@ LIVE_SPECIALTIES = [
 BUTTON_TITLE_KEYS = [
     "search_mode_symptom", "search_mode_name", "search_mode_browse",
     "date_today", "date_tomorrow", "confirm_btn", "cancel_btn", "search_wider_yes",
-    "change_doctor_btn", "update_details_btn",
+    "change_doctor_btn", "update_details_btn", "check_status_btn",
     "reuse_last_search_yes_btn", "reuse_last_search_change_location_btn",
     "reuse_last_search_change_specialty_btn",
 ]
