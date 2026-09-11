@@ -150,15 +150,6 @@ class _RecordingDb:
     async def mark_appointment_rescheduled_locally(self, hms_appointment_id, new_date):
         self.rescheduled_locally.append((hms_appointment_id, new_date))
 
-    async def has_pending_appointment(self, phone, preferred_date):
-        return False
-
-    async def create_pending_appointment(self, phone, preferred_date, **kwargs):
-        return "row-new"
-
-    async def mark_appointment_booked(self, row_id, hms_appointment_id):
-        pass
-
 
 # Dynamic, not hardcoded -- a fixed past date would eventually fall outside
 # _is_appointment_stale's 1-day grace window as real calendar time moves past it.
@@ -1032,86 +1023,6 @@ def test_tapping_book_another_from_conflict_status_seeds_the_doctor_search():
     check(search_miss_mock.await_args.args[3] == "Sharma", "miss handler still gets the same query, not a blank one")
 
 
-def test_stale_confirm_tap_after_booking_shows_a_meaningful_message_not_a_restart():
-    print("\n--- Live-reported: tapping 'Confirm' again on the OLD 'please check and confirm' card (after that booking already finished, state cleared) used to blindly restart the whole bot ---")
-    db_mock = _RecordingDb(initial_state=None)
-    wa_mock = _RecordingWhatsApp()
-
-    async def _run():
-        with patch.object(conversation, "db", db_mock), patch.object(conversation, "whatsapp_client", wa_mock):
-            async with httpx.AsyncClient() as client:
-                await conversation.handle_message(client, "919876543210", "User", "button_reply", "confirm")
-
-    run(_run())
-    check(len(wa_mock.lists) == 0, "does NOT restart the bot with the language-choice list")
-    check(len(wa_mock.buttons) == 1, f"sends exactly one meaningful message with a single button, got {wa_mock.buttons!r}")
-    body_text, buttons = wa_mock.buttons[0]
-    check("already" in body_text.lower(), f"tells the patient this was already handled rather than a generic restart, got {body_text!r}")
-    check([b[0] for b in buttons] == ["check_appointment_status"], f"offers exactly the History button, got {buttons!r}")
-    check(db_mock._state is None, "does not create new conversation state -- this is a one-off recovery message, not a new step")
-
-
-def test_stale_update_details_and_cancel_taps_are_also_recognized_as_stale():
-    print("\n--- Same stale-tap recovery applies to 'Update details' and 'Cancel' on that same old card, not just 'Confirm' ---")
-    for stale_id in ("update_details", "cancel"):
-        db_mock = _RecordingDb(initial_state=None)
-        wa_mock = _RecordingWhatsApp()
-
-        async def _run():
-            with patch.object(conversation, "db", db_mock), patch.object(conversation, "whatsapp_client", wa_mock):
-                async with httpx.AsyncClient() as client:
-                    await conversation.handle_message(client, "919876543210", "User", "button_reply", stale_id)
-
-        run(_run())
-        check(len(wa_mock.buttons) == 1 and wa_mock.buttons[0][1][0][0] == "check_appointment_status",
-              f"'{stale_id}' also gets the stale-tap recovery message, got {wa_mock.buttons!r}")
-
-
-def test_tapping_history_from_the_stale_confirm_message_shows_the_real_status_card():
-    print("\n--- Tapping 'History' on the recovery message reuses the SAME rich status card 'My Appointment' shows ---")
-    db_mock = _RecordingDb(initial_state=None, booked_appointments=[
-        {"id": "row1", "hms_appointment_id": "appt-1", "preferred_date": "2026-08-20"},
-    ])
-    wa_mock = _RecordingWhatsApp()
-
-    async def _run():
-        with patch.object(conversation, "db", db_mock), \
-             patch.object(conversation, "whatsapp_client", wa_mock), \
-             patch.object(conversation.hms_client, "get_appointment", AsyncMock(return_value=_LIVE_APPT)):
-            async with httpx.AsyncClient() as client:
-                await conversation.handle_message(client, "919876543210", "User", "button_reply", "check_appointment_status")
-
-    run(_run())
-    check(len(wa_mock.buttons) == 1, f"sends the real status card, got {wa_mock.buttons!r}")
-    body_text, buttons = wa_mock.buttons[0]
-    check("Dr. A" in body_text, f"names the real resolved doctor, not generic copy, got {body_text!r}")
-    check([b[0] for b in buttons] == ["cancel_this_appointment", "update_this_appointment", "start_booking"],
-          f"offers the same Cancel/Update/Book Another buttons the status card always has, got {buttons!r}")
-
-
-def test_confirm_tap_while_actually_confirming_is_not_treated_as_stale():
-    print("\n--- A 'Confirm' tap while genuinely mid-flow (current_step == confirming) must still complete the real booking, not be swallowed as 'stale' ---")
-    context = {
-        "lang": "en", "doctor_id": "doc-1", "doctor_name": "Dr. A",
-        "preferred_date": "2026-08-20", "shift_label": "Morning",
-        "patient_display_name": "Aquib", "patient_age": 25, "patient_gender": "Male",
-    }
-    db_mock = _RecordingDb(initial_state={"current_step": "confirming", "context": context})
-    wa_mock = _RecordingWhatsApp()
-
-    async def _run():
-        with patch.object(conversation, "db", db_mock), \
-             patch.object(conversation, "whatsapp_client", wa_mock), \
-             patch.object(conversation.hms_client, "book_appointment", AsyncMock(return_value={"appointmentId": "new-appt-1"})):
-            async with httpx.AsyncClient() as client:
-                await conversation.handle_message(client, "919876543210", "User", "button_reply", "confirm")
-
-    run(_run())
-    check(any("submitted" in text.lower() for text in wa_mock.texts),
-          f"the real booking still completes and sends the success message, got {wa_mock.texts!r}")
-    check(db_mock.cleared, "conversation state is cleared after the real booking succeeds, same as before this fix")
-
-
 if __name__ == "__main__":
     test_no_active_appointment_sends_message_and_clears_state()
     test_single_live_appointment_goes_straight_to_confirmation()
@@ -1144,10 +1055,6 @@ if __name__ == "__main__":
     test_book_appointment_hospital_qr_lock_takes_priority_over_last_search_reuse()
     test_book_appointment_with_active_appointment_shows_status_card_not_plain_text()
     test_tapping_book_another_from_conflict_status_seeds_the_doctor_search()
-    test_stale_confirm_tap_after_booking_shows_a_meaningful_message_not_a_restart()
-    test_stale_update_details_and_cancel_taps_are_also_recognized_as_stale()
-    test_tapping_history_from_the_stale_confirm_message_shows_the_real_status_card()
-    test_confirm_tap_while_actually_confirming_is_not_treated_as_stale()
 
     print(f"\n{'=' * 60}")
     if failures:

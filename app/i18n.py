@@ -927,23 +927,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Update Appointment",
         "bn": "আপডেট করুন",
     },
-    # Sent instead of a blind restart when a patient taps Confirm/Update details/Cancel on an
-    # OLD "please check and confirm" card whose booking flow already finished -- see
-    # handle_message's "no state" fallback in app/conversation/__init__.py. Deliberately a
-    # short, generic reassurance (not the full doctor/date/status card) -- that live HMS
-    # lookup only happens if the patient actually taps through, via check_status_btn below.
-    "stale_confirm_tap_message": {
-        "en": "Looks like this was already taken care of. Tap below to see your latest appointment status.",
-        "hi": "लगता है इसका पहले ही समाधान हो चुका है। अपनी नवीनतम अपॉइंटमेंट स्थिति देखने के लिए नीचे टैप करें।",
-        "hg": "Lagta hai iska pehle hi solution ho chuka hai. Apni latest appointment status dekhne ke liye niche tap karein.",
-        "bn": "মনে হচ্ছে এটি ইতিমধ্যে সমাধান হয়ে গেছে। আপনার সর্বশেষ অ্যাপয়েন্টমেন্টের অবস্থা দেখতে নিচে ট্যাপ করুন।",
-    },
-    "check_status_btn": {
-        "en": "History",
-        "hi": "इतिहास",
-        "hg": "History",
-        "bn": "ইতিহাস",
-    },
     "reschedule_new_date_prompt": {
         "en": "Which date would you like to move it to? (e.g. today, tomorrow, or a specific date)",
         "hi": "आप इसे किस तारीख पर ले जाना चाहते हैं? (जैसे: आज, कल या कोई खास तारीख)",

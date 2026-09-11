@@ -304,15 +304,6 @@ async def handle_message(
         await _dispatch_hospbook_action(client, phone, context, current_step, input_value, context["qr_hospital"])
         return
 
-    # "History" button offered on the stale-confirm-tap recovery message just below (see the
-    # "no state" fallback) -- reuses the exact same rich status card "My Appointment" shows
-    # (real doctor/date, Cancel/Update/Book Another buttons). Global, same reasoning as
-    # hospbook_book/hospbook_status above: WhatsApp keeps that recovery message tappable
-    # forever too, so this must keep working no matter what conversation state exists by then.
-    if input_type == "button_reply" and input_value == "check_appointment_status":
-        await _start_appointment_action_flow(client, phone, context, current_step, action="status")
-        return
-
     # "Book Appointment" button offered after a no-active-appointment response (see
     # appointment_actions.py's _start_appointment_action_flow) -- that response clears
     # conversation_state right after sending it (dropping any stale doctor/location/slot from
@@ -942,25 +933,6 @@ async def handle_message(
                 await handler(client, phone, sender_name, input_type, input_value, context)
             else:
                 await handler(client, phone, input_type, input_value, context)
-        elif input_type == "button_reply" and input_value in ("confirm", "update_details", "cancel"):
-            # A stale tap on the OLD "please check and confirm" card -- state is already gone
-            # because that booking flow already finished (booked, or abandoned) by the time
-            # this arrived; _handle_confirming clears conversation state right after Confirm
-            # succeeds (and on Cancel too). WhatsApp keeps every past interactive message
-            # tappable forever, so a patient can tap Confirm/Update details/Cancel on that
-            # SAME card again well after it already did its job. Live-reported: this used to
-            # fall through to the generic "no state -- restart" branch below, which blindly
-            # relaunched the whole bot (asked for language again) -- confusing when the
-            # patient just wants to know what happened to the appointment they already
-            # confirmed. Only reachable here when current_step is truly None (no
-            # STEP_REGISTRY step matched) -- the live "confirming" step itself, and any other
-            # step that happens to reuse these same button ids (e.g.
-            # confirming_appointment_cancel), are handled by the `if step_config:` branch
-            # above and never reach this branch at all.
-            await whatsapp_client.send_buttons(
-                client, phone, t("stale_confirm_tap_message", lang),
-                [("check_appointment_status", t("check_status_btn", lang))],
-            )
         else:
             # No state (new/returning user) or an unrecognized step — restart cleanly
             # rather than leave the conversation stuck.
