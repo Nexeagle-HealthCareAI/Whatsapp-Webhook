@@ -153,9 +153,17 @@ jobs:
             # this app VM -- applied over the network (port 1433) via a disposable sqlcmd
             # container pulled here, rather than `docker exec` into a co-located sqlserver
             # container (that container doesn't run on this host anymore).
+            #
+            # Reuses the exact same image the sqlserver container itself runs
+            # (mcr.microsoft.com/mssql/server:2022-latest) rather than a standalone
+            # "mssql-tools18" image -- Microsoft doesn't publish one under that name, but this
+            # image is confirmed to bundle /opt/mssql-tools18/bin/sqlcmd (that's the very path
+            # this workflow's old co-located `docker exec` branch relied on). --entrypoint
+            # overrides the image's normal sqlservr startup so this just runs sqlcmd, not a
+            # second SQL Server instance.
             sed 's/WhatsAppBookingDev/WhatsAppBookingProd/g' sql/schema.sql | \
-              docker run --rm -i mcr.microsoft.com/mssql-tools18 \
-                /opt/mssql-tools18/bin/sqlcmd \
+              docker run --rm -i --entrypoint /opt/mssql-tools18/bin/sqlcmd \
+                mcr.microsoft.com/mssql/server:2022-latest \
                   -C -S "$PROD_DB_HOST",1433 -U sa -P "$MSSQL_SA_PASSWORD_PROD" -i /dev/stdin
             echo "SQL schema applied"
 
