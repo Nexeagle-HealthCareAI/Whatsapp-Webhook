@@ -77,9 +77,13 @@
 #                              Previously never set here at all -- silently fell back to
 #                              docker-compose.yml's dev-domain default (1hms-dev-api...),
 #                              which would have pointed prod at the DEV HMS API.
-#   PROD_SYMPTOM_API_BASE_URL  NexEagleWebsite's prod /api/search/parse proxy (default
-#                              https://nexeagle.com/api/search/parse). Previously never set
-#                              here either -- fell back to docker-compose.yml's
+#   PROD_SYMPTOM_API_BASE_URL  NexEagleWebsite's prod origin, NO path (default
+#                              https://nexeagle.com) -- symptom_client.py's httpx.AsyncClient
+#                              is built with this as base_url and always requests the
+#                              absolute path "/api/search/parse" itself; including that path
+#                              here too doubles it up (confirmed live: 404 on
+#                              .../api/search/parse/api/search/parse). Previously never set
+#                              here at all -- fell back to docker-compose.yml's
 #                              host.docker.internal:82 default, which is explicitly
 #                              nexeagle-website-DEV's own proxy, unreachable (and wrong)
 #                              from the prod app VM.
@@ -179,7 +183,7 @@ jobs:
           PROD_DB_CONNECTION: ${{ secrets.PROD_DB_CONNECTION }}
           HMS_API_KEY: ${{ secrets.HMS_API_KEY }}
           HMS_API_BASE_URL: ${{ vars.PROD_HMS_API_BASE_URL || 'https://1hms-api.nexeagle.com' }}
-          SYMPTOM_API_BASE_URL: ${{ vars.PROD_SYMPTOM_API_BASE_URL || 'https://nexeagle.com/api/search/parse' }}
+          SYMPTOM_API_BASE_URL: ${{ vars.PROD_SYMPTOM_API_BASE_URL || 'https://nexeagle.com' }}
           INTERNAL_EVENTS_TOKEN: ${{ secrets.INTERNAL_EVENTS_TOKEN }}
           SARVAM_API_KEY: ${{ secrets.SARVAM_API_KEY }}
           WHATSAPP_DISPLAY_NUMBER: ${{ secrets.WHATSAPP_DISPLAY_NUMBER }}
