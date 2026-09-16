@@ -47,9 +47,10 @@
 #                            that step.
 #   WHATSAPP_FLOW_SCREEN_ID  optional — only needed if your Flow's screen isn't named
 #                            REGISTRATION_SCREEN (app/config.py's default).
-#   GROK_API_KEY             optional — PRIMARY_NLU (app/listener/model_config.py). Omit and
-#                            classify_message falls through to FALLBACK_NLU (Sarvam) instead
-#                            of failing outright — see SARVAM_API_KEY below, still required.
+#   GROQ_API_KEY             optional — from console.groq.com (Groq Inc., NOT xAI's Grok --
+#                            different company). PRIMARY_NLU (app/listener/model_config.py).
+#                            Omit and classify_message falls through to FALLBACK_NLU (Sarvam)
+#                            instead of failing outright — see SARVAM_API_KEY below, still required.
 #   SARVAM_API_KEY           FALLBACK_NLU — required.
 #   INTERNAL_EVENTS_TOKEN    authenticates 1HMS/1Rad's POST /events/token-called calls into
 #                            this gateway — a different secret from WHATSAPP_APP_SECRET, which
@@ -77,6 +78,12 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # workflow_dispatch lets anyone pick ANY branch/ref to run this against — without this
+    # guard, a manual dispatch against e.g. `dev` would git reset --hard the PROD VM's checkout
+    # to dev's code. push: branches:[main] is already scoped correctly; this closes the same
+    # gap for the manual-dispatch trigger. (Actually happened once, harmlessly, run 33886861305
+    # on 2026-09-04 -- failed on an unrelated SSH timeout before reaching checkout.)
+    if: github.ref == 'refs/heads/main'
     # Prefers secrets scoped to the "production" GitHub Environment over same-named repository
     # secrets — mirrors deploy.yml's own "development" binding, so the two environments can
     # never accidentally read each other's app credentials. PROD_SSH_*/MSSQL_SA_PASSWORD_PROD
@@ -143,13 +150,13 @@ jobs:
           WHATSAPP_DISPLAY_NUMBER: ${{ secrets.WHATSAPP_DISPLAY_NUMBER }}
           WHATSAPP_FLOW_ID: ${{ secrets.WHATSAPP_FLOW_ID }}
           WHATSAPP_FLOW_SCREEN_ID: ${{ secrets.WHATSAPP_FLOW_SCREEN_ID }}
-          GROK_API_KEY: ${{ secrets.GROK_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         with:
           host: ${{ secrets.PROD_SSH_HOST }}
           username: ${{ secrets.PROD_SSH_USER }}
           key_path: /tmp/deploy_key
           port: 22
-          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,PROD_DB_CONNECTION,HMS_API_KEY,INTERNAL_EVENTS_TOKEN,SARVAM_API_KEY,WHATSAPP_DISPLAY_NUMBER,WHATSAPP_FLOW_ID,WHATSAPP_FLOW_SCREEN_ID,GROK_API_KEY
+          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,PROD_DB_CONNECTION,HMS_API_KEY,INTERNAL_EVENTS_TOKEN,SARVAM_API_KEY,WHATSAPP_DISPLAY_NUMBER,WHATSAPP_FLOW_ID,WHATSAPP_FLOW_SCREEN_ID,GROQ_API_KEY
           script: |
             set -e
             cd "$DEPLOY_PATH"
@@ -188,7 +195,7 @@ jobs:
               printf 'WHATSAPP_DISPLAY_NUMBER=%s\n' "$WHATSAPP_DISPLAY_NUMBER"
               printf 'WHATSAPP_FLOW_ID=%s\n' "$WHATSAPP_FLOW_ID"
               printf 'WHATSAPP_FLOW_SCREEN_ID=%s\n' "$WHATSAPP_FLOW_SCREEN_ID"
-              printf 'GROK_API_KEY=%s\n' "$GROK_API_KEY"
+              printf 'GROQ_API_KEY=%s\n' "$GROQ_API_KEY"
             } > "$ENVFILE"
             chmod 600 "$ENVFILE"
 
