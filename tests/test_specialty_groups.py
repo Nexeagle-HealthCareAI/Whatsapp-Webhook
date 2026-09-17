@@ -3172,6 +3172,140 @@ def test_send_doctor_list_unlocked_still_uses_radius_search_as_before():
         conversation._render_doctor_list = original_render
 
 
+def test_awaiting_symptom_does_not_fall_through_to_a_lower_ranked_specialty():
+    """Live-reported: a male patient with stomach pain was told to see a Gynaecologist, then
+    (after 1HMS widened the available specialty list) an unrelated ENT -- because the
+    classifier's TOP pick ("Gastroenterologist") genuinely isn't offered by this hospital
+    network, and the old loop silently fell through to whatever lower-ranked candidate
+    happened to exist, presenting it as a confident match. Only the top candidate should ever
+    be tried; if it's not available, say so and show the full list instead."""
+    import asyncio
+
+    original_route_symptom = conversation.symptom_client.route_symptom
+    async def mock_route_symptom(query):
+        # Top pick (Gastroenterologist) isn't in the mocked roster below -- ENT is, but is
+        # NOT a reasonable substitute for stomach pain and must never be silently offered.
+        return ["Gastroenterologist", "ENT Specialist"]
+    conversation.symptom_client.route_symptom = mock_route_symptom
+
+    original_list_specialties = conversation.hms_client.list_specialties
+    async def mock_list_specialties():
+        return [{"category": "ENT Specialist", "displayName": "ENT Specialist"}]
+    conversation.hms_client.list_specialties = mock_list_specialties
+
+    sent_texts = []
+    sent_lists = []
+    original_send_text = conversation.whatsapp_client.send_text
+    original_send_list = conversation.whatsapp_client.send_list
+    async def mock_send_text(client, to, text):
+        sent_texts.append(text)
+    async def mock_send_list(client, to, text, button_label, rows, section_title="Options"):
+        sent_lists.append((text, rows))
+    conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_list = mock_send_list
+
+    original_db = conversation.db
+    class MockDB:
+        async def save_conversation_state(self, phone, step, context):
+            pass
+    conversation.db = MockDB()
+
+    try:
+        context = {"lang": "en"}
+        asyncio.run(conversation._handle_awaiting_symptom(
+            None, "919876543210", "text", "I have stomach pain", context
+        ))
+        check(
+            "ENT" not in " ".join(sent_texts),
+            f"must never silently present an unrelated lower-ranked specialty as the match, got texts={sent_texts!r}",
+        )
+        check(len(sent_texts) == 1, f"sends the 'couldn't confidently match' message, got {sent_texts!r}")
+        check(len(sent_lists) == 1, "falls back to showing the full specialty list instead of guessing")
+    finally:
+        conversation.symptom_client.route_symptom = original_route_symptom
+        conversation.hms_client.list_specialties = original_list_specialties
+        conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_list = original_send_list
+        conversation.db = original_db
+
+
+def test_returning_user_symptom_does_not_fall_through_to_a_lower_ranked_specialty():
+    """Same bug, different entry point: a RETURNING patient (language already known) whose
+    very next message is NLU-classified as describe_symptom goes through handle_message's own
+    NLU-hint branch (app/conversation/__init__.py), not _handle_awaiting_symptom -- this is
+    the exact path the live-reported bug actually happened on."""
+    import asyncio
+
+    class MockDB:
+        def __init__(self):
+            self.state = {"919876543210": {"current_step": "choosing_search_mode", "context": {"lang": "en"}}}
+        async def get_conversation_state(self, phone):
+            return self.state.get(phone)
+        async def save_conversation_state(self, phone, step, context):
+            self.state[phone] = {"current_step": step, "context": context}
+        async def clear_conversation_state(self, phone):
+            self.state[phone] = None
+        async def log_nlu_interaction(self, *a, **k):
+            pass
+
+    db_mock = MockDB()
+    original_db = conversation.db
+    conversation.db = db_mock
+
+    mock_nlu_val = {
+        "intent": "describe_symptom", "confidence": "high",
+        "entities": {"symptom": "stomach pain"},
+    }
+    async def mock_classify(client, text):
+        return mock_nlu_val
+    original_classify = conversation.nlu_client.classify_message
+    conversation.nlu_client.classify_message = mock_classify
+
+    original_route_symptom = conversation.symptom_client.route_symptom
+    async def mock_route_symptom(text):
+        return ["Gastroenterologist", "ENT Specialist"]
+    conversation.symptom_client.route_symptom = mock_route_symptom
+
+    original_list_specialties = conversation.hms_client.list_specialties
+    async def mock_list_specialties():
+        return [{"category": "ENT Specialist", "displayName": "ENT Specialist"}]
+    conversation.hms_client.list_specialties = mock_list_specialties
+
+    sent_texts = []
+    sent_lists = []
+    original_send_text = conversation.whatsapp_client.send_text
+    original_send_list = conversation.whatsapp_client.send_list
+    async def mock_send_text(client, to, text):
+        sent_texts.append(text)
+    async def mock_send_list(client, to, text, button_label, rows, section_title="Options"):
+        sent_lists.append((text, rows))
+    conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_list = mock_send_list
+
+    try:
+        mock_client_obj = object()
+        asyncio.run(conversation.handle_message(
+            mock_client_obj, "919876543210", "Patient", "text", "I have stomach pain"
+        ))
+        state = db_mock.state.get("919876543210")
+        check(
+            not (state and state.get("context", {}).get("pending_specialty") == "ENT Specialist"),
+            f"must never silently pending_specialty an unrelated lower-ranked specialty, got {state!r}",
+        )
+        check(
+            "ENT" not in " ".join(sent_texts),
+            f"must never tell the patient this looks like an unrelated specialty, got texts={sent_texts!r}",
+        )
+        check(len(sent_lists) == 1, "falls back to showing the full specialty list instead of guessing")
+    finally:
+        conversation.db = original_db
+        conversation.nlu_client.classify_message = original_classify
+        conversation.symptom_client.route_symptom = original_route_symptom
+        conversation.hms_client.list_specialties = original_list_specialties
+        conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_list = original_send_list
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:

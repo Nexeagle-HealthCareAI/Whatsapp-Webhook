@@ -499,11 +499,12 @@ async def handle_message(
                     labels = await symptom_client.route_symptom(sym_name)
                     categories = await hms_client.list_specialties()
                     category_list = [c["category"] for c in categories]
-                    matched = None
-                    for label in labels:
-                        matched = await resolve_specialty_category(client, label, category_list)
-                        if matched:
-                            break
+                    # Only the top-ranked label -- see specialty_browsing.py's
+                    # _handle_awaiting_symptom for why. Language isn't known yet on this
+                    # path, so there's no message to send either way -- a miss here just
+                    # means pending_specialty stays unset, same as today, and the patient
+                    # gets asked for it properly once language is confirmed.
+                    matched = await resolve_specialty_category(client, labels[0], category_list) if labels else None
                     if matched:
                         new_context["pending_specialty"] = matched
                         new_context["pending_specialty_is_symptom"] = True
@@ -722,11 +723,12 @@ async def handle_message(
                 labels = await symptom_client.route_symptom(sym_name)
                 categories = await hms_client.list_specialties()
                 category_list = [c["category"] for c in categories]
-                matched = None
-                for label in labels:
-                    matched = await resolve_specialty_category(client, label, category_list)
-                    if matched:
-                        break
+                # Only the classifier's TOP-ranked label -- see specialty_browsing.py's
+                # _handle_awaiting_symptom for why falling through to lower-ranked candidates
+                # is exactly the live-reported bug (an unrelated specialty presented as a
+                # confident match, purely because it happened to exist when the real one
+                # didn't).
+                matched = await resolve_specialty_category(client, labels[0], category_list) if labels else None
                 if matched:
                     new_context["pending_specialty"] = matched
                     new_context["pending_specialty_is_symptom"] = True
@@ -749,6 +751,14 @@ async def handle_message(
                                 t("symptom_concern_and_location_ask", new_context.get("lang"), specialty=matched),
                             )
                         return
+                elif new_context.get("lang"):
+                    # No real substitute for the top-ranked specialty -- same "say so, show
+                    # the full list" recovery _handle_awaiting_symptom already uses, rather
+                    # than silently proceeding with nothing (or, before this fix, an
+                    # unrelated specialty).
+                    await whatsapp_client.send_text(client, phone, t("symptom_no_match", new_context.get("lang")))
+                    await _send_specialty_list(client, phone, new_context)
+                    return
 
         elif intent == "provide_location":
             location_text = nlu_result.get("location")
