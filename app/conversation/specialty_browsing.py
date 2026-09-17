@@ -168,11 +168,13 @@ async def _handle_awaiting_symptom(client, phone, input_type, input_value, conte
         symptom_client.route_symptom(input_value), hms_client.list_specialties()
     )
     categories = [s["category"] for s in specialties]
-    matched_category = None
-    for label in labels:
-        matched_category = await resolve_specialty_category(client, label, categories)
-        if matched_category:
-            break
+    # Only the classifier's TOP-ranked label, never falling through to its 2nd/3rd guess --
+    # live-reported: when the top pick genuinely isn't available at this hospital network
+    # (e.g. no Gastroenterologist onboarded), falling through used to silently land on
+    # whatever lower-ranked candidate happened to exist (once Gynaecologist, then ENT after
+    # an unrelated 1HMS-side fix widened the available list) -- an unrelated specialty
+    # confidently presented as the match, not a real substitute for the one that's missing.
+    matched_category = await resolve_specialty_category(client, labels[0], categories) if labels else None
 
     if not matched_category:
         await conversation.whatsapp_client.send_text(client, phone, t("symptom_no_match", lang))
