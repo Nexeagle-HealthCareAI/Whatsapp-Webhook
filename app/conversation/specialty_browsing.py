@@ -272,6 +272,14 @@ async def _send_sort_prompt(
 
     lang = context.get("lang")
     context = {**context, "specialty_category": specialty_category}
+    # Recorded independent of conversation_state (which gets wiped on a full restart) so a
+    # later "Book Appointment" tap can offer to reuse it -- see app/conversation/
+    # last_search.py. Best-effort, same reasoning as location.py's own save_last_location
+    # call: never let this break the actual specialty search underway.
+    try:
+        await conversation.db.save_last_specialty(phone, specialty_category)
+    except Exception as exc:
+        conversation.logger.warning("Failed to save last-known specialty for %s: %s", phone, exc)
     rows = [
         ("rating", t("sort_rating", lang)),
         ("experience", t("sort_experience", lang)),

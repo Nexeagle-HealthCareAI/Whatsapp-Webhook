@@ -40,6 +40,27 @@ def _extract_messages_and_contacts(payload: dict) -> tuple[list[dict], dict[str,
     for entry in payload.get("entry", []):
         for change in entry.get("changes", []):
             value = change.get("value", {})
+            # Dev and Prod are separate Meta Apps/WABAs, each meant to only ever receive
+            # webhooks for its OWN phone_number_id -- but that routing is a manual setting in
+            # each Meta App's dashboard (see the Caddyfile's own comment), nothing on Meta's
+            # side stops one App's dashboard from being pointed at the other environment's
+            # callback URL by mistake. Live-reported: exactly that happened once, and this
+            # server silently processed and replied to a message meant for the other
+            # environment's number, since signature verification alone doesn't distinguish
+            # "signed by a DIFFERENT correctly-configured Meta App" from "misrouted to us" --
+            # only phone_number_id in the payload itself says which number a message was
+            # actually sent to. This is the one place that check belongs: every downstream
+            # caller (worker.py, conversation.py) already assumes the phone_number_id it holds
+            # in settings IS the one it should be replying from, and has no way to second-guess
+            # that per-message.
+            incoming_phone_number_id = value.get("metadata", {}).get("phone_number_id")
+            if incoming_phone_number_id and incoming_phone_number_id != settings.whatsapp_phone_number_id:
+                logger.warning(
+                    "Ignoring webhook for phone_number_id %s -- this server is configured for %s "
+                    "(Meta App dashboard's callback URL may be pointed at the wrong environment)",
+                    incoming_phone_number_id, settings.whatsapp_phone_number_id,
+                )
+                continue
             messages.extend(value.get("messages", []))
             for contact in value.get("contacts", []):
                 wa_id = contact.get("wa_id")

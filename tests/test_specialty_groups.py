@@ -119,9 +119,11 @@ LIVE_SPECIALTIES = [
 # vs list row titles (cap 24). Kept explicit rather than inferred, so adding a string
 # to the wrong bucket here is a deliberate act rather than an accident.
 BUTTON_TITLE_KEYS = [
-    "search_mode_symptom", "search_mode_browse",
+    "search_mode_symptom", "search_mode_name", "search_mode_browse",
     "date_today", "date_tomorrow", "confirm_btn", "cancel_btn", "search_wider_yes",
     "change_doctor_btn", "update_details_btn",
+    "reuse_last_search_yes_btn", "reuse_last_search_change_location_btn",
+    "reuse_last_search_change_specialty_btn",
 ]
 LIST_ACTION_KEYS = [
     "specialty_group_button", "specialty_list_button", "sort_button", "doctor_list_button",
@@ -808,7 +810,7 @@ def test_doctor_search_matching_and_formatting():
 
     rendered_doctors = []
     original_render_doctor_list = conversation._render_doctor_list
-    async def mock_render_doctor_list(client, phone, context, doctors, current_step=None):
+    async def mock_render_doctor_list(client, phone, context, doctors, current_step=None, **kwargs):
         rendered_doctors.extend(doctors)
     conversation._render_doctor_list = mock_render_doctor_list
 
@@ -828,6 +830,73 @@ def test_doctor_search_matching_and_formatting():
         city_index.get_all_doctors = original_get_all_doctors
         city_index.get_index = original_get_index
         conversation._render_doctor_list = original_render_doctor_list
+
+
+def test_doctor_name_search_asks_location_before_showing_ambiguous_matches():
+    print("\n--- Ambiguous doctor-name match (2+ same-named doctors, no location known yet) asks for location first ---")
+    # Live-reported: "dr sharma" matching several same-named doctors showed a bare "Here are
+    # the doctors available" list straight away, no location filter applied at all -- only
+    # lists of 10+ ever triggered the location ask before. resolve_doctor already narrows
+    # correctly by city/radius once location IS known (test_doctor_search_matching_and_formatting
+    # above proves that half); this proves the OTHER half -- that ambiguity with NO location
+    # known yet asks for it, at the doctor-name-search entry point specifically (not hospital
+    # or specialty/symptom lists, which pass the default threshold and must be unaffected).
+    import asyncio
+
+    class MockClient:
+        pass
+    mock_client = MockClient()
+
+    original_get_all_doctors = city_index.get_all_doctors
+    async def mock_get_all_doctors(*args, **kwargs):
+        return [
+            {"doctorId": "1", "fullName": "Dr. Sharma", "hospitalName": "Kishanganj General Hospital", "city": "Kishanganj"},
+            {"doctorId": "2", "fullName": "Dr. Sharma", "hospitalName": "Mumbai General Hospital", "city": "Mumbai"},
+        ]
+    city_index.get_all_doctors = mock_get_all_doctors
+
+    original_get_index = city_index.get_index
+    async def mock_get_index(*args, **kwargs):
+        return {}
+    city_index.get_index = mock_get_index
+
+    location_requests = []
+    original_send_loc = conversation.whatsapp_client.send_location_request
+    async def mock_send_location_request(client, phone, text):
+        location_requests.append(text)
+    conversation.whatsapp_client.send_location_request = mock_send_location_request
+
+    rendered_doctors = []
+    original_render_doctor_list = conversation._render_doctor_list
+    async def spy_render_doctor_list(*args, **kwargs):
+        # Real function, just recorded -- unlike the mock above, this one must actually run
+        # so the location-ask branch inside it gets exercised for real.
+        rendered_doctors.append((args, kwargs))
+        return await original_render_doctor_list(*args, **kwargs)
+    conversation._render_doctor_list = spy_render_doctor_list
+
+    original_db = conversation.db
+    class _NopDb:
+        async def save_conversation_state(self, phone, step, context):
+            pass
+        async def get_conversation_state(self, phone):
+            return None
+        async def clear_conversation_state(self, phone):
+            pass
+    conversation.db = _NopDb()
+
+    try:
+        context_no_location = {"search_doctor_query": "Sharma", "lang": "en"}
+        handled = asyncio.run(conversation._search_doctors_flow(mock_client, "123", context_no_location, "choosing_location"))
+        check(handled is True, "an ambiguous (non-zero) match is still reported as handled")
+        check(len(location_requests) == 1, f"asks for location instead of dumping the ambiguous list, got {len(location_requests)} location request(s)")
+        check("Sharma" in location_requests[0], f"names the doctor being searched for in the location ask, got {location_requests[0]!r}")
+    finally:
+        city_index.get_all_doctors = original_get_all_doctors
+        city_index.get_index = original_get_index
+        conversation.whatsapp_client.send_location_request = original_send_loc
+        conversation._render_doctor_list = original_render_doctor_list
+        conversation.db = original_db
 
 
 def test_extract_location_from_query():
@@ -1445,7 +1514,10 @@ def test_wit_nlu_integration():
         asyncio.run(conversation.handle_message(mock_client, "123", "User", "text", "cancel please"))
         
         state = asyncio.run(db_mock.get_conversation_state("123"))
-        check(state is None, "NLU cancel should clear conversation state")
+        check(
+            state == {"current_step": "post_no_active_appointment", "context": {"lang": "en"}},
+            f"NLU cancel should clear stale booking state but keep lang, got {state!r}",
+        )
         # No appointment is mocked as booked (MockDB.get_booked_appointments_for_phone
         # returns []), so "cancel please" now correctly reports nothing to cancel instead
         # of the old stub's always-say-"cancelled" wording (see docs/architecture.md --
@@ -2091,7 +2163,7 @@ def test_radius_auto_widens_without_confirm_tap():
 
     rendered = {}
 
-    async def mock_render(client, phone, context, doctors, current_step=None):
+    async def mock_render(client, phone, context, doctors, current_step=None, **kwargs):
         rendered["doctors"] = doctors
 
     wide_results = [{"doctorId": "far1", "fullName": "Dr. Far"}]
@@ -2741,6 +2813,363 @@ def test_unresolved_location_reprompts_instead_of_silently_advancing():
         conversation.whatsapp_client.send_text_direct = original_send_text_direct
         conversation.whatsapp_client.send_location_request = original_send_loc
         location_client.search_locations = original_search_locations
+
+
+def test_typed_city_in_choosing_location_is_not_hijacked_by_casual_chat():
+    """Live-reported: typing a real city ("kishanganj") while the bot was in choosing_location
+    got NLU-classified out_of_scope (no doctor/specialty/symptom entity to extract from a bare
+    place name -- expected), which handle_message's off-topic-casual-chat fallback then took
+    as license to send a generated "Hi there!" reply and re-send the SAME location prompt --
+    forever, since the patient's actual answer was never routed to _handle_choosing_location at
+    all. Root cause: choosing_location (and awaiting_reschedule_date, same shape of bug) were
+    simply missing from that fallback's exclusion list. Goes through the full handle_message
+    path (not _handle_choosing_location directly, unlike the notfound-reprompt test above) --
+    this bug lived one layer higher, in the dispatch that runs BEFORE the step handler."""
+    import asyncio
+
+    class MockDB:
+        def __init__(self):
+            self.state = {}
+
+        async def get_conversation_state(self, phone):
+            if phone in self.state:
+                step, ctx = self.state[phone]
+                return {"current_step": step, "context": ctx}
+            return None
+
+        async def save_conversation_state(self, phone, step, context):
+            self.state[phone] = (step, context)
+
+        async def clear_conversation_state(self, phone):
+            self.state.pop(phone, None)
+
+    db_mock = MockDB()
+    original_db = conversation.db
+    conversation.db = db_mock
+
+    sent_texts, sent_loc_reqs = [], []
+
+    async def mock_send_text(client, to, text):
+        sent_texts.append(text)
+
+    async def mock_send_loc_req(client, to, text):
+        sent_loc_reqs.append(text)
+
+    async def mock_send_noop(*args, **kwargs):
+        pass
+
+    original_send_text = conversation.whatsapp_client.send_text
+    original_send_text_direct = conversation.whatsapp_client.send_text_direct
+    original_send_loc = conversation.whatsapp_client.send_location_request
+    original_send_list = conversation.whatsapp_client.send_list
+    original_send_buttons = conversation.whatsapp_client.send_buttons
+    conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_text_direct = mock_send_text
+    conversation.whatsapp_client.send_location_request = mock_send_loc_req
+    # Resolving the city advances the flow into whatever prompt comes next (a language or
+    # doctor-search list/buttons) -- not under test here, but real send_list/send_buttons
+    # would otherwise reach the real outbound_queue.enqueue -> MockRedis, which this test
+    # file's shared redis stub doesn't implement lpush() for.
+    conversation.whatsapp_client.send_list = mock_send_noop
+    conversation.whatsapp_client.send_buttons = mock_send_noop
+
+    async def mock_search_locations(query, limit=5):
+        return [{"name": "Kishanganj", "type": "city", "state": "Bihar", "coordinates": {"latitude": 26.1, "longitude": 87.9}}]
+
+    original_search_locations = location_client.search_locations
+    location_client.search_locations = mock_search_locations
+
+    async def mock_classify_message(client, text):
+        # Exactly what Groq returns for a bare place name in real logs -- no recognizable
+        # intent, no entities, since "kishanganj" alone isn't a doctor/specialty/symptom.
+        return {
+            "intent": "out_of_scope", "entities": {}, "confidence": "low",
+            "detected_language": None, "language_confidence": None,
+            "_validated": True, "_had_hallucination": False,
+        }
+    original_classify = conversation.nlu_client.classify_message
+    conversation.nlu_client.classify_message = mock_classify_message
+
+    casual_chat_calls = []
+    async def spy_generate_conversational_response(*args, **kwargs):
+        casual_chat_calls.append((args, kwargs))
+        return "should never be sent"
+    original_generate = conversation.nlu_client.generate_conversational_response
+    conversation.nlu_client.generate_conversational_response = spy_generate_conversational_response
+
+    mock_client = object()
+    try:
+        booking = conversation.booking_slots.empty()
+        conversation.booking_slots.fill(booking, "lang", "en", source="user")
+        db_mock.state["cityuser"] = ("choosing_location", {"lang": "en", "booking": booking})
+
+        asyncio.run(conversation.handle_message(mock_client, "cityuser", "Patient", "text", "kishanganj"))
+
+        check(len(casual_chat_calls) == 0, f"must not fall into the casual-chat fallback for a plain typed city, got {len(casual_chat_calls)} call(s)")
+        check(not any("Hi there" in t or "Hi!" in t for t in sent_texts), f"must not send a generic casual reply instead of resolving the city, got sent_texts={sent_texts!r}")
+
+        step, ctx = db_mock.state.get("cityuser", (None, {}))
+        check(step != "choosing_location", f"must advance past choosing_location once the city resolves, got {step!r}")
+        check(ctx.get("city") == "Kishanganj", f"the typed city must actually get applied, got city={ctx.get('city')!r}")
+    finally:
+        conversation.db = original_db
+        conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_text_direct = original_send_text_direct
+        conversation.whatsapp_client.send_location_request = original_send_loc
+        conversation.whatsapp_client.send_list = original_send_list
+        conversation.whatsapp_client.send_buttons = original_send_buttons
+        location_client.search_locations = original_search_locations
+        conversation.nlu_client.classify_message = original_classify
+        conversation.nlu_client.generate_conversational_response = original_generate
+
+
+def test_typed_doctor_name_in_choosing_search_mode_is_not_hijacked_by_casual_chat():
+    """Live-reported: typing "Dr. Avinash" directly (instead of tapping "Search by doctor
+    name") while the bot was at choosing_search_mode got NLU-classified out_of_scope (a bare
+    name carries no NLU-extracted doctor_name entity -- expected), which handle_message's
+    off-topic-casual-chat fallback then took as license to reply -- and since that LLM call
+    itself failed here, the patient saw the literal untranslated string "error_nlu_fallback"
+    followed by the SAME "How would you like to find a doctor?" prompt again. Root cause:
+    choosing_search_mode was missing from the fallback's exclusion list, even though
+    _handle_choosing_search_mode already handles a directly-typed doctor name correctly via
+    _is_doctor_search_query + _search_doctors_flow -- it just never got the chance to run.
+    Goes through the full handle_message path, same shape as the choosing_location test
+    above."""
+    import asyncio
+
+    class MockDB:
+        def __init__(self):
+            self.state = {}
+
+        async def get_conversation_state(self, phone):
+            if phone in self.state:
+                step, ctx = self.state[phone]
+                return {"current_step": step, "context": ctx}
+            return None
+
+        async def save_conversation_state(self, phone, step, context):
+            self.state[phone] = (step, context)
+
+        async def clear_conversation_state(self, phone):
+            self.state.pop(phone, None)
+
+    db_mock = MockDB()
+    original_db = conversation.db
+    conversation.db = db_mock
+
+    sent_texts_direct, sent_texts = [], []
+
+    async def mock_send_text_direct(client, to, text):
+        sent_texts_direct.append(text)
+
+    async def mock_send_text(client, to, text):
+        sent_texts.append(text)
+
+    async def mock_send_noop(*args, **kwargs):
+        pass
+
+    original_send_text_direct = conversation.whatsapp_client.send_text_direct
+    original_send_text = conversation.whatsapp_client.send_text
+    original_send_location_request = conversation.whatsapp_client.send_location_request
+    original_send_list = conversation.whatsapp_client.send_list
+    original_send_buttons = conversation.whatsapp_client.send_buttons
+    conversation.whatsapp_client.send_text_direct = mock_send_text_direct
+    conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_location_request = mock_send_noop
+    conversation.whatsapp_client.send_list = mock_send_noop
+    conversation.whatsapp_client.send_buttons = mock_send_noop
+
+    original_get_all_doctors = city_index.get_all_doctors
+    async def mock_get_all_doctors(*args, **kwargs):
+        return [{"doctorId": "1", "fullName": "Dr. Avinash", "hospitalName": "Kishanganj General Hospital", "city": "Kishanganj"}]
+    city_index.get_all_doctors = mock_get_all_doctors
+
+    original_get_index = city_index.get_index
+    async def mock_get_index(*args, **kwargs):
+        return {}
+    city_index.get_index = mock_get_index
+
+    async def mock_classify_message(client, text):
+        # Exactly what a bare doctor name gets classified as in real logs -- no recognizable
+        # intent, no entities.
+        return {
+            "intent": "out_of_scope", "entities": {}, "confidence": "low",
+            "detected_language": None, "language_confidence": None,
+            "_validated": True, "_had_hallucination": False,
+        }
+    original_classify = conversation.nlu_client.classify_message
+    conversation.nlu_client.classify_message = mock_classify_message
+
+    casual_chat_calls = []
+    async def spy_generate_conversational_response(*args, **kwargs):
+        casual_chat_calls.append((args, kwargs))
+        return "should never be sent"
+    original_generate = conversation.nlu_client.generate_conversational_response
+    conversation.nlu_client.generate_conversational_response = spy_generate_conversational_response
+
+    mock_client = object()
+    try:
+        booking = conversation.booking_slots.empty()
+        conversation.booking_slots.fill(booking, "lang", "en", source="user")
+        db_mock.state["avinashuser"] = ("choosing_search_mode", {"lang": "en", "booking": booking})
+
+        asyncio.run(conversation.handle_message(mock_client, "avinashuser", "Patient", "text", "Dr. Avinash"))
+
+        check(len(casual_chat_calls) == 0, f"must not fall into the casual-chat fallback for a plain typed doctor name, got {len(casual_chat_calls)} call(s)")
+        check(not any("error_nlu_fallback" in t for t in sent_texts + sent_texts_direct), f"must never leak a raw i18n key to the patient, got sent_texts={sent_texts!r} sent_texts_direct={sent_texts_direct!r}")
+        check(any("Avinash" in t for t in sent_texts_direct), f"the real doctor search must actually run and resolve, got sent_texts_direct={sent_texts_direct!r}")
+
+        step, ctx = db_mock.state.get("avinashuser", (None, {}))
+        check(step != "choosing_search_mode", f"must advance past choosing_search_mode once the doctor resolves, got {step!r}")
+    finally:
+        conversation.db = original_db
+        conversation.whatsapp_client.send_text_direct = original_send_text_direct
+        conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_location_request = original_send_location_request
+        conversation.whatsapp_client.send_list = original_send_list
+        conversation.whatsapp_client.send_buttons = original_send_buttons
+        city_index.get_all_doctors = original_get_all_doctors
+        city_index.get_index = original_get_index
+        conversation.nlu_client.classify_message = original_classify
+        conversation.nlu_client.generate_conversational_response = original_generate
+
+
+def test_qr_locked_hospital_id_respects_the_15_minute_window():
+    print("\n--- 15-minute hospital-QR search lock: freshness check ---")
+    from datetime import datetime
+
+    hospital = {"hospitalId": "hosp-A", "name": "Purnea General Hospital"}
+
+    fresh_ctx = {"qr_hospital": hospital, "qr_scanned_at": (conversation._clinic_now() - timedelta(minutes=5)).isoformat()}
+    check(conversation._qr_locked_hospital_id(fresh_ctx) == "hosp-A", "within 15 min -> locked to the scanned hospital")
+
+    stale_ctx = {"qr_hospital": hospital, "qr_scanned_at": (conversation._clinic_now() - timedelta(minutes=20)).isoformat()}
+    check(conversation._qr_locked_hospital_id(stale_ctx) is None, "past 15 min -> no longer locked")
+
+    no_hospital_ctx = {"qr_scanned_at": conversation._clinic_now().isoformat()}
+    check(conversation._qr_locked_hospital_id(no_hospital_ctx) is None, "no qr_hospital at all -> not locked")
+
+    no_timestamp_ctx = {"qr_hospital": hospital}
+    check(conversation._qr_locked_hospital_id(no_timestamp_ctx) is None, "qr_hospital set but no qr_scanned_at -> not locked")
+
+    malformed_ctx = {"qr_hospital": hospital, "qr_scanned_at": "not-a-real-timestamp"}
+    check(conversation._qr_locked_hospital_id(malformed_ctx) is None, "malformed timestamp fails safe to unlocked, not a crash")
+
+
+def test_should_trust_language_detection_distinguishes_direction():
+    print("\n--- Language auto-swap: low-confidence guesses are trusted toward Hindi/Hinglish/Bengali, never toward English ---")
+    # Live-reported: "Dr Payal Anand" (just a name) flipped an entire Hinglish conversation
+    # to English off the single loanword "dr" -- but the existing safety-triage test relies
+    # on a genuinely Hindi/Hinglish sentence ("mere papa behosh ho gaye hain...") still
+    # auto-swapping FROM English TO Hinglish on the same kind of low-confidence keyword
+    # score. Both must keep working -- only the swap-to-English direction is the bug.
+    check(conversation._should_trust_language_detection("en", False) is False, "low-confidence guess pointing at English is never trusted")
+    check(conversation._should_trust_language_detection("hg", False) is True, "low-confidence guess pointing at Hinglish IS trusted")
+    check(conversation._should_trust_language_detection("hi", False) is True, "low-confidence guess pointing at Hindi IS trusted")
+    check(conversation._should_trust_language_detection("bn", False) is True, "low-confidence guess pointing at Bengali IS trusted")
+    check(conversation._should_trust_language_detection("en", True) is True, "script-based (high-confidence) detection is always trusted, even for English")
+
+
+def test_has_searchable_location_treats_hospital_lock_as_a_known_location():
+    print("\n--- _has_searchable_location: a hospital-QR lock counts as a known location, no city/GPS needed ---")
+    hospital = {"hospitalId": "hosp-A", "name": "Purnea General Hospital"}
+    fresh_scan = conversation._clinic_now().isoformat()
+
+    check(conversation._has_searchable_location({"city": "Kishanganj"}) is True, "a plain typed city still counts")
+    check(conversation._has_searchable_location({"patient_lat": 26.1, "patient_lng": 87.9}) is True, "GPS coordinates still count")
+    check(conversation._has_searchable_location({}) is False, "nothing at all -> no searchable location")
+    check(
+        conversation._has_searchable_location({"qr_hospital": hospital, "qr_scanned_at": fresh_scan}) is True,
+        "an active hospital-QR lock counts as a known location too -- no city/GPS needed when the hospital itself is already fixed",
+    )
+    stale_scan = (conversation._clinic_now() - timedelta(minutes=20)).isoformat()
+    check(
+        conversation._has_searchable_location({"qr_hospital": hospital, "qr_scanned_at": stale_scan}) is False,
+        "an EXPIRED hospital-QR lock does not count -- falls back to needing a real city/GPS",
+    )
+
+
+def test_send_doctor_list_scopes_to_locked_hospital_and_skips_radius_search():
+    print("\n--- _send_doctor_list under the hospital-QR lock: hospital_id passed, radius/city logic bypassed ---")
+    import asyncio
+
+    hospital = {"hospitalId": "hosp-A", "name": "Purnea General Hospital"}
+
+    list_doctors_calls = []
+    async def mock_list_doctors(specialty_category, page_size=10, city=None, hospital_id=None):
+        list_doctors_calls.append({"specialty_category": specialty_category, "city": city, "hospital_id": hospital_id})
+        return [{"doctorId": "1", "fullName": "Dr. A", "hospitalId": "hosp-A", "fee": 500}]
+
+    async def poison_fetch_doctors_near(*args, **kwargs):
+        raise AssertionError("_fetch_doctors_near must not run when the hospital-QR lock is active -- radius search is meaningless once a specific hospital is already known")
+
+    original_list_doctors = conversation.hms_client.list_doctors
+    original_fetch_near = conversation._fetch_doctors_near
+    original_render = conversation._render_doctor_list
+    conversation.hms_client.list_doctors = mock_list_doctors
+    conversation._fetch_doctors_near = poison_fetch_doctors_near
+
+    rendered = []
+    async def mock_render(*args, **kwargs):
+        rendered.append((args, kwargs))
+    conversation._render_doctor_list = mock_render
+
+    try:
+        context = {
+            "lang": "en", "specialty_category": "Cardiologist (Heart)",
+            "patient_lat": 26.1, "patient_lng": 87.9,  # would normally trigger the GPS-radius path
+            "qr_hospital": hospital, "qr_scanned_at": conversation._clinic_now().isoformat(),
+        }
+        asyncio.run(conversation._send_doctor_list(None, "919876543210", context))
+
+        check(len(list_doctors_calls) == 1, f"must call list_doctors exactly once, got {len(list_doctors_calls)}")
+        check(list_doctors_calls[0]["hospital_id"] == "hosp-A", f"must pass the locked hospital_id through, got {list_doctors_calls[0]!r}")
+        check(len(rendered) == 1, "still renders the (scoped) doctor list normally")
+    finally:
+        conversation.hms_client.list_doctors = original_list_doctors
+        conversation._fetch_doctors_near = original_fetch_near
+        conversation._render_doctor_list = original_render
+
+
+def test_send_doctor_list_unlocked_still_uses_radius_search_as_before():
+    print("\n--- _send_doctor_list with NO active hospital lock behaves exactly as before ---")
+    import asyncio
+
+    async def mock_fetch_near(specialty_category, context, radius_km, index, cache):
+        return [{"doctorId": "1", "fullName": "Dr. A", "fee": 500}]
+
+    async def poison_list_doctors(*args, **kwargs):
+        raise AssertionError("list_doctors must not be called directly when there's no hospital lock and GPS coordinates are present -- the radius path should run instead")
+
+    async def mock_safe_city_index():
+        return {}
+
+    original_fetch_near = conversation._fetch_doctors_near
+    original_list_doctors = conversation.hms_client.list_doctors
+    original_safe_index = conversation._safe_city_index
+    original_render = conversation._render_doctor_list
+    conversation._fetch_doctors_near = mock_fetch_near
+    conversation.hms_client.list_doctors = poison_list_doctors
+    conversation._safe_city_index = mock_safe_city_index
+
+    rendered = []
+    async def mock_render(*args, **kwargs):
+        rendered.append((args, kwargs))
+    conversation._render_doctor_list = mock_render
+
+    try:
+        context = {
+            "lang": "en", "specialty_category": "Cardiologist (Heart)",
+            "patient_lat": 26.1, "patient_lng": 87.9,
+            # no qr_hospital / qr_scanned_at at all -- must behave exactly as before this feature
+        }
+        asyncio.run(conversation._send_doctor_list(None, "919876543210", context))
+        check(len(rendered) == 1, "unlocked GPS search still resolves and renders normally")
+    finally:
+        conversation._fetch_doctors_near = original_fetch_near
+        conversation.hms_client.list_doctors = original_list_doctors
+        conversation._safe_city_index = original_safe_index
+        conversation._render_doctor_list = original_render
 
 
 if __name__ == "__main__":

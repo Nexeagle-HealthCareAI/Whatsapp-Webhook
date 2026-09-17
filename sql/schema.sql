@@ -187,4 +187,25 @@ BEGIN
 END
 GO
 
+-- Lets a "Book Appointment" tap (e.g. after a no-active-appointment check) offer to reuse
+-- the patient's last location/specialty instead of re-asking from scratch -- but only ever
+-- as a one-tap CONFIRM ("still looking for X near Y?"), never silently, since a shared
+-- family phone means the last search here might not even be the same person. Two separate
+-- timestamp columns (not one shared updated_at, unlike conversation_state) because location
+-- and specialty are written from two different places at two different times.
+IF OBJECT_ID('dbo.patient_last_search') IS NULL
+BEGIN
+    CREATE TABLE dbo.patient_last_search (
+        phone_number NVARCHAR(20) NOT NULL PRIMARY KEY,
+        last_city NVARCHAR(120) NULL,
+        last_location_text NVARCHAR(200) NULL,
+        last_patient_lat FLOAT NULL,
+        last_patient_lng FLOAT NULL,
+        location_updated_at DATETIME2 NULL,
+        last_specialty_category NVARCHAR(120) NULL,
+        specialty_updated_at DATETIME2 NULL
+    );
+END
+GO
+
 

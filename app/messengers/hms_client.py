@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 from pydantic import BaseModel, Field
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.config import settings
 
@@ -15,6 +15,35 @@ _retry_network_errors = retry(
     retry=retry_if_exception_type((httpx.TransportError, httpx.TimeoutException)),
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
+    reraise=True,
+)
+
+
+def _is_5xx_error(exc: BaseException) -> bool:
+    """A 5xx HMS response means the server never even started processing the request
+    (unlike a timeout, where it's ambiguous whether it did) -- safe to retry. Live-reported:
+    1HMS's own /public/doctors intermittently 503s (confirmed transient -- a manual retry
+    seconds later succeeded), and this call had zero automatic retry for it, going straight
+    to a "try again" message a silent retry would likely have avoided. Deliberately its OWN
+    opt-in decorator, not folded into _retry_network_errors (shared by all 16 functions in
+    this file, several of them POST endpoints) -- scoped only to the GET endpoints that were
+    actually live-reported hitting this (list_doctors_at_hospital, get_doctor_availability --
+    the latter caught the exact same 1HMS flakiness live, silently mislabelled as "no slots
+    today" until _send_patient_details_flow was fixed to tell the two apart), not a blanket
+    policy change made as a side effect."""
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code >= 500
+
+
+# 5 attempts / max=8s (worst case ~7.5s of cumulative backoff) instead of the initial 3/max=4
+# (~1.5s) -- live logs confirmed the original budget IS what's firing (3 real attempts, all
+# hitting 5xx), it just isn't always long enough: a follow-up manual retry spaced a few more
+# seconds apart succeeded every time, meaning 1HMS's outage bursts for this endpoint can run
+# longer than ~1.5s. Widened only here, not on _retry_network_errors, for the same "scoped to
+# the one call site this was reported against" reasoning as above.
+_retry_5xx_errors = retry(
+    retry=retry_if_exception(_is_5xx_error),
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=0.5, min=0.5, max=8),
     reraise=True,
 )
 
@@ -67,17 +96,25 @@ async def list_hospitals() -> list[dict[str, Any]]:
 
 @_retry_network_errors
 async def list_doctors(
-    specialty_category: str, page_size: int = 10, city: str | None = None
+    specialty_category: str, page_size: int = 10, city: str | None = None, hospital_id: str | None = None
 ) -> list[dict[str, Any]]:
     """city narrows the search server-side. Without it this returns one page of doctors for
     the whole country, and any client-side "nearest" sort is then only sorting whatever
     arbitrary slice came back — which silently hides the genuinely nearest doctor as soon as
     a specialty has more doctors than fit on a page. `city` is matched case-insensitively
     but exactly by the API, so callers must pass a name that exists (see
-    app/city_index.py) rather than raw patient text."""
+    app/city_index.py) rather than raw patient text.
+
+    hospital_id narrows to one specific hospital server-side, same "hospitalId" param
+    list_doctors_at_hospital below already proves this endpoint accepts -- used by the
+    15-minute hospital-QR search lock (app/conversation/__init__.py's
+    _qr_locked_hospital_id) so a specialty/symptom search during that window only sees
+    doctors at the scanned hospital, not the whole city/network."""
     params: dict[str, Any] = {"specialtyCategory": specialty_category, "pageSize": page_size}
     if city:
         params["city"] = city
+    if hospital_id:
+        params["hospitalId"] = hospital_id
     client = _get_client()
     response = await client.get("/public/doctors", params=params, headers=_headers())
     response.raise_for_status()
@@ -88,6 +125,7 @@ async def list_doctors(
 
 
 @_retry_network_errors
+@_retry_5xx_errors
 async def list_doctors_at_hospital(hospital_id: str, page_size: int = 10) -> list[dict[str, Any]]:
     """Doctors at one specific hospital, no specialty filter -- used by the hospital-name-search
     flow (conversation.py's _search_hospitals_flow) once a hospital match resolves, to show what
@@ -105,6 +143,7 @@ async def list_doctors_at_hospital(hospital_id: str, page_size: int = 10) -> lis
 
 
 @_retry_network_errors
+@_retry_5xx_errors
 async def get_doctor_availability(doctor_id: str, on_date: date_type) -> dict[str, Any]:
     params = {"date": on_date.isoformat()}
     client = _get_client()

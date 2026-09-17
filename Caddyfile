@@ -1,9 +1,29 @@
 # Reference snippet only — NOT run by this repo's docker-compose.yml.
 #
-# The VM already has a shared reverse proxy serving other nexeagle.com subdomains on
-# 80/443. Add this block to THAT existing Caddy config (wherever it lives on the VM),
-# then reload it — do not run a second Caddy instance on this box, it can't also bind
-# 80/443 alongside the one already there.
+# Dev and Prod are two entirely separate stacks on two separate VMs (dev.yml deploys to
+# the Dev VM, deploy-prod.yml deploys to the Prod APP VM), each with its own Meta App/WABA
+# (own WHATSAPP_TOKEN/WHATSAPP_PHONE_NUMBER_ID/WHATSAPP_VERIFY_TOKEN, confirmed as separate
+# GitHub Environment secrets) — but a webhook callback URL is a manual, one-time setting in
+# each Meta App's own dashboard, nothing here enforces it. If Prod's Meta App is still
+# pointed at Dev's domain (e.g. left over from before Prod existed, or copy-pasted from
+# Dev's setup), messages sent to the Prod number get processed and replied to by the DEV
+# bot instead — confirmed live-reported once already. Each environment needs its OWN block
+# below AND its OWN Meta App dashboard pointed at that same block's domain — the two are
+# only actually independent once both match.
+#
+# Both VMs already have a shared reverse proxy serving other nexeagle.com subdomains on
+# 80/443. Add the relevant block below to THAT existing Caddy config on the matching VM
+# (wherever it lives), then reload it — do not run a second Caddy instance on either box,
+# it can't also bind 80/443 alongside the one already there.
+
+# Dev VM (151.185.45.77) -- Meta App dashboard for the DEV/test WABA must point here.
 whatsapp-dev-api.nexeagle.com {
+	reverse_proxy 127.0.0.1:8001
+}
+
+# Prod APP VM (151.185.45.67) -- Meta App dashboard for the PRODUCTION WABA must point
+# here, NOT at whatsapp-dev-api.nexeagle.com above. DNS A record (this subdomain ->
+# 151.185.45.67) already confirmed resolving.
+whatsapp-prod-api.nexeagle.com {
 	reverse_proxy 127.0.0.1:8001
 }

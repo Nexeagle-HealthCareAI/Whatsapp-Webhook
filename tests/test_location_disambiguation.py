@@ -182,6 +182,131 @@ def test_stale_or_unknown_list_reply_id_reprompts_the_same_list():
         conversation.whatsapp_client.send_list = original_send_list
 
 
+def test_list_reply_with_no_active_location_list_reprompts_instead_of_sending_an_empty_list():
+    """Live-reported: a patient re-tapped a STALE interactive message (WhatsApp never
+    disables past interactive messages) after the conversation had already moved on to
+    choosing_location, delivering a list_reply id that isn't a language code and doesn't
+    match anything -- location_options is empty, so there's no disambiguation list active
+    at all. The old code treated any unmatched list_reply as "re-show the current list,"
+    which built a location list with ZERO rows; WhatsApp Cloud API rejects an empty list,
+    so the send silently failed and the patient got no reply whatsoever. Must re-issue the
+    real location prompt instead."""
+    sent_lists = []
+    sent_location_prompts = []
+    sent_texts = []
+
+    async def mock_send_list(client, to, text, button_label, rows, section_title="Options"):
+        sent_lists.append(rows)
+
+    async def mock_send_location_request(client, to, text):
+        sent_location_prompts.append(text)
+
+    async def mock_send_text(client, to, text):
+        sent_texts.append(text)
+
+    original_send_list = conversation.whatsapp_client.send_list
+    original_send_location_request = conversation.whatsapp_client.send_location_request
+    original_send_text = conversation.whatsapp_client.send_text
+    conversation.whatsapp_client.send_list = mock_send_list
+    conversation.whatsapp_client.send_location_request = mock_send_location_request
+    conversation.whatsapp_client.send_text = mock_send_text
+    try:
+        booking = booking_slots.empty()
+        context = {"lang": "en", "booking": booking}  # no location_options set
+        run(location_module._handle_choosing_location(None, "919876543210", "list_reply", "stale-id-99", context))
+        check(len(sent_lists) == 0, f"must never build a location list with no options to show, got {len(sent_lists)} list send(s)")
+        check(len(sent_location_prompts) == 1, "must re-issue the real location prompt instead of going silent")
+        check(len(sent_texts) == 1, "must re-send the manual-entry hint alongside the location prompt")
+    finally:
+        conversation.whatsapp_client.send_list = original_send_list
+        conversation.whatsapp_client.send_location_request = original_send_location_request
+        conversation.whatsapp_client.send_text = original_send_text
+
+
+def test_stale_language_pick_during_choosing_location_switches_language_and_reasks():
+    """Product expectation: WhatsApp keeps the ORIGINAL welcome/language list tappable
+    forever, so a patient can pick a DIFFERENT language from it even after choosing_location
+    has already started (e.g. picked English, then goes back and taps Hindi instead). That's
+    an unambiguous, deliberate signal -- must switch the active language and re-ask for
+    location in the NEW language, not silently re-prompt in whatever language was set
+    before."""
+    sent_texts = []
+    sent_location_prompts = []
+    saved_states = []
+
+    async def mock_send_text(client, to, text):
+        sent_texts.append(text)
+
+    async def mock_send_location_request(client, to, text):
+        sent_location_prompts.append(text)
+
+    class _RecordingDb:
+        async def save_conversation_state(self, phone, step, context):
+            saved_states.append((step, context))
+
+    original_send_text = conversation.whatsapp_client.send_text
+    original_send_location_request = conversation.whatsapp_client.send_location_request
+    original_db = conversation.db
+    conversation.whatsapp_client.send_text = mock_send_text
+    conversation.whatsapp_client.send_location_request = mock_send_location_request
+    conversation.db = _RecordingDb()
+    try:
+        booking = booking_slots.empty()
+        booking_slots.fill(booking, "lang", "en", source="user")
+        context = {"lang": "en", "booking": booking}
+        run(location_module._handle_choosing_location(None, "919876543210", "list_reply", "hi", context))
+
+        check(context.get("lang") == "hi", f"the tapped language must actually take effect, got lang={context.get('lang')!r}")
+        check(context["booking"]["lang"]["value"] == "hi", "the booking clipboard's lang slot must be updated too")
+        check(len(sent_location_prompts) == 1, "must re-ask for location once the language switches")
+        check(any("हिंदी" in t or "हिन्दी" in t for t in sent_texts), f"the greeting must actually be sent in the NEW language, got sent_texts={sent_texts!r}")
+        check(len(saved_states) == 1 and saved_states[0][0] == "choosing_location", f"the language switch must be persisted, staying on choosing_location, got {saved_states!r}")
+    finally:
+        conversation.whatsapp_client.send_text = original_send_text
+        conversation.whatsapp_client.send_location_request = original_send_location_request
+        conversation.db = original_db
+
+
+def test_resolving_a_location_saves_it_as_the_patients_last_known_location():
+    """Feeds the "still looking near {city}?" reuse prompt on a later Book Appointment tap
+    (app/conversation/last_search.py) -- independent of conversation_state, which gets wiped
+    on a full restart. Must fire on every real resolution, not just this one flow."""
+    original_db = conversation.db
+    original_advance = conversation._advance_booking_flow
+
+    class _RecordingDb:
+        def __init__(self):
+            self.saved_locations = []
+
+        async def save_last_location(self, phone, city, location_text, lat, lng):
+            self.saved_locations.append((phone, city, location_text, lat, lng))
+
+    db_mock = _RecordingDb()
+
+    async def mock_advance(client, phone, context, booking):
+        pass
+
+    original_search_locations = location_client.search_locations
+    location_client.search_locations = AsyncMock(return_value=[MUMBAI])
+
+    conversation.db = db_mock
+    conversation._advance_booking_flow = mock_advance
+    try:
+        booking = booking_slots.empty()
+        booking_slots.fill(booking, "lang", "en", source="user")
+        context = {"lang": "en", "booking": booking}
+        run(location_module._handle_choosing_location(None, "919876543210", "text", "mumbai", context))
+
+        check(len(db_mock.saved_locations) == 1, f"must record the resolved location, got {db_mock.saved_locations!r}")
+        phone, city, location_text, lat, lng = db_mock.saved_locations[0]
+        check(city == "Mumbai", f"records the resolved city, got {city!r}")
+        check(lat == 18.98, f"records the resolved coordinates, got lat={lat!r}")
+    finally:
+        conversation.db = original_db
+        conversation._advance_booking_flow = original_advance
+        location_client.search_locations = original_search_locations
+
+
 if __name__ == "__main__":
     test_single_match_resolves_directly_with_coordinates()
     test_single_match_without_coordinates_still_sets_city()
@@ -190,6 +315,9 @@ if __name__ == "__main__":
     test_api_failure_falls_back_to_local_city_index()
     test_picking_from_the_disambiguation_list_resolves_and_advances()
     test_stale_or_unknown_list_reply_id_reprompts_the_same_list()
+    test_list_reply_with_no_active_location_list_reprompts_instead_of_sending_an_empty_list()
+    test_stale_language_pick_during_choosing_location_switches_language_and_reasks()
+    test_resolving_a_location_saves_it_as_the_patients_last_known_location()
 
     print("\n" + "=" * 50)
     if failures:

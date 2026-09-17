@@ -289,6 +289,17 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Ab aur peeche nahi ja sakte. Phir se shuru kar rahe hain...",
         "bn": "আর পিছনে যাওয়া যাবে না। আবার শুরু করা হচ্ছে...",
     },
+    # Sent when generate_conversational_response (the casual-chat LLM call) fails or returns
+    # nothing -- t()'s own fallback for a genuinely missing key is the raw key string itself
+    # (see t()'s docstring), which is exactly what a patient saw on screen before this key
+    # existed here. Kept deliberately generic since the caller has no idea what the patient
+    # actually meant.
+    "error_nlu_fallback": {
+        "en": "Sorry, I didn't quite catch that. Let's continue:",
+        "hi": "माफ़ कीजिए, मैं समझ नहीं पाया। चलिए आगे बढ़ते हैं:",
+        "hg": "Sorry, samajh nahi paya. Chaliye aage badhte hain:",
+        "bn": "দুঃখিত, বুঝতে পারিনি। চলুন এগিয়ে যাই:",
+    },
     "you": {"en": "You", "hi": "आप", "hg": "Aap", "bn": "আপনি"},
     "clinic_unknown": {"en": "Clinic", "hi": "क्लिनिक", "hg": "Clinic", "bn": "ক্লিনিক"},
     "patient_details_prompt_flow": {
@@ -390,11 +401,15 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Specialty dekhein",
         "bn": "বিশেষজ্ঞতা খুঁজুন",
     },
+    # Sent as a quick-reply button label -- _MAX_BUTTON_TITLE is 20 chars, and every one
+    # of these was over budget (21-31 chars), silently truncated by send_buttons's own
+    # title[:_MAX_BUTTON_TITLE] slicing ("Search by doctor name" -> "Search by doctor nam",
+    # live-reported). Shortened, not just English.
     "search_mode_name": {
-        "en": "Search by doctor name",
-        "hi": "डॉक्टर के नाम से खोजें",
-        "hg": "Doctor ke naam se search karein",
-        "bn": "ডাক্তারের নাম দিয়ে খুঁজুন",
+        "en": "Search by name",
+        "hi": "नाम से खोजें",
+        "hg": "Naam se khojein",
+        "bn": "নাম দিয়ে খুঁজুন",
     },
     "doctor_name_ask": {
         "en": "Please type the name of the doctor you are looking for:",
@@ -766,11 +781,11 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Zaroor! Aapke liye achha {specialty} dhoondte hain.",
         "bn": "অবশ্যই! আপনার জন্য একজন ভালো {specialty} খুঁজি।",
     },
-    "doctor_too_many_ask_location": {
-        "en": "We have {count}+ doctors matching '{query}' — share your location so I can find the right one quickly:",
-        "hi": "'{query}' नाम से हमारे पास {count}+ डॉक्टर हैं — सही वाले तक जल्दी पहुंचने के लिए कृपया अपनी लोकेशन शेयर करें:",
-        "hg": "'{query}' naam se hamare paas {count}+ doctors hain — sahi wale tak jaldi pahunchne ke liye apni location share kar dijiye:",
-        "bn": "'{query}' নামে আমাদের কাছে {count}+ ডাক্তার আছেন — সঠিকজনকে দ্রুত খুঁজে পেতে অনুগ্রহ করে আপনার লোকেশন শেয়ার করুন:",
+    "doctor_ambiguous_ask_location": {
+        "en": "We found {count} doctors matching '{query}' — share your location so I can find the right one quickly:",
+        "hi": "'{query}' नाम से हमें {count} डॉक्टर मिले हैं — सही वाले तक जल्दी पहुंचने के लिए कृपया अपनी लोकेशन शेयर करें:",
+        "hg": "'{query}' naam se humein {count} doctors mile hain — sahi wale tak jaldi pahunchne ke liye apni location share kar dijiye:",
+        "bn": "'{query}' নামে আমরা {count} জন ডাক্তার পেয়েছি — সঠিকজনকে দ্রুত খুঁজে পেতে অনুগ্রহ করে আপনার লোকেশন শেয়ার করুন:",
     },
     "doctor_match_found_detailed": {
         "en": "Found {doctor} for you — {details}.",
@@ -997,16 +1012,45 @@ _STRINGS: dict[str, dict[str, str]] = {
         "bn": "{hospital}-এ আপনাকে স্বাগতম! আমি আপনাকে কীভাবে সাহায্য করতে পারি?",
     },
     "check_appointment_status_btn": {
-        "en": "Check Status",
-        "hi": "स्थिति देखें",
-        "hg": "Check Status",
-        "bn": "স্ট্যাটাস দেখুন",
+        "en": "My Appointment",
+        "hi": "मेरी अपॉइंटमेंट",
+        "hg": "Meri Appointment",
+        "bn": "আমার বুকিং",
     },
     "no_active_appointment_at_hospital": {
         "en": "We couldn't find an active appointment for you at {hospital}. Tap below to book one, or just type \"book appointment\".",
         "hi": "{hospital} में आपकी कोई सक्रिय अपॉइंटमेंट नहीं मिली। बुक करने के लिए नीचे टैप करें, या \"book appointment\" टाइप करें।",
         "hg": "{hospital} mein aapki koi active appointment nahi mili. Book karne ke liye neeche tap karein, ya \"book appointment\" type karein.",
         "bn": "{hospital}-এ আপনার কোনো সক্রিয় অ্যাপয়েন্টমেন্ট পাওয়া যায়নি। বুক করতে নিচে ট্যাপ করুন, অথবা \"book appointment\" টাইপ করুন।",
+    },
+    # See app/conversation/last_search.py -- offered on a "Book Appointment" tap when both a
+    # location and a specialty were resolved within the last 24h. Always a confirm, never
+    # silent reuse (a shared family phone number could mean the last search wasn't even the
+    # same person).
+    "reuse_last_search_prompt": {
+        "en": "Last time you looked for {specialty} near {city} — still looking for the same thing?",
+        "hi": "पिछली बार आपने {city} के पास {specialty} खोजा था — क्या अभी भी वही चाहिए?",
+        "hg": "Pichli baar aapne {city} ke paas {specialty} khoja tha — kya abhi bhi wahi chahiye?",
+        "bn": "আগেরবার আপনি {city}-এর কাছে {specialty} খুঁজেছিলেন — এখনও কি একই জিনিস চাই?",
+    },
+    "reuse_last_search_yes_btn": {"en": "Yes", "hi": "हां", "hg": "Haan", "bn": "হ্যাঁ"},
+    "reuse_last_search_change_location_btn": {
+        "en": "Change Location",
+        "hi": "स्थान बदलें",
+        "hg": "Location Badlein",
+        "bn": "লোকেশন পরিবর্তন",
+    },
+    "reuse_last_search_change_specialty_btn": {
+        "en": "Change Specialty",
+        "hi": "विशेषज्ञता बदलें",
+        "hg": "Specialty Badlein",
+        "bn": "বিশেষত্ব পরিবর্তন",
+    },
+    "reuse_last_search_choose_hint": {
+        "en": "Please tap Yes, Change Location, or Change Specialty.",
+        "hi": "कृपया हां, स्थान बदलें, या विशेषज्ञता बदलें में से कोई एक चुनें।",
+        "hg": "Kripya Haan, Location Badlein, ya Specialty Badlein mein se koi ek chunein.",
+        "bn": "অনুগ্রহ করে হ্যাঁ, লোকেশন পরিবর্তন, বা বিশেষত্ব পরিবর্তন থেকে একটি বেছে নিন।",
     },
 }
 

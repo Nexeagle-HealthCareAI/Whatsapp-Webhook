@@ -114,7 +114,12 @@ async def _search_doctors_flow(client, phone: str, context: dict, current_step: 
     lat, lng = context.get("patient_lat"), context.get("patient_lng")
     city = context.get("city")
 
-    resolution = resolve_doctor(query, all_docs, city=city, patient_lat=lat, patient_lng=lng)
+    # 15-minute hospital-QR search lock -- see conversation._qr_locked_hospital_id's
+    # docstring. Scopes a typed doctor-name search the same way _send_doctor_list already
+    # scopes a specialty/symptom search, so the restriction applies no matter which entry
+    # point the patient uses.
+    hospital_id = conversation._qr_locked_hospital_id(context)
+    resolution = resolve_doctor(query, all_docs, city=city, patient_lat=lat, patient_lng=lng, hospital_id=hospital_id)
     if resolution.status == "zero":
         return False
 
@@ -147,7 +152,9 @@ async def _search_doctors_flow(client, phone: str, context: dict, current_step: 
                 hospital_id=hospital_id, lead_type="DoctorNameSearch", search_query=query, mobile=phone,
             )
 
-    await conversation._render_doctor_list(client, phone, context, resolution.candidates, current_step)
+    await conversation._render_doctor_list(
+        client, phone, context, resolution.candidates, current_step, min_matches_before_location_ask=1,
+    )
     return True
 
 
@@ -212,8 +219,17 @@ async def _resolve_hospital_search_match(
     try:
         doctors = await hms_client.list_doctors_at_hospital(hospital_id)
     except Exception as exc:
+        # A genuine fetch FAILURE (network error, HMS 503/timeout) -- distinct from "zero
+        # doctors" below, which is a real, successful answer. Live-reported: this used
+        # "search_doctor_not_found" ("we couldn't find a doctor matching '{query}'"), but
+        # `query` here is the HOSPITAL's own name (this function only ever runs once the
+        # hospital is already known/resolved, e.g. from the hospital-QR menu) -- worded as
+        # though the patient's own search term was bad, when actually 1HMS's own
+        # /public/doctors endpoint was down for a moment. error_hms is the same generic
+        # "something went wrong, try again" message every other HMS-fetch failure in this
+        # codebase already uses.
         conversation.logger.error("Failed to fetch doctors for hospital %s: %s", hospital_id, exc)
-        await conversation.whatsapp_client.send_text(client, phone, t("search_doctor_not_found", lang, query=query))
+        await conversation.whatsapp_client.send_text(client, phone, t("error_hms", lang))
         return
 
     if not doctors:

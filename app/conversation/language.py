@@ -23,6 +23,37 @@ from app.conversation.shared import _match_choice
 from app.types import ConversationContext
 
 
+def _detect_stale_language_pick(input_type: str, input_value: str, context: ConversationContext) -> str | None:
+    """WhatsApp never disables past interactive messages, so a patient can tap a DIFFERENT
+    language on the original welcome/language list at any later step, not just while
+    choosing_language itself. Returns the newly-picked language code when that's what this
+    input looks like (an unambiguous, deliberate signal worth honouring even mid-flow), or
+    None for everything else -- including the SAME language being re-picked, which isn't a
+    switch at all."""
+    if input_type != "list_reply":
+        return None
+    if input_value not in LANGUAGE_LABELS:
+        return None
+    if input_value == context.get("lang"):
+        return None
+    return input_value
+
+
+async def _apply_stale_language_switch(client, phone: str, context: ConversationContext, new_lang: str) -> None:
+    """Switches the active language mid-flow per _detect_stale_language_pick, and sends the
+    same "continuing in X" greeting _handle_choosing_language sends on a fresh pick. Does NOT
+    persist state or re-prompt the current step -- the caller (whichever step handler is
+    re-asking its own question) owns both, since only it knows what to re-ask and under what
+    step name."""
+    from app import conversation
+
+    context["lang"] = new_lang
+    booking = conversation._get_or_create_clipboard(context)
+    booking_slots.fill(booking, "lang", new_lang, source="user")
+    context["booking"] = booking
+    await conversation.whatsapp_client.send_text(client, phone, t("greeting", new_lang))
+
+
 def _detect_language(text: str) -> tuple[str | None, bool]:
     if not text:
         return None, False

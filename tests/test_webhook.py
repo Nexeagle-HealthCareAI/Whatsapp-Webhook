@@ -124,6 +124,68 @@ def test_verify_signature_validation():
     check(response.status_code == 401, f"Expected 401, got {response.status_code}")
 
 
+def _signed_post(payload: dict):
+    body_bytes = json.dumps(payload).encode("utf-8")
+    sig = hmac.new(settings.whatsapp_app_secret.encode("utf-8"), body_bytes, hashlib.sha256).hexdigest()
+    return client.post("/webhook", content=body_bytes, headers={"X-Hub-Signature-256": f"sha256={sig}"})
+
+
+def _message_payload(phone_number_id, message_id):
+    return {
+        "object": "whatsapp_business_account",
+        "entry": [{
+            "changes": [{
+                "value": {
+                    "metadata": {"phone_number_id": phone_number_id},
+                    "contacts": [{"wa_id": "919876543210", "profile": {"name": "Test"}}],
+                    "messages": [{
+                        "id": message_id, "from": "919876543210", "type": "text",
+                        "text": {"body": "hello"},
+                    }],
+                },
+            }],
+        }],
+    }
+
+
+def test_webhook_for_a_different_phone_number_id_is_ignored():
+    print("\n--- Live-reported: a Meta App dashboard pointed at the wrong environment's callback URL must not get processed/replied to here ---")
+    _mock_redis_instance.data.pop(settings.booking_jobs_key, None)
+
+    response = _signed_post(_message_payload("some-other-environments-phone-number-id", "wamid.other-env-1"))
+    check(response.status_code == 200, f"still acks 200 (Meta shouldn't see this as a failure to retry), got {response.status_code}")
+    check(
+        settings.booking_jobs_key not in _mock_redis_instance.data,
+        f"does NOT enqueue a message meant for a different phone_number_id, got {_mock_redis_instance.data.get(settings.booking_jobs_key)!r}",
+    )
+
+
+def test_webhook_for_this_servers_own_phone_number_id_still_works():
+    print("\n--- Sanity: a genuine message for THIS server's own configured number is unaffected ---")
+    _mock_redis_instance.data.pop(settings.booking_jobs_key, None)
+
+    response = _signed_post(_message_payload(settings.whatsapp_phone_number_id, "wamid.own-env-1"))
+    check(response.status_code == 200, f"Expected 200, got {response.status_code}")
+    check(
+        settings.booking_jobs_key in _mock_redis_instance.data and len(_mock_redis_instance.data[settings.booking_jobs_key]) == 1,
+        f"still enqueues a genuine message for this server's own number, got {_mock_redis_instance.data.get(settings.booking_jobs_key)!r}",
+    )
+
+
+def test_webhook_with_no_phone_number_id_metadata_still_works():
+    print("\n--- Fails open when metadata.phone_number_id is simply absent from the payload, same as every other malformed/missing-data case in this codebase ---")
+    _mock_redis_instance.data.pop(settings.booking_jobs_key, None)
+
+    payload = _message_payload(None, "wamid.no-metadata-1")
+    del payload["entry"][0]["changes"][0]["value"]["metadata"]
+    response = _signed_post(payload)
+    check(response.status_code == 200, f"Expected 200, got {response.status_code}")
+    check(
+        settings.booking_jobs_key in _mock_redis_instance.data,
+        f"still enqueues when phone_number_id metadata is simply missing, got {_mock_redis_instance.data.get(settings.booking_jobs_key)!r}",
+    )
+
+
 def test_qr_redirects():
     original_display = settings.whatsapp_display_number
     original_get_hospital = hms_client.get_hospital_by_code
@@ -202,7 +264,13 @@ def test_qr_redirects():
 
 
 if __name__ == "__main__":
-    tests = [test_verify_webhook, test_verify_signature_validation, test_qr_redirects]
+    tests = [
+        test_verify_webhook, test_verify_signature_validation,
+        test_webhook_for_a_different_phone_number_id_is_ignored,
+        test_webhook_for_this_servers_own_phone_number_id_still_works,
+        test_webhook_with_no_phone_number_id_metadata_still_works,
+        test_qr_redirects,
+    ]
     for test in tests:
         test()
         print(f"  ran {test.__name__}")

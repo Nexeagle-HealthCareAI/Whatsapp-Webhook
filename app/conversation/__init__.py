@@ -9,6 +9,9 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app import db, i18n
+# Pure, no I/O -- imported directly rather than reached via `db.` so it isn't part of the
+# mockable database surface every test's db stub would otherwise need to implement.
+from app.db.patient_last_search import is_last_search_fresh as _is_last_search_fresh
 from app.messengers import city_index, conversation_log_queue, hms_client, symptom_client, whatsapp_client
 from app.messengers.redis_client import get_redis
 from app.decision_maker import booking_slots
@@ -65,6 +68,7 @@ from app.conversation.checkin import (
     _handle_checkin_trigger,
     _handle_checkin_awaiting_location, _handle_checkin_choosing_appointment, _finish_checkin,
     _start_hospital_action_menu, _handle_choosing_hospital_action, _prompt_choosing_hospital_action,
+    _dispatch_hospbook_action,
 )
 from app.conversation.appointment_actions import (
     _start_appointment_action_flow, _INTENT_TO_APPT_ACTION,
@@ -74,6 +78,9 @@ from app.conversation.appointment_actions import (
     _handle_viewing_appointment_status, _handle_awaiting_reschedule_date,
     _prompt_appointment_choice, _prompt_appointment_confirm,
     _prompt_viewing_appointment_status, _prompt_awaiting_reschedule_date,
+)
+from app.conversation.last_search import (
+    _prompt_confirming_last_search, _handle_confirming_last_search,
 )
 
 logger = logging.getLogger("conversation")
@@ -281,12 +288,29 @@ async def handle_message(
     await conversation_log_queue.log_event(
         get_redis(), context["session_id"], phone, "in", input_type, input_value, current_step
     )
+    # Hospital-QR welcome menu buttons (Book Appointment / My Appointment) -- handled
+    # regardless of conversation state, same reasoning as "start_booking" just below.
+    # WhatsApp keeps every past interactive message tappable forever, so a patient who has
+    # since moved on to a LATER step (e.g. picking a doctor from the list Book Appointment
+    # itself sent) can still go back and tap the ORIGINAL welcome menu message. Without this,
+    # that tap got routed to whatever step's handler is current instead -- which doesn't
+    # recognize "hospbook_book"/"hospbook_status" as valid input for ITS OWN step, and just
+    # replied with a generic "please choose from the list above", silently swallowing the
+    # patient's actual request. Live-reported: tapping "My Appointment" while mid-way through
+    # picking a doctor did nothing useful. Not gated by the 15-minute search lock
+    # (_qr_locked_hospital_id) -- that only governs how long IMPLICIT search scoping lasts,
+    # this is an explicit button tap naming its own hospital, which should just always work.
+    if input_type == "button_reply" and input_value in ("hospbook_book", "hospbook_status") and context.get("qr_hospital"):
+        await _dispatch_hospbook_action(client, phone, context, current_step, input_value, context["qr_hospital"])
+        return
+
     # "Book Appointment" button offered after a no-active-appointment response (see
     # appointment_actions.py's _start_appointment_action_flow) -- that response clears
-    # conversation_state right after sending it, so this tap usually arrives with no prior
-    # state to dispatch on; same "begin a fresh conversation" entry point any other
-    # zero-state message would reach via _confirm_or_start_language's own no-language-detected
-    # fallback, just reached directly since a button tap never carries text to guess from.
+    # conversation_state right after sending it (dropping any stale doctor/location/slot from
+    # whatever was being booked before), but deliberately keeps ONLY lang, so this tap
+    # usually arrives with just that much prior state. A patient who's already told the bot
+    # their language shouldn't have to pick it again just because there was no active
+    # appointment to show -- see the pending_lang branch below.
     #
     # Exception: tapped from the active-appointment-conflict status card (see
     # routed.action == "active_appointment_conflict" below) with a doctor name the patient
@@ -303,6 +327,54 @@ async def handle_message(
             if await _search_doctors_flow(client, phone, new_context, "awaiting_doctor_name"):
                 return
             await _handle_doctor_search_miss(client, phone, new_context, pending_doctor_name)
+            return
+        if pending_lang:
+            # Language is already known this conversation (either the exception case above
+            # minus a doctor name, or the plain no-active-appointment screen, which now keeps
+            # ONLY lang across its own state clear -- see appointment_actions.py) -- skip
+            # re-asking it.
+            #
+            # Still within the hospital-QR lock window (see _qr_locked_hospital_id) -- go
+            # straight to THAT hospital's own doctor list, same as the welcome menu's own
+            # Book Appointment button, rather than asking for location/search-mode the
+            # generic flow below would otherwise need. Live-reported: scanning a hospital's
+            # QR, tapping Check Status, finding nothing, then tapping Book Appointment from
+            # that screen asked for location -- confusing when the bot already knows exactly
+            # which hospital the patient is at.
+            qr_hospital = context.get("qr_hospital")
+            if qr_hospital and _qr_locked_hospital_id(context):
+                booking = booking_slots.empty()
+                booking_slots.fill(booking, "lang", pending_lang, source="user")
+                new_context = {
+                    "lang": pending_lang, "booking": booking, "session_id": context.get("session_id"),
+                    "qr_hospital": qr_hospital, "qr_scanned_at": context.get("qr_scanned_at"),
+                }
+                await _resolve_hospital_search_match(
+                    client, phone, new_context, qr_hospital, qr_hospital.get("name") or "", current_step,
+                    lead_type="HospitalQRScan",
+                )
+                return
+            # If a location+specialty search is also on record from within the last 24h,
+            # offer to reuse it (confirm-first, never silent -- see app/conversation/
+            # last_search.py's module docstring for why); otherwise go straight to location,
+            # same as any other already-in-flow booking.
+            last_search = await db.get_last_search(phone)
+            if _is_last_search_fresh(last_search):
+                new_context = {
+                    "lang": pending_lang, "session_id": context.get("session_id"),
+                    "last_search_specialty": last_search["last_specialty_category"],
+                    "last_search_city": last_search["last_city"],
+                    "last_search_location_text": last_search["last_location_text"],
+                    "last_search_lat": last_search["last_patient_lat"],
+                    "last_search_lng": last_search["last_patient_lng"],
+                }
+                await _transition_to(phone, "confirming_last_search", new_context, current_step)
+                await _prompt_confirming_last_search(client, phone, new_context)
+                return
+            booking = booking_slots.empty()
+            booking_slots.fill(booking, "lang", pending_lang, source="user")
+            new_context = {"lang": pending_lang, "booking": booking, "session_id": context.get("session_id")}
+            await _advance_booking_flow(client, phone, new_context, booking)
             return
         await _start(client, phone)
         return
@@ -346,8 +418,8 @@ async def handle_message(
     lang = context.get("lang")
     has_lang_init = lang is not None
     if input_type == "text" and input_value.strip() and has_lang_init:
-        detected_lang, _ = _detect_language(input_value)
-        if detected_lang and detected_lang != lang:
+        detected_lang, is_high_confidence = _detect_language(input_value)
+        if detected_lang and _should_trust_language_detection(detected_lang, is_high_confidence) and detected_lang != lang:
             logger.info("Auto-swapping language from %s to %s for user %s", lang, detected_lang, phone)
             lang = detected_lang
             context["lang"] = lang
@@ -603,7 +675,7 @@ async def handle_message(
                 new_context.pop("pending_specialty_is_symptom", None)
                 new_context.pop("search_symptom", None)
                 
-                has_loc = new_context.get("city") or (new_context.get("patient_lat") is not None and new_context.get("patient_lng") is not None)
+                has_loc = _has_searchable_location(new_context)
                 if new_context.get("lang") and has_loc:
                     await _transition_to(phone, "awaiting_doctor_name", new_context, current_step)
                     if await _search_doctors_flow(client, phone, new_context, "awaiting_doctor_name"):
@@ -625,7 +697,7 @@ async def handle_message(
                 if matched:
                     new_context["pending_specialty"] = matched
                     new_context["pending_specialty_is_symptom"] = False
-                    has_loc = new_context.get("city") or (new_context.get("patient_lat") is not None and new_context.get("patient_lng") is not None)
+                    has_loc = _has_searchable_location(new_context)
                     if new_context.get("lang") and has_loc:
                         await _send_sort_prompt(
                             client, phone, new_context, matched, current_step,
@@ -658,7 +730,7 @@ async def handle_message(
                 if matched:
                     new_context["pending_specialty"] = matched
                     new_context["pending_specialty_is_symptom"] = True
-                    has_loc = new_context.get("city") or (new_context.get("patient_lat") is not None and new_context.get("patient_lng") is not None)
+                    has_loc = _has_searchable_location(new_context)
                     if new_context.get("lang") and has_loc:
                         await _send_sort_prompt(
                             client, phone, new_context, matched, current_step,
@@ -818,6 +890,24 @@ async def handle_message(
                 if current_step not in (
                     "awaiting_symptom", "awaiting_doctor_name", "awaiting_patient_details",
                     "checkin_awaiting_location", "checkin_choosing_appointment",
+                    # Free-text answers here (a typed city name / a typed reschedule date)
+                    # routinely have no doctor_name/specialty/symptom entity for the NLU to
+                    # extract and get classified out_of_scope -- without excluding these two,
+                    # that sent a casual LLM chat reply and then re-sent the SAME location/
+                    # date prompt, over and over, on every single reply the patient typed.
+                    # Live-reported: typing a real city ("kishanganj") twice in a row while the
+                    # bot was in choosing_location produced two casual "Hi there!" replies and
+                    # never once actually resolved the city.
+                    "choosing_location", "awaiting_reschedule_date",
+                    # _handle_choosing_search_mode already handles a directly-typed doctor name
+                    # here via _is_doctor_search_query + _search_doctors_flow (a patient typing
+                    # "Dr. Avinash" instead of tapping "Search by doctor name" is a completely
+                    # normal reply, not off-topic) -- without this exclusion that never got a
+                    # chance to run, since a bare doctor name usually carries no NLU-extracted
+                    # entity either. Live-reported: typing "Dr. Avinash" here got a casual-chat
+                    # reply (or, when that LLM call itself failed, the literal untranslated
+                    # string "error_nlu_fallback") followed by the same search-mode prompt again.
+                    "choosing_search_mode",
                 ):
                     try:
                         dynamic_reply = await nlu_client.generate_conversational_response(client, "general_chat", context, input_value)
@@ -909,6 +999,57 @@ def _clinic_now() -> datetime:
     return datetime.now(ZoneInfo(settings.clinic_timezone))
 
 
+_QR_HOSPITAL_LOCK_MINUTES = 15
+
+
+def _qr_locked_hospital_id(context: ConversationContext) -> str | None:
+    """The hospital a patient's search should be silently scoped to, if they scanned this
+    hospital's QR within the last _QR_HOSPITAL_LOCK_MINUTES -- makes the QR feel genuinely
+    hospital-dedicated rather than just a one-time welcome message. Deliberately invisible:
+    no message says scoping started or stopped, in either direction. Fails safe (returns
+    None, i.e. unscoped) on any missing/malformed data rather than raising -- a corrupted
+    timestamp must never crash a doctor search, worst case it just stops scoping."""
+    hospital = context.get("qr_hospital")
+    scanned_at = context.get("qr_scanned_at")
+    if not hospital or not scanned_at:
+        return None
+    try:
+        scanned = datetime.fromisoformat(scanned_at)
+    except (TypeError, ValueError):
+        return None
+    if _clinic_now() - scanned > timedelta(minutes=_QR_HOSPITAL_LOCK_MINUTES):
+        return None
+    return hospital.get("hospitalId")
+
+
+def _should_trust_language_detection(detected_lang: str, is_high_confidence: bool) -> bool:
+    """Whether a mid-conversation _detect_language result is trustworthy enough to silently
+    flip the active language. A low-confidence keyword-overlap guess is trusted when it
+    points at Hindi/Hinglish/Bengali (the patient's own native-language content words are a
+    meaningful signal even without full script), but NOT when it points at English --
+    _detect_language's own comment already flags English keywords as "frequently used as
+    loanwords in other languages" (dr/doctor/book/etc. show up constantly inside otherwise
+    Hindi/Hinglish text), yet the caller used to trust any detection equally. Live-reported:
+    "Dr Payal Anand" -- just a name -- flipped an entire Hinglish conversation to English off
+    that single loanword. Script-based detection (is_high_confidence) is always trusted
+    regardless of which language it points at."""
+    return is_high_confidence or detected_lang != "en"
+
+
+def _has_searchable_location(context: ConversationContext) -> bool:
+    """True if a doctor search can proceed without asking the patient for a location --
+    either a real city/GPS is already known, OR the hospital-QR lock
+    (_qr_locked_hospital_id) already scopes the search to one specific hospital, which
+    needs no location narrowing at all. Live-reported gap: the "global NLU intent" doctor/
+    specialty/symptom dispatch below only ever checked city/GPS, so typing a doctor's name
+    while a hospital-QR lock was active still asked for location -- the lock only ever
+    protected _search_doctors_flow/_send_doctor_list directly, not every entry point that
+    eventually calls them."""
+    if context.get("city") or (context.get("patient_lat") is not None and context.get("patient_lng") is not None):
+        return True
+    return bool(_qr_locked_hospital_id(context))
+
+
 async def _fetch_doctors_near(
     specialty_category: str, context: ConversationContext, radius_km: float, index: dict, cache: dict
 ) -> list[dict]:
@@ -965,11 +1106,26 @@ async def _fetch_doctors_near(
 
 async def _send_doctor_list(client: httpx.AsyncClient, phone: str, context: ConversationContext) -> None:
     lang = context.get("lang")
-    specialty_category = context["specialty_category"]
+    specialty_category = context.get("specialty_category")
 
     doctors: list[dict] = []
     used_radius: float | None = None
-    if context.get("patient_lat") is not None:
+    locked_hospital_id = _qr_locked_hospital_id(context)
+    if locked_hospital_id and not specialty_category:
+        # Reached with a QR-locked hospital but no specialty ever searched -- e.g. "Different
+        # doctor" tapped after a hospital-QR "Book Appointment" found no slots today, which
+        # never went through a specialty/symptom search at all (see
+        # _resolve_hospital_search_match). Nothing to narrow by, so just re-list that same
+        # hospital's own doctors, same call _resolve_hospital_search_match itself uses.
+        doctors = await hms_client.list_doctors_at_hospital(locked_hospital_id, page_size=50)
+    elif locked_hospital_id:
+        # 15-minute hospital-QR search lock -- radius/city narrowing below is meaningless
+        # once a specific hospital is already known, so fetch scoped to it directly and skip
+        # straight to the shared "no doctors" / render logic below. Falls through to that
+        # SAME empty-state message on zero results -- deliberately no hospital-lock-specific
+        # copy, the whole point is this stays invisible to the patient either way.
+        doctors = await hms_client.list_doctors(specialty_category, page_size=50, hospital_id=locked_hospital_id)
+    elif context.get("patient_lat") is not None:
         index = await _safe_city_index()
         fetch_cache: dict[str, list[dict]] = {}
         # Progressively wider bands, nearest first, stopping at the first non-empty result.
@@ -1015,22 +1171,35 @@ async def _send_doctor_list(client: httpx.AsyncClient, phone: str, context: Conv
 
 
 async def _render_doctor_list(
-    client: httpx.AsyncClient, phone: str, context: ConversationContext, doctors: list[dict], current_step: str | None = None
+    client: httpx.AsyncClient, phone: str, context: ConversationContext, doctors: list[dict], current_step: str | None = None,
+    *, min_matches_before_location_ask: int = 10,
 ) -> None:
     """Sorts, trims to WhatsApp's row cap, and sends. Shared by the normal radius search and
-    the opted-in wider search so both present results identically."""
+    the opted-in wider search so both present results identically.
+
+    min_matches_before_location_ask: how many matches before asking for location to narrow,
+    when location isn't known yet. Defaults to WhatsApp's own list cap (10) -- right for a
+    hospital's own doctor list (doctor_search.py's _resolve_hospital_search_match) or a
+    specialty/symptom list, where the patient already chose the narrowing factor (the
+    hospital, or specialty+location upstream) and asking again would be redundant. The
+    doctor-NAME-search entry point (_search_doctors_flow) passes 1 instead -- there, several
+    same-named doctors with no location known yet is exactly the ambiguity location should
+    resolve; resolve_doctor already narrows correctly by city/radius once it's known (see its
+    own docstring), so asking here and re-entering _search_doctors_flow (via
+    _advance_booking_flow's "doctor blank + search_doctor_query pending" branch) is enough."""
     lang = context.get("lang")
 
-    # More matches than WhatsApp's list can show (10 rows) and no location to narrow by yet
-    # — say so and ask, rather than silently showing only the first 10 with no indication
-    # more exist. Only meaningful for the name-search path: the specialty/symptom path
-    # already requires a location before it ever reaches this function.
-    has_loc = context.get("patient_lat") is not None or context.get("city")
-    if len(doctors) > 10 and not has_loc:
+    # More matches than the threshold and no location to narrow by yet — say so and ask,
+    # rather than silently showing everyone with no indication more might exist, or (at the
+    # name-search threshold of 1) making the patient sift through same-named doctors at
+    # hospitals they'll never reach -- live-reported: "dr sharma" with several matches showed
+    # a bare "Here are the doctors available" list with no filtering at all.
+    has_loc = _has_searchable_location(context)
+    if len(doctors) > min_matches_before_location_ask and not has_loc:
         query = context.get("search_doctor_query", "")
         await whatsapp_client.send_location_request(
             client, phone,
-            t("doctor_too_many_ask_location", lang, count=len(doctors), query=query),
+            t("doctor_ambiguous_ask_location", lang, count=len(doctors), query=query),
         )
         await _transition_to(phone, "choosing_location", context, current_step)
         return
@@ -1187,18 +1356,34 @@ async def _send_patient_details_flow(client: httpx.AsyncClient, phone: str, cont
 
     doctor_id = context.get("doctor_id")
     slots = []
+    fetch_failed = False
     if doctor_id:
         try:
             slots = await _get_offered_slots(doctor_id, lang)
         except Exception as exc:
             logger.error("Failed to load offered slots for Flow: %s", exc)
+            fetch_failed = True
 
     if not slots:
+        if fetch_failed:
+            # The doctor's real schedule was never actually checked -- live-reported: an
+            # intermittent 1HMS 503 on /public/doctors/{id}/availability (same backend
+            # flakiness as list_doctors_at_hospital) was silently swallowed here and treated
+            # the same as a confirmed empty calendar, telling the patient "today's timings
+            # are over" when we genuinely don't know that. error_hms is the same generic
+            # "try again" every other HMS-fetch failure in this codebase already uses.
+            await whatsapp_client.send_text(client, phone, t("error_hms", lang))
+            return
         await whatsapp_client.send_buttons(
             client, phone, t("today_shifts_over", lang),
             [("change_doctor", t("change_doctor_btn", lang))],
         )
-        await _transition_to(phone, "choosing_doctor", context, context.get("current_step"))
+        # "choosing_slot", not "choosing_doctor" -- _handle_choosing_slot is the handler that
+        # actually recognizes "change_doctor" as a button reply and re-sends a fresh doctor
+        # list (see slot_selection.py). choosing_doctor's own handler only accepts list_reply
+        # input, so a tap here used to be silently rejected with a generic "please choose from
+        # the list" hint that never offered a new list -- a dead end (live-reported).
+        await _transition_to(phone, "choosing_slot", context, context.get("current_step"))
         return
 
     # Reorder slots if a matching slot is resolved by time_of_day_hint
@@ -1572,6 +1757,10 @@ STEP_REGISTRY = {
     "confirming_wider_search": {
         "handler": _handle_confirming_wider_search,
         "prompt": lambda client, phone, context: None,
+    },
+    "confirming_last_search": {
+        "handler": _handle_confirming_last_search,
+        "prompt": _prompt_confirming_last_search,
     },
     "choosing_doctor": {
         "handler": _handle_choosing_doctor,
