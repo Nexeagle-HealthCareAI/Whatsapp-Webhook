@@ -598,18 +598,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Bilkul paas koi nahi mila, to lagbhag {radius} km ke andar ke sabhi doctor dikha rahe hain.",
         "bn": "খুব কাছাকাছি কেউ নেই, তাই প্রায় {radius} কিমি এর মধ্যে যারা আছেন তাদের দেখানো হচ্ছে।",
     },
-    "no_doctors_in_radius": {
-        "en": "I couldn't find this type of doctor within {radius} km of you. Shall I look further away?",
-        "hi": "आप आपसे {radius} किमी के अंदर इस तरह के डॉक्टर नहीं मिले। क्या और दूर तक देखूं?",
-        "hg": "Aapse {radius} km ke andar is type ke doctor nahi mile. Aur door tak dekhun?",
-        "bn": "আমি আপনার {radius} কিমি এর মধ্যে এই ধরণের ডাক্তার খুঁজে পাইনি। আমি কি আরও দূরে খুঁজব?",
-    },
-    "search_wider_yes": {
-        "en": "Yes, look further",
-        "hi": "हां, और दूर देखें",
-        "hg": "Haan, door dekhein",
-        "bn": "হ্যাঁ, দূরে দেখুন",
-    },
     "doctor_list_prompt": {
         "en": "Here are the doctors available:",
         "hi": "उपलब्ध डॉक्टरों की सूची यह है:",

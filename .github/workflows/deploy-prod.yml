@@ -47,6 +47,15 @@
 #                            that step.
 #   WHATSAPP_FLOW_SCREEN_ID  optional — only needed if your Flow's screen isn't named
 #                            REGISTRATION_SCREEN (app/config.py's default).
+#   LOCATION_API_BASE_URL    optional — the location-search service (app/messengers/
+#                            location_client.py) used to resolve a typed place name during
+#                            booking. Omit and this falls back to the DEV subdomain
+#                            (app/config.py's own default) — peer-review H5: that used to be
+#                            the case unconditionally, with no way to point prod anywhere
+#                            else. Set this to the real production endpoint (app/config.py's
+#                            comment on location_api_base_url names the likely candidate,
+#                            https://loc.nexeagle.com, as of whenever that comment was
+#                            written — confirm it's actually up before setting this).
 #   GROK_API_KEY             optional — PRIMARY_NLU (app/listener/model_config.py). Omit and
 #                            classify_message falls through to FALLBACK_NLU (Sarvam) instead
 #                            of failing outright — see SARVAM_API_KEY below, still required.
@@ -144,12 +153,13 @@ jobs:
           WHATSAPP_FLOW_ID: ${{ secrets.WHATSAPP_FLOW_ID }}
           WHATSAPP_FLOW_SCREEN_ID: ${{ secrets.WHATSAPP_FLOW_SCREEN_ID }}
           GROK_API_KEY: ${{ secrets.GROK_API_KEY }}
+          LOCATION_API_BASE_URL: ${{ secrets.LOCATION_API_BASE_URL }}
         with:
           host: ${{ secrets.PROD_SSH_HOST }}
           username: ${{ secrets.PROD_SSH_USER }}
           key_path: /tmp/deploy_key
           port: 22
-          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,PROD_DB_CONNECTION,HMS_API_KEY,INTERNAL_EVENTS_TOKEN,SARVAM_API_KEY,WHATSAPP_DISPLAY_NUMBER,WHATSAPP_FLOW_ID,WHATSAPP_FLOW_SCREEN_ID,GROK_API_KEY
+          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,PROD_DB_CONNECTION,HMS_API_KEY,INTERNAL_EVENTS_TOKEN,SARVAM_API_KEY,WHATSAPP_DISPLAY_NUMBER,WHATSAPP_FLOW_ID,WHATSAPP_FLOW_SCREEN_ID,GROK_API_KEY,LOCATION_API_BASE_URL
           script: |
             set -e
             cd "$DEPLOY_PATH"
@@ -189,6 +199,7 @@ jobs:
               printf 'WHATSAPP_FLOW_ID=%s\n' "$WHATSAPP_FLOW_ID"
               printf 'WHATSAPP_FLOW_SCREEN_ID=%s\n' "$WHATSAPP_FLOW_SCREEN_ID"
               printf 'GROK_API_KEY=%s\n' "$GROK_API_KEY"
+              printf 'LOCATION_API_BASE_URL=%s\n' "$LOCATION_API_BASE_URL"
             } > "$ENVFILE"
             chmod 600 "$ENVFILE"
 

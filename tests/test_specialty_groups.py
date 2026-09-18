@@ -120,7 +120,7 @@ LIVE_SPECIALTIES = [
 # to the wrong bucket here is a deliberate act rather than an accident.
 BUTTON_TITLE_KEYS = [
     "search_mode_symptom", "search_mode_name", "search_mode_browse",
-    "date_today", "date_tomorrow", "confirm_btn", "cancel_btn", "search_wider_yes",
+    "date_today", "date_tomorrow", "confirm_btn", "cancel_btn",
     "change_doctor_btn", "update_details_btn",
     "reuse_last_search_yes_btn", "reuse_last_search_change_location_btn",
     "reuse_last_search_change_specialty_btn",

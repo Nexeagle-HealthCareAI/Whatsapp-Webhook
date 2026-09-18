@@ -181,7 +181,7 @@ def _step_for_action(action: str, slot_name: str | None, context: ConversationCo
         if current_step in {
             "choosing_search_mode", "awaiting_symptom", "awaiting_doctor_name",
             "choosing_specialty_group", "choosing_specialty", "choosing_sort",
-            "confirming_wider_search", "choosing_doctor"
+            "choosing_doctor"
         }:
             return current_step
         return "choosing_search_mode"
@@ -282,6 +282,14 @@ async def handle_message(
     state = await db.get_conversation_state(phone)
     current_step = state["current_step"] if state else None
     context = state["context"] if state else {}
+    # Peer-review H1: context["current_step"] used to never be set -- every context.get(
+    # "current_step") read downstream (_step_for_action's "stay on this step" branch,
+    # _advance_booking_flow, doctor_search.py) always got None, which silently killed
+    # "stay on the current search step" and meant _transition_to's history push never fired
+    # on the search/booking path (so "back" always restarted the whole conversation instead
+    # of stepping back one screen). Overwritten fresh every turn, so any stale copy an older
+    # persisted context blob might carry is harmless.
+    context["current_step"] = current_step
     # Assigned here (not only in language.py's _start) so even a brand-new patient's very
     # first message -- before language selection has run at all -- has a session_id to log
     # under. See app/messengers/conversation_log_queue.py for what this feeds.
@@ -438,12 +446,28 @@ async def handle_message(
     nlu_result = None
     raw_nlu_result = None
     if input_type == "text" and input_value.strip():
+        # Peer-review H3: this used to be one ~150-line try spanning the actual NLU call
+        # AND everything downstream of it (DB logging, HMS lookups, intent routing, state
+        # transitions, WhatsApp sends) -- so a failure in any of those unrelated steps got
+        # mislabeled in the logs as "NLU client parsing or routing failed" even though the
+        # NLU call itself worked fine, sending debugging in the wrong direction. Worse: after
+        # catching, execution fell through to the step-dispatch below using the *stale*
+        # current_step read at the top of this turn, even if a transition earlier in this
+        # same block had already moved the DB to a different step.
+        # Narrowed to cover only the actual classification call -- a real NLU failure still
+        # degrades gracefully (raw_nlu_result stays None, falls through to normal step
+        # handling below, same as before). Everything downstream now runs outside any try
+        # here and propagates naturally -- Batch 3's worker.py retry-then-notify (C2) is the
+        # real safety net for those failures now, not a mislabeled catch-all.
         try:
-            # 1. Classify message using the new NLU client
             raw_nlu_result = await nlu_client.classify_message(client, input_value)
             logger.info("NLU Result: %s", raw_nlu_result)
+        except Exception as exc:
+            logger.warning("NLU classification failed, proceeding without it: %s", exc)
+            raw_nlu_result = None
 
-            if not has_lang_init and raw_nlu_result and raw_nlu_result.get("intent") in (
+        if raw_nlu_result:
+            if not has_lang_init and raw_nlu_result.get("intent") in (
                 "book_appointment", "check_availability", "describe_symptom", "ask_pricing",
                 "cancel_appointment", "check_my_appointment", "reschedule_appointment", "change_selection"
             ):
@@ -590,8 +614,6 @@ async def handle_message(
                 "time_of_day": routed.entities.get("time_of_day"),
                 "location": routed.entities.get("location"),
             }
-        except Exception as exc:
-            logger.warning("NLU client parsing or routing failed: %s", exc)
 
     # If a doctor is mentioned anywhere in the text while in selection states, hot-swap immediately
     if nlu_result and nlu_result.get("doctor_name"):
@@ -1157,8 +1179,8 @@ async def _send_doctor_list(client: httpx.AsyncClient, phone: str, context: Conv
                 # patient and widen automatically to an unrestricted search, rather than
                 # asking permission first. Product decision, not a technical default: see
                 # the design flowchart's auto-widen branch, confirmed over the previous
-                # ask-first behaviour (which still exists as _handle_confirming_wider_search
-                # / confirming_wider_search but is no longer reachable from here).
+                # ask-first behaviour (removed -- peer-review H2, it had become unreachable
+                # dead code once this auto-widen behaviour replaced it).
                 max_radius = settings.doctor_search_radii_km[-1]
                 await whatsapp_client.send_text(
                     client, phone,
@@ -1277,29 +1299,6 @@ async def _render_doctor_list(
         await _transition_to(phone, "choosing_doctor", context, current_step)
     else:
         await db.save_conversation_state(phone, "choosing_doctor", context)
-
-
-async def _handle_confirming_wider_search(client, phone, input_type, input_value, context) -> None:
-    """Nothing was found inside the furthest radius band, and the patient has said whether
-    they're willing to look further. Only on an explicit yes do we drop the radius cap."""
-    lang = context.get("lang")
-    choice = _match_choice(input_type, input_value, ["search_wider", "cancel"])
-    if choice is None:
-        await whatsapp_client.send_text(client, phone, t("confirm_choose_hint", lang))
-        return
-    if choice == "cancel":
-        await whatsapp_client.send_text(client, phone, t("cancelled", lang))
-        await db.clear_conversation_state(phone)
-        return
-
-    # Patient opted in to travelling further, so search unrestricted by distance. Sorting
-    # still puts the closest first, so "further" never means "in a random order".
-    doctors = await hms_client.list_doctors(context["specialty_category"], page_size=50)
-    if not doctors:
-        await whatsapp_client.send_text(client, phone, t("no_doctors", lang))
-        await db.clear_conversation_state(phone)
-        return
-    await _render_doctor_list(client, phone, {**context, "sort_key": "nearest"}, doctors, "confirming_wider_search")
 
 
 async def _handle_choosing_doctor(client, phone, input_type, input_value, context) -> None:
@@ -1863,10 +1862,6 @@ STEP_REGISTRY = {
     "choosing_sort": {
         "handler": _handle_choosing_sort,
         "prompt": _prompt_choosing_sort,
-    },
-    "confirming_wider_search": {
-        "handler": _handle_confirming_wider_search,
-        "prompt": lambda client, phone, context: None,
     },
     "confirming_last_search": {
         "handler": _handle_confirming_last_search,

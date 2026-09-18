@@ -64,6 +64,13 @@ services:
       HMS_API_KEY: "${HMS_API_KEY:-}"
       SQLSERVER_CONN_STRING: "${SQLSERVER_CONN_STRING}"
       SYMPTOM_API_BASE_URL: "${SYMPTOM_API_BASE_URL:-http://host.docker.internal:82}"
+      # Peer-review H5: previously hardcoded to the dev subdomain in app/config.py with no
+      # way to override it at all -- prod was silently calling dev's location-search service
+      # for every "near me" search. Only this service touches location_client.py (via
+      # app/conversation/location.py, driven by worker.py's handle_job) -- same scoping
+      # reasoning as SYMPTOM_API_BASE_URL above, not added to fastapi/scheduler which never
+      # call it.
+      LOCATION_API_BASE_URL: "${LOCATION_API_BASE_URL:-https://loc-dev.nexeagle.com}"
       INTERNAL_EVENTS_TOKEN: "${INTERNAL_EVENTS_TOKEN}"
       # NLU classification (app/nlu_client.py) runs inside this container via
       # conversation.handle_message — without this, settings.sarvam_api_key is None here
