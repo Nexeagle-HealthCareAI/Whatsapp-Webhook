@@ -1,0 +1,41 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Peer-review T1: no workflow ever ran this repo's test suite at all -- deploy.yml/
+# deploy-prod.yml go straight from checkout to `docker compose up`. This is the gate that
+# was missing. No secrets needed: every tests/test_*.py stubs aioodbc/redis and sets its own
+# placeholder env vars before importing app.* (see any test file's own header), so this runs
+# fully offline against a plain checkout.
+#
+# tests/test_all_scripts_pass.py is what makes `pytest tests/` mean anything here -- every
+# test_*.py file already had correct pass/fail logic of its own (a `failures` list + printed
+# PASS/FAIL + sys.exit(1)), just never in a form pytest itself would honour. That bridge file
+# runs each one as a subprocess (exactly how they've always been run/verified this whole
+# project) and asserts the exit code, with the full PASS/FAIL output attached on failure.
+#
+# Two files are deliberately NOT run here (see test_all_scripts_pass.py's own docstring for
+# why): test_nlu_integration.py and test_prompt_isolation.py both make real live Groq/Sarvam
+# API calls, so a red run there doesn't necessarily mean the code broke, and a green run isn't
+# reproducible without live credits -- neither is safe to gate a build on today.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run test suite
+        run: pytest tests/ -v
