@@ -35,6 +35,7 @@ from app.messengers.outbound_queue import (
     requeue_with_backoff,
 )
 from app.messengers.redis_client import get_redis
+from app.pii import mask_phone
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("sender")
@@ -53,23 +54,24 @@ async def _attempt_send(client: httpx.AsyncClient, redis, raw_job: str) -> None:
             json=job["payload"],
         )
     except httpx.TransportError as exc:
-        logger.warning("Transport error sending to %s, will retry: %s", job["payload"].get("to"), exc)
+        logger.warning("Transport error sending to %s, will retry: %s", mask_phone(job["payload"].get("to")), exc)
         await requeue_with_backoff(redis, job, settings.whatsapp_send_max_attempts)
         await redis.lrem(PROCESSING_KEY, 1, raw_job)
         return
 
     to = job["payload"].get("to") or f"msg:{job['payload'].get('message_id')}"
+    to_masked = mask_phone(to)
 
     if response.status_code == 429 or response.status_code >= 500:
         # Meta said slow down, or had its own hiccup -- not this message's fault.
-        logger.warning("WhatsApp send to %s got %s, requeuing with backoff", to, response.status_code)
+        logger.warning("WhatsApp send to %s got %s, requeuing with backoff", to_masked, response.status_code)
         await requeue_with_backoff(redis, job, settings.whatsapp_send_max_attempts)
     elif response.status_code >= 400:
         # Genuinely bad request (bad number, malformed payload) -- retrying won't help.
-        logger.error("Permanently failed WhatsApp send to %s: %s", to, response.text)
+        logger.error("Permanently failed WhatsApp send to %s: %s", to_masked, response.text)
         await redis.lpush(DEAD_KEY, raw_job)
     else:
-        logger.info("Sent to %s -> %s", to, response.status_code)
+        logger.info("Sent to %s -> %s", to_masked, response.status_code)
 
     await redis.lrem(PROCESSING_KEY, 1, raw_job)
 

@@ -31,6 +31,7 @@ from app.messengers import city_index, location_client
 from app.decision_maker import booking_slots
 from app.i18n import t
 from app.types import ConversationContext
+from app.pii import mask_phone
 from app.conversation.language import _detect_stale_language_pick, _apply_stale_language_switch
 
 
@@ -214,7 +215,7 @@ async def _handle_choosing_location(client, phone, input_type, input_value, cont
                 context.get("patient_lat"), context.get("patient_lng"),
             )
         except Exception as exc:
-            conversation.logger.warning("Failed to save last-known location for %s: %s", phone, exc)
+            conversation.logger.warning("Failed to save last-known location for %s: %s", mask_phone(phone), exc)
     else:
         booking_slots.mark_notfound(booking, "location", raw=context.get("location_text"))
 

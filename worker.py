@@ -8,6 +8,7 @@ from app import conversation, db
 from app.config import settings
 from app.messengers import city_index
 from app.messengers.redis_client import get_redis
+from app.pii import mask_phone
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("worker")
@@ -24,7 +25,7 @@ async def handle_job(client: httpx.AsyncClient, job: dict) -> None:
         logger.info("Message %s already processed, skipping", message_id)
         return
 
-    logger.info("Processing message %s from %s", message_id, sender)
+    logger.info("Processing message %s from %s", message_id, mask_phone(sender))
     await conversation.handle_message(
         client,
         sender,
@@ -46,12 +47,6 @@ async def warm_city_index() -> None:
     1HMS is unreachable at boot the worker still starts, and the index is rebuilt lazily on
     first use. See app/city_index.py."""
     try:
-        from app.debug_hms_db import main as run_debug_db
-        run_debug_db()
-    except Exception as e:
-        logger.error("Failed to run DB debug query: %s", e)
-
-    try:
         index = await city_index.get_index()
         logger.info("City index ready: %d cities", len(index))
     except Exception:
@@ -69,6 +64,7 @@ async def main() -> None:
             if item is None:
                 continue
             _, raw_job = item
+            job = None
             try:
                 job = json.loads(raw_job)
                 # Create a concurrent task to handle the job without blocking the loop
@@ -76,7 +72,12 @@ async def main() -> None:
                 background_tasks.add(task)
                 task.add_done_callback(background_tasks.discard)
             except Exception:
-                logger.exception("Failed to process job: %s", raw_job)
+                # message_id only -- never the raw payload, which carries the patient's
+                # verbatim text (incl. patient-details form submissions) and full phone.
+                logger.exception(
+                    "Failed to process job: message_id=%s",
+                    job.get("message_id") if job else None,
+                )
 
 
 if __name__ == "__main__":

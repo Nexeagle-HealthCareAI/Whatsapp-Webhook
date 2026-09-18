@@ -23,6 +23,7 @@ from app.i18n import t
 from app.conversation.shared import _match_choice
 from app.conversation.doctor_search import _is_doctor_search_query
 from app.types import ConversationContext
+from app.pii import mask_phone
 
 
 async def resolve_specialty_category(client, query: str, categories: list[str]) -> str | None:
@@ -281,7 +282,7 @@ async def _send_sort_prompt(
     try:
         await conversation.db.save_last_specialty(phone, specialty_category)
     except Exception as exc:
-        conversation.logger.warning("Failed to save last-known specialty for %s: %s", phone, exc)
+        conversation.logger.warning("Failed to save last-known specialty for %s: %s", mask_phone(phone), exc)
     rows = [
         ("rating", t("sort_rating", lang)),
         ("experience", t("sort_experience", lang)),

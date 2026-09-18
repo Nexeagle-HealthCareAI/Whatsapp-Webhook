@@ -8,6 +8,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 
 from app.config import settings
 from app.messengers.redis_client import get_redis
+from app.pii import mask_phone
 
 logger = logging.getLogger("webhook.whatsapp_ingest")
 router = APIRouter()
@@ -127,7 +128,7 @@ async def receive_webhook(
 
         input_type, input_value = _input_type_and_value(message)
         if input_type is None:
-            logger.info("Ignoring unsupported message type from %s: %s", sender, message.get("type"))
+            logger.info("Ignoring unsupported message type from %s: %s", mask_phone(sender), message.get("type"))
             continue
 
         job = {
@@ -139,6 +140,6 @@ async def receive_webhook(
             "received_at": time.time(),
         }
         await redis.lpush(settings.booking_jobs_key, json.dumps(job))
-        logger.info("Enqueued message %s from %s", message_id, sender)
+        logger.info("Enqueued message %s from %s", message_id, mask_phone(sender))
 
     return {"status": "ok"}

@@ -25,6 +25,7 @@ from app.referee import intent_router, flow_policy
 from app.model_config import PRIMARY_NLU
 from app.i18n import LANGUAGE_LABELS, LANG_PROMPT, t
 from app.types import ConversationContext
+from app.pii import mask_phone
 
 # Re-exported from sibling modules purely so `conversation.<name>` keeps resolving --
 # the test suite reaches every one of these through the package object, never via
@@ -420,7 +421,7 @@ async def handle_message(
     if input_type == "text" and input_value.strip() and has_lang_init:
         detected_lang, is_high_confidence = _detect_language(input_value)
         if detected_lang and _should_trust_language_detection(detected_lang, is_high_confidence) and detected_lang != lang:
-            logger.info("Auto-swapping language from %s to %s for user %s", lang, detected_lang, phone)
+            logger.info("Auto-swapping language from %s to %s for user %s", lang, detected_lang, mask_phone(phone))
             lang = detected_lang
             context["lang"] = lang
             booking_slots.fill(booking, "lang", lang, source="user")
@@ -954,10 +955,10 @@ async def handle_message(
             else:
                 await _start(client, phone, init_context)
     except HmsApiError as exc:
-        logger.warning("HMS API rejected request for %s: %s", phone, exc)
+        logger.warning("HMS API rejected request for %s: %s", mask_phone(phone), exc)
         await whatsapp_client.send_text(client, phone, t("error_hms", lang))
     except httpx.HTTPError as exc:
-        logger.warning("HMS API unreachable for %s: %s", phone, exc)
+        logger.warning("HMS API unreachable for %s: %s", mask_phone(phone), exc)
         await whatsapp_client.send_text(client, phone, t("error_hms_unreachable", lang))
 
 

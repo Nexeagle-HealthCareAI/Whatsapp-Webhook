@@ -97,8 +97,8 @@ def check_safety_triage(text: str, lang: str = "en") -> dict | None:
         for pattern in patterns:
             if re.search(pattern, clean_text):
                 logger.warning(
-                    "Safety Interceptor triggered! Category: %s, Pattern: %r matched in text: %r",
-                    category, pattern, text
+                    "Safety Interceptor triggered! Category: %s, Pattern: %r",
+                    category, pattern,
                 )
                 
                 # Fetch localized alert message
