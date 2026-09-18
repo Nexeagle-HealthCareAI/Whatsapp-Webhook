@@ -16,14 +16,20 @@ docstring for why. Calls between functions that both live in THIS file
 same-module calls.
 """
 import asyncio
+import logging
+
+import httpx
 
 from app import i18n, nlu_client
 from app.messengers import hms_client, symptom_client
+from app.messengers.hms_client import HmsApiError
 from app.i18n import t
 from app.conversation.shared import _match_choice
 from app.conversation.doctor_search import _is_doctor_search_query
 from app.types import ConversationContext
 from app.pii import mask_phone
+
+logger = logging.getLogger("conversation")
 
 
 async def resolve_specialty_category(client, query: str, categories: list[str]) -> str | None:
@@ -194,8 +200,25 @@ async def _send_specialty_list(client, phone: str, context: ConversationContext)
     from app import conversation
 
     lang = context.get("lang")
-    specialties = await hms_client.list_specialties()
+    fetch_error_key = None
+    try:
+        specialties = await hms_client.list_specialties()
+    except HmsApiError as exc:
+        logger.warning("HMS rejected the specialties fetch: %s", exc)
+        specialties = []
+        fetch_error_key = "error_hms"
+    except httpx.HTTPError as exc:
+        logger.warning("HMS unreachable fetching specialties: %s", exc)
+        specialties = []
+        fetch_error_key = "error_hms_unreachable"
+
     if not specialties:
+        if fetch_error_key:
+            # 1HMS itself is unreachable/erroring -- not the same thing as "genuinely zero
+            # specialties configured". Tell the patient to retry and leave their progress
+            # alone, rather than reporting a false "nothing exists" and wiping the booking.
+            await conversation.whatsapp_client.send_text(client, phone, t(fetch_error_key, lang))
+            return
         await conversation.whatsapp_client.send_text(client, phone, t("no_specialties", lang))
         await conversation.db.clear_conversation_state(phone)
         return

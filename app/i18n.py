@@ -740,6 +740,24 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Us din ke liye aapka ek request pehle se pending hai — hamari team jald hi contact karegi.",
         "bn": "সেই দিনের জন্য আপনার ইতিমধ্যে একটি অনুরোধ মুলতুবি রয়েছে — আমাদের দল শীঘ্রই যোগাযোগ করবে।",
     },
+    "booking_in_progress": {
+        "en": "Your previous request is still being processed — please wait a few seconds.",
+        "hi": "आपका पिछला अनुरोध अभी भी प्रोसेस हो रहा है — कृपया कुछ सेकंड प्रतीक्षा करें।",
+        "hg": "Aapka pichla request abhi process ho raha hai — kripya kuch second wait karein.",
+        "bn": "আপনার আগের অনুরোধ এখনও প্রক্রিয়াধীন — অনুগ্রহ করে কয়েক সেকেন্ড অপেক্ষা করুন।",
+    },
+    "duplicate_appointment_warning": {
+        "en": "You already have an appointment with {doctor} on {when} under these same details. Book another one anyway?",
+        "hi": "आपका {doctor} के साथ {when} को इन्हीं विवरणों के साथ पहले से एक अपॉइंटमेंट है। क्या फिर भी एक और बुक करें?",
+        "hg": "Aapka {doctor} ke saath {when} ko inhi details ke saath pehle se ek appointment hai. Kya phir bhi ek aur book karein?",
+        "bn": "আপনার {doctor} এর সাথে {when} তারিখে এই একই বিবরণ সহ ইতিমধ্যে একটি অ্যাপয়েন্টমেন্ট আছে। তবুও কি আরেকটি বুক করবেন?",
+    },
+    "duplicate_book_anyway_btn": {
+        "en": "Book anyway",
+        "hi": "फिर भी बुक करें",
+        "hg": "Phir bhi book karo",
+        "bn": "তবুও বুক করুন",
+    },
     "booked_success": {
         "en": "Appointment request for {patient_name} has been submitted! Our front desk will confirm the exact time shortly.",
         "hi": "{patient_name} के लिए अपॉइंटमेंट अनुरोध भेज दिया गया है! हमारी रिसेप्शन जल्द ही सही समय कन्फ़र्म करेगी।",

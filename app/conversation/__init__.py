@@ -1121,54 +1121,73 @@ async def _send_doctor_list(client: httpx.AsyncClient, phone: str, context: Conv
 
     doctors: list[dict] = []
     used_radius: float | None = None
+    fetch_error_key = None
     locked_hospital_id = _qr_locked_hospital_id(context)
-    if locked_hospital_id and not specialty_category:
-        # Reached with a QR-locked hospital but no specialty ever searched -- e.g. "Different
-        # doctor" tapped after a hospital-QR "Book Appointment" found no slots today, which
-        # never went through a specialty/symptom search at all (see
-        # _resolve_hospital_search_match). Nothing to narrow by, so just re-list that same
-        # hospital's own doctors, same call _resolve_hospital_search_match itself uses.
-        doctors = await hms_client.list_doctors_at_hospital(locked_hospital_id, page_size=50)
-    elif locked_hospital_id:
-        # 15-minute hospital-QR search lock -- radius/city narrowing below is meaningless
-        # once a specific hospital is already known, so fetch scoped to it directly and skip
-        # straight to the shared "no doctors" / render logic below. Falls through to that
-        # SAME empty-state message on zero results -- deliberately no hospital-lock-specific
-        # copy, the whole point is this stays invisible to the patient either way.
-        doctors = await hms_client.list_doctors(specialty_category, page_size=50, hospital_id=locked_hospital_id)
-    elif context.get("patient_lat") is not None:
-        index = await _safe_city_index()
-        fetch_cache: dict[str, list[dict]] = {}
-        # Progressively wider bands, nearest first, stopping at the first non-empty result.
-        for radius in settings.doctor_search_radii_km:
-            doctors = await _fetch_doctors_near(
-                specialty_category, context, radius, index, fetch_cache
-            )
-            if doctors:
-                used_radius = radius
-                break
+    try:
+        if locked_hospital_id and not specialty_category:
+            # Reached with a QR-locked hospital but no specialty ever searched -- e.g.
+            # "Different doctor" tapped after a hospital-QR "Book Appointment" found no
+            # slots today, which never went through a specialty/symptom search at all (see
+            # _resolve_hospital_search_match). Nothing to narrow by, so just re-list that
+            # same hospital's own doctors, same call _resolve_hospital_search_match itself
+            # uses.
+            doctors = await hms_client.list_doctors_at_hospital(locked_hospital_id, page_size=50)
+        elif locked_hospital_id:
+            # 15-minute hospital-QR search lock -- radius/city narrowing below is
+            # meaningless once a specific hospital is already known, so fetch scoped to it
+            # directly and skip straight to the shared "no doctors" / render logic below.
+            # Falls through to that SAME empty-state message on zero results -- deliberately
+            # no hospital-lock-specific copy, the whole point is this stays invisible to the
+            # patient either way.
+            doctors = await hms_client.list_doctors(specialty_category, page_size=50, hospital_id=locked_hospital_id)
+        elif context.get("patient_lat") is not None:
+            index = await _safe_city_index()
+            fetch_cache: dict[str, list[dict]] = {}
+            # Progressively wider bands, nearest first, stopping at the first non-empty result.
+            for radius in settings.doctor_search_radii_km:
+                doctors = await _fetch_doctors_near(
+                    specialty_category, context, radius, index, fetch_cache
+                )
+                if doctors:
+                    used_radius = radius
+                    break
 
-        if not doctors:
-            # Nothing within the widest configured band (50km by default) — tell the patient
-            # and widen automatically to an unrestricted search, rather than asking
-            # permission first. Product decision, not a technical default: see the design
-            # flowchart's auto-widen branch, confirmed over the previous ask-first behaviour
-            # (which still exists as _handle_confirming_wider_search / confirming_wider_search
-            # but is no longer reachable from here).
-            max_radius = settings.doctor_search_radii_km[-1]
-            await whatsapp_client.send_text(
-                client, phone,
-                t("no_doctors_in_radius_widening", lang, specialty=specialty_category, radius=int(max_radius)),
+            if not doctors:
+                # Nothing within the widest configured band (50km by default) — tell the
+                # patient and widen automatically to an unrestricted search, rather than
+                # asking permission first. Product decision, not a technical default: see
+                # the design flowchart's auto-widen branch, confirmed over the previous
+                # ask-first behaviour (which still exists as _handle_confirming_wider_search
+                # / confirming_wider_search but is no longer reachable from here).
+                max_radius = settings.doctor_search_radii_km[-1]
+                await whatsapp_client.send_text(
+                    client, phone,
+                    t("no_doctors_in_radius_widening", lang, specialty=specialty_category, radius=int(max_radius)),
+                )
+                doctors = await hms_client.list_doctors(specialty_category, page_size=50)
+        else:
+            # No coordinates (patient typed a place name) — radius filtering isn't
+            # possible, so fall back to the city-name filter.
+            doctors = await hms_client.list_doctors(
+                specialty_category, page_size=50, city=context.get("city")
             )
-            doctors = await hms_client.list_doctors(specialty_category, page_size=50)
-    else:
-        # No coordinates (patient typed a place name) — radius filtering isn't possible, so
-        # fall back to the city-name filter.
-        doctors = await hms_client.list_doctors(
-            specialty_category, page_size=50, city=context.get("city")
-        )
+    except HmsApiError as exc:
+        logger.warning("HMS rejected the doctors fetch for %s: %s", mask_phone(phone), exc)
+        doctors = []
+        fetch_error_key = "error_hms"
+    except httpx.HTTPError as exc:
+        logger.warning("HMS unreachable fetching doctors for %s: %s", mask_phone(phone), exc)
+        doctors = []
+        fetch_error_key = "error_hms_unreachable"
 
     if not doctors:
+        if fetch_error_key:
+            # Same reasoning as specialty_browsing._send_specialty_list: an HMS fetch that
+            # genuinely failed is not the same thing as a confirmed empty result, and must
+            # not be reported to the patient as "no doctors" nor wipe their in-progress
+            # booking.
+            await whatsapp_client.send_text(client, phone, t(fetch_error_key, lang))
+            return
         await whatsapp_client.send_text(client, phone, t("no_doctors", lang))
         await db.clear_conversation_state(phone)
         return
@@ -1534,6 +1553,9 @@ async def _handle_awaiting_patient_details(client, phone, input_type, input_valu
     await _advance_booking_flow(client, phone, context, booking)
 
 
+_CONFIRM_LOCK_TTL_SECONDS = 20
+
+
 async def _handle_confirming(client, phone, sender_name, input_type, input_value, context) -> None:
     lang = context.get("lang")
     choice = _match_choice(input_type, input_value, ["confirm", "cancel", "update_details"])
@@ -1548,51 +1570,128 @@ async def _handle_confirming(client, phone, sender_name, input_type, input_value
         await _send_patient_details_flow(client, phone, context)
         return
 
-    preferred_date = date.fromisoformat(context["preferred_date"])
-    doctor_id = context["doctor_id"]
-    shift_label = context.get("shift_label", "any time")
-    booking_for = context.get("booking_for", "self")
-    patient_name = context.get("patient_display_name") or sender_name or phone
-    patient_age = context.get("patient_age")
-    patient_gender = context.get("patient_gender")
-    patient_guardian = context.get("patient_guardian")
+    # sender_name is only ever needed as the very first fallback for a never-yet-set
+    # patient_display_name -- resolved once here and stored in context so every later
+    # re-entry into the actual booking (e.g. from _handle_confirming_duplicate_booking,
+    # which has no sender_name of its own) already has it.
+    context = {**context, "patient_display_name": context.get("patient_display_name") or sender_name or phone}
+    await _do_book_appointment(client, phone, context)
 
-    if await db.has_pending_appointment(phone, preferred_date):
-        await whatsapp_client.send_text(client, phone, t("already_pending", lang))
-        await db.clear_conversation_state(phone)
+
+async def _do_book_appointment(client: httpx.AsyncClient, phone: str, context: ConversationContext) -> None:
+    """The only place hms_client.book_appointment is called from the conversation layer --
+    both _handle_confirming's normal "Confirm" tap and _handle_confirming_duplicate_booking's
+    "Book anyway" tap route through here.
+
+    Guarded by a short-lived per-phone Redis lock so two confirms for the same phone (a fast
+    double-tap producing two different message_ids, both already past the message-level
+    Redis dedupe in app/front_door/whatsapp_ingest.py) can never both reach the booking call
+    concurrently -- live-reported risk: without this, both read "nothing pending yet" and
+    both book. A second confirm while the first is still in flight is told to wait, not
+    silently dropped or double-processed. The lock is released (see finally) the moment this
+    function is done either way, so a genuine retry (e.g. worker.py's single-retry-on-crash)
+    is never blocked by its own prior attempt.
+
+    Also where the "you already have this exact appointment" soft duplicate check lives --
+    see db.has_duplicate_appointment_details' docstring for why that's a warn-and-confirm,
+    not the same hard lock this function itself uses."""
+    lang = context.get("lang")
+    lock_key = f"booking:confirm-lock:{phone}"
+    redis = get_redis()
+    acquired = await redis.set(lock_key, "1", nx=True, ex=_CONFIRM_LOCK_TTL_SECONDS)
+    if not acquired:
+        await whatsapp_client.send_text(client, phone, t("booking_in_progress", lang))
         return
 
-    row_id = await db.create_pending_appointment(
-        phone, preferred_date,
-        preferred_language=lang, booking_for=booking_for, patient_display_name=patient_name,
-        patient_age=patient_age,
-        patient_gender=patient_gender,
-        patient_guardian=patient_guardian,
-        hospital_id=context.get("hospital_id") or None,
-    )
     try:
-        result = await hms_client.book_appointment(
-            patient_name, phone, doctor_id, preferred_date, shift_label,
+        preferred_date = date.fromisoformat(context["preferred_date"])
+        doctor_id = context["doctor_id"]
+        shift_label = context.get("shift_label", "any time")
+        booking_for = context.get("booking_for", "self")
+        patient_name = context.get("patient_display_name") or phone
+        patient_age = context.get("patient_age")
+        patient_gender = context.get("patient_gender")
+        patient_guardian = context.get("patient_guardian")
+
+        if await db.has_pending_appointment(phone, preferred_date):
+            await whatsapp_client.send_text(client, phone, t("already_pending", lang))
+            await db.clear_conversation_state(phone)
+            return
+
+        if not context.get("duplicate_confirmed") and await db.has_duplicate_appointment_details(
+            phone, preferred_date, doctor_id, patient_name, patient_age, patient_gender
+        ):
+            await _prompt_confirming_duplicate_booking(client, phone, context)
+            await _transition_to(phone, "confirming_duplicate_booking", context, "confirming")
+            return
+
+        row_id = await db.create_pending_appointment(
+            phone, preferred_date,
+            preferred_language=lang, booking_for=booking_for, patient_display_name=patient_name,
             patient_age=patient_age,
             patient_gender=patient_gender,
             patient_guardian=patient_guardian,
+            hospital_id=context.get("hospital_id") or None,
+            doctor_id=doctor_id,
         )
-    except (HmsApiError, httpx.HTTPError):
-        await db.mark_appointment_failed(row_id)
-        raise
+        try:
+            result = await hms_client.book_appointment(
+                patient_name, phone, doctor_id, preferred_date, shift_label,
+                patient_age=patient_age,
+                patient_gender=patient_gender,
+                patient_guardian=patient_guardian,
+            )
+        except (HmsApiError, httpx.HTTPError):
+            await db.mark_appointment_failed(row_id)
+            raise
 
-    hms_appointment_id = result.get("appointmentId") or ""
-    await db.mark_appointment_booked(row_id, hms_appointment_id)
-    await conversation_log_queue.log_conversion(get_redis(), context.get("session_id"), str(row_id))
+        hms_appointment_id = result.get("appointmentId") or ""
+        await db.mark_appointment_booked(row_id, hms_appointment_id)
+        await conversation_log_queue.log_conversion(get_redis(), context.get("session_id"), str(row_id))
 
-    await whatsapp_client.send_text(client, phone, t("booked_success", lang, patient_name=patient_name))
+        await whatsapp_client.send_text(client, phone, t("booked_success", lang, patient_name=patient_name))
 
-    # Mark NLU correctness based on final booked doctor matching extracted NLU name
-    final_doctor_name = context.get("doctor_name")
-    if final_doctor_name and hasattr(db, "mark_session_nlu_correctness_on_booking"):
-        await db.mark_session_nlu_correctness_on_booking(phone, final_doctor_name)
+        # Mark NLU correctness based on final booked doctor matching extracted NLU name
+        final_doctor_name = context.get("doctor_name")
+        if final_doctor_name and hasattr(db, "mark_session_nlu_correctness_on_booking"):
+            await db.mark_session_nlu_correctness_on_booking(phone, final_doctor_name)
 
-    await db.clear_conversation_state(phone)
+        await db.clear_conversation_state(phone)
+    finally:
+        await redis.delete(lock_key)
+
+
+async def _prompt_confirming_duplicate_booking(client: httpx.AsyncClient, phone: str, context: ConversationContext) -> None:
+    lang = context.get("lang")
+    await whatsapp_client.send_buttons(
+        client, phone,
+        t(
+            "duplicate_appointment_warning", lang,
+            doctor=context.get("doctor_name", "-"),
+            when=f"{context.get('date_label', '')}, {context.get('shift_label', '')}",
+        ),
+        [
+            ("confirm", t("duplicate_book_anyway_btn", lang)),
+            ("change_details", t("update_details_btn", lang)),
+        ],
+    )
+
+
+async def _handle_confirming_duplicate_booking(client, phone, input_type, input_value, context) -> None:
+    """Shown once when has_duplicate_appointment_details found an existing appointment with
+    identical patient details, doctor and date. "Book anyway" re-enters the actual booking
+    with duplicate_confirmed set so the same check doesn't loop; "change_details" reopens the
+    patient-details form -- explicit product decision: this is "let me fix a mistake" (e.g. a
+    mistyped name/age), not a full restart, so doctor/date are left exactly as they were."""
+    lang = context.get("lang")
+    choice = _match_choice(input_type, input_value, ["confirm", "change_details"])
+    if choice is None:
+        await whatsapp_client.send_text(client, phone, t("confirm_choose_hint", lang))
+        return
+    if choice == "change_details":
+        await _send_patient_details_flow(client, phone, context)
+        return
+    await _do_book_appointment(client, phone, {**context, "duplicate_confirmed": True})
 
 
 async def _transition_to(phone: str, next_step: str, context: ConversationContext, current_step: str | None) -> None:
@@ -1792,6 +1891,10 @@ STEP_REGISTRY = {
     "confirming": {
         "handler": _handle_confirming,
         "prompt": _prompt_confirming,
+    },
+    "confirming_duplicate_booking": {
+        "handler": _handle_confirming_duplicate_booking,
+        "prompt": _prompt_confirming_duplicate_booking,
     },
     "choosing_appointment_to_cancel": {
         "handler": _handle_choosing_appointment_to_cancel,

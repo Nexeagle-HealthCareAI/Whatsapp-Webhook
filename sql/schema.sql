@@ -131,6 +131,17 @@ BEGIN
 END
 GO
 
+-- Not captured until now -- needed to tell "the same patient booking a genuinely different
+-- appointment" (different doctor, same day) apart from "the same booking submitted twice"
+-- (db.has_duplicate_appointment_details). NULL for bookings made before this column existed;
+-- those rows simply never match on this column, which is the correct behaviour (nothing to
+-- compare against).
+IF COL_LENGTH('dbo.pending_appointments', 'doctor_id') IS NULL
+BEGIN
+    ALTER TABLE dbo.pending_appointments ADD doctor_id NVARCHAR(64) NULL;
+END
+GO
+
 -- One row per conversation session (session_id from app/conversation/language.py's _start,
 -- carried through context for the session's whole lifetime) -- NOT one row per message.
 -- transcript_json accumulates every inbound message (full content) and every step the bot
