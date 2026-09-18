@@ -263,22 +263,13 @@ async def _advance_booking_flow(client: httpx.AsyncClient, phone: str, context: 
     await _trigger_step_prompt(client, phone, next_step, context)
 
 
-async def handle_message(
-    client: httpx.AsyncClient,
-    phone: str,
-    sender_name: str | None,
-    input_type: str,
-    input_value: str,
-    message_id: str | None = None,
-) -> None:
-    if message_id:
-        try:
-            await whatsapp_client.send_typing_indicator(client, message_id)
-        except Exception:
-            # Best-effort UX polish — never let a typing-indicator failure block the
-            # actual reply the patient is waiting on.
-            logger.warning("Failed to send typing indicator for %s", message_id)
-
+async def _load_turn_context(
+    phone: str, input_type: str, input_value: str
+) -> tuple[str | None, ConversationContext]:
+    """Loads this phone's saved conversation state (if any), stamps context with the real
+    current_step (peer-review H1 -- see the comment this replaces), assigns a session_id on
+    a brand-new conversation, and logs the inbound turn. First step of every handle_message
+    call."""
     state = await db.get_conversation_state(phone)
     current_step = state["current_step"] if state else None
     context = state["context"] if state else {}
@@ -297,6 +288,13 @@ async def handle_message(
     await conversation_log_queue.log_event(
         get_redis(), context["session_id"], phone, "in", input_type, input_value, current_step
     )
+    return current_step, context
+
+
+async def _maybe_handle_hospbook_button(
+    client: httpx.AsyncClient, phone: str, context: ConversationContext, current_step: str | None,
+    input_type: str, input_value: str,
+) -> bool:
     # Hospital-QR welcome menu buttons (Book Appointment / My Appointment) -- handled
     # regardless of conversation state, same reasoning as "start_booking" just below.
     # WhatsApp keeps every past interactive message tappable forever, so a patient who has
@@ -311,8 +309,14 @@ async def handle_message(
     # this is an explicit button tap naming its own hospital, which should just always work.
     if input_type == "button_reply" and input_value in ("hospbook_book", "hospbook_status") and context.get("qr_hospital"):
         await _dispatch_hospbook_action(client, phone, context, current_step, input_value, context["qr_hospital"])
-        return
+        return True
+    return False
 
+
+async def _maybe_handle_start_booking_button(
+    client: httpx.AsyncClient, phone: str, context: ConversationContext, current_step: str | None,
+    input_type: str, input_value: str,
+) -> bool:
     # "Book Appointment" button offered after a no-active-appointment response (see
     # appointment_actions.py's _start_appointment_action_flow) -- that response clears
     # conversation_state right after sending it (dropping any stale doctor/location/slot from
@@ -334,9 +338,9 @@ async def handle_message(
             new_context = {"lang": pending_lang, "booking": booking, "search_doctor_query": pending_doctor_name}
             await _transition_to(phone, "awaiting_doctor_name", new_context, current_step)
             if await _search_doctors_flow(client, phone, new_context, "awaiting_doctor_name"):
-                return
+                return True
             await _handle_doctor_search_miss(client, phone, new_context, pending_doctor_name)
-            return
+            return True
         if pending_lang:
             # Language is already known this conversation (either the exception case above
             # minus a doctor name, or the plain no-active-appointment screen, which now keeps
@@ -362,7 +366,7 @@ async def handle_message(
                     client, phone, new_context, qr_hospital, qr_hospital.get("name") or "", current_step,
                     lead_type="HospitalQRScan",
                 )
-                return
+                return True
             # If a location+specialty search is also on record from within the last 24h,
             # offer to reuse it (confirm-first, never silent -- see app/conversation/
             # last_search.py's module docstring for why); otherwise go straight to location,
@@ -379,15 +383,21 @@ async def handle_message(
                 }
                 await _transition_to(phone, "confirming_last_search", new_context, current_step)
                 await _prompt_confirming_last_search(client, phone, new_context)
-                return
+                return True
             booking = booking_slots.empty()
             booking_slots.fill(booking, "lang", pending_lang, source="user")
             new_context = {"lang": pending_lang, "booking": booking, "session_id": context.get("session_id")}
             await _advance_booking_flow(client, phone, new_context, booking)
-            return
+            return True
         await _start(client, phone)
-        return
+        return True
+    return False
 
+
+async def _maybe_handle_deterministic_qr_trigger(
+    client: httpx.AsyncClient, phone: str, context: ConversationContext, current_step: str | None,
+    input_type: str, input_value: str,
+) -> bool:
     # OPD QR check-in / discharge-summary & prescription QR pull / per-doctor booking QR:
     # deterministic commands from a QR scan (GET /c, /d, /rx, /rxv, /doc in webhook.py), not
     # natural language — intercepted before language detection/NLU/the clipboard even
@@ -399,21 +409,18 @@ async def handle_message(
         checkin_match = _CHECKIN_TRIGGER_PATTERN.match(stripped_input)
         if checkin_match:
             await _handle_checkin_trigger(client, phone, checkin_match.group(1), context, current_step)
-            return
-
+            return True
         doctor_booking_match = _DOCTOR_BOOKING_TRIGGER_PATTERN.match(stripped_input)
         if doctor_booking_match:
             await _handle_doctor_booking_trigger(client, phone, doctor_booking_match.group(1), context)
-            return
-
+            return True
         # .search(), not .match() -- see _HOSPITAL_BOOKING_TRIGGER_PATTERN's own comment:
         # the human-readable hospital name prefix means "hospbook <code>" is no longer
         # guaranteed to start at position 0.
         hospital_booking_match = _HOSPITAL_BOOKING_TRIGGER_PATTERN.search(stripped_input)
         if hospital_booking_match:
             await _handle_hospital_booking_trigger(client, phone, hospital_booking_match.group(1), context)
-            return
-
+            return True
         for pattern, resolver_name, filename, not_available_key, delivered_key in _DOCUMENT_TRIGGERS:
             document_match = pattern.match(stripped_input)
             if document_match:
@@ -421,8 +428,16 @@ async def handle_message(
                     client, phone, document_match.group(1), context,
                     resolver_name, filename, not_available_key, delivered_key,
                 )
-                return
+                return True
+    return False
 
+
+async def _apply_language_autodetect(
+    context: ConversationContext, phone: str, current_step: str | None, input_type: str, input_value: str,
+) -> tuple[str | None, bool]:
+    """Returns (lang, has_lang_init) -- has_lang_init reflects whether a language was already
+    known BEFORE this turn (used later by _run_nlu_and_maybe_handle), distinct from lang
+    itself, which this function may update via auto-detected script/keyword swap."""
     booking = _get_or_create_clipboard(context)
     lang = context.get("lang")
     has_lang_init = lang is not None
@@ -436,13 +451,29 @@ async def handle_message(
             if current_step:
                 await db.save_conversation_state(phone, current_step, context)
 
+    return lang, has_lang_init
+
+
+async def _maybe_handle_safety_triage(
+    client: httpx.AsyncClient, phone: str, lang: str | None, input_type: str, input_value: str,
+) -> bool:
     # Run safety interceptor triage immediately before any NLU or slot filling
     if input_type == "text" and input_value.strip():
         safety_alert = safety.check_safety_triage(input_value, lang or "en")
         if safety_alert and safety_alert.get("is_emergency"):
             await whatsapp_client.send_text(client, phone, safety_alert["alert_message"])
-            return
+            return True
+    return False
 
+
+async def _run_nlu_and_maybe_handle(
+    client: httpx.AsyncClient, phone: str, context: ConversationContext, current_step: str | None,
+    lang: str | None, has_lang_init: bool, input_type: str, input_value: str,
+) -> tuple[bool, dict | None, dict | None]:
+    """Classifies the message, and -- for a brand-new conversation with no language chosen
+    yet -- resolves doctor/specialty/symptom entities and hands off to language confirmation
+    directly. Returns (handled, nlu_result, raw_nlu_result); when handled is True the caller
+    returns immediately without using the other two values."""
     nlu_result = None
     raw_nlu_result = None
     if input_type == "text" and input_value.strip():
@@ -496,8 +527,7 @@ async def handle_message(
                         if raw_date:
                             new_context["pending_action_new_date"] = normalize_datetime_to_date(raw_date)
                     await _confirm_or_start_language(client, phone, new_context, input_value, nlu_hint=raw_nlu_result)
-                    return
-
+                    return True, nlu_result, raw_nlu_result
                 doc_name = entities.get("doctor_name")
                 spec_name = entities.get("specialty")
                 sym_name = entities.get("symptom")
@@ -535,8 +565,7 @@ async def handle_message(
                         new_context["pending_specialty_is_symptom"] = True
 
                 await _confirm_or_start_language(client, phone, new_context, input_value, nlu_hint=raw_nlu_result)
-                return
-            
+                return True, nlu_result, raw_nlu_result
             # Log the raw interaction to the database
             if hasattr(db, "log_nlu_interaction"):
                 brain_name = PRIMARY_NLU["model"]
@@ -579,15 +608,13 @@ async def handle_message(
                     await whatsapp_client.send_text(client, phone, t("doctor_name_ask", lang or "en"))
                 else:
                     await whatsapp_client.send_text(client, phone, routed.followup_prompt)
-                return
-
+                return True, nlu_result, raw_nlu_result
             if routed.action == "error":
                 # intent_router couldn't safely verify this patient doesn't already have an
                 # active appointment (see its own comment) -- rather than silently letting a
                 # booking through unchecked, tell the patient and stop here.
                 await whatsapp_client.send_text(client, phone, t("error_hms", lang or "en"))
-                return
-
+                return True, nlu_result, raw_nlu_result
             if routed.action == "active_appointment_conflict":
                 # Patient tried to start a NEW booking while a real appointment already
                 # exists. Reuses the exact same rich status card "check my appointment"
@@ -601,8 +628,7 @@ async def handle_message(
                 if doctor_name:
                     context["pending_doctor_name"] = doctor_name
                 await _start_appointment_action_flow(client, phone, context, current_step, action="status")
-                return
-
+                return True, nlu_result, raw_nlu_result
             # 3. Flatten NLU result so downstream business logic remains completely untouched
             nlu_result = {
                 "intent": routed.intent,
@@ -615,6 +641,13 @@ async def handle_message(
                 "location": routed.entities.get("location"),
             }
 
+    return False, nlu_result, raw_nlu_result
+
+
+async def _maybe_handle_doctor_hotswap(
+    client: httpx.AsyncClient, phone: str, context: ConversationContext, current_step: str | None,
+    nlu_result: dict | None,
+) -> bool:
     # If a doctor is mentioned anywhere in the text while in selection states, hot-swap immediately
     if nlu_result and nlu_result.get("doctor_name"):
         doc_name = nlu_result["doctor_name"]
@@ -622,10 +655,16 @@ async def handle_message(
             context["search_doctor_query"] = doc_name
             await _transition_to(phone, "awaiting_doctor_name", context, current_step)
             if await _search_doctors_flow(client, phone, context, "awaiting_doctor_name"):
-                return
+                return True
             await _handle_doctor_search_miss(client, phone, context, doc_name)
-            return
+            return True
+    return False
 
+
+async def _maybe_handle_global_nlu_intent(
+    client: httpx.AsyncClient, phone: str, context: ConversationContext, current_step: str | None,
+    lang: str | None, nlu_result: dict | None,
+) -> bool:
     # Prioritize NLU global intents / shortcuts if confidence is high
     if nlu_result and nlu_result.get("confidence", 0.0) >= settings.nlu_confidence_threshold:
         intent = nlu_result["intent"]
@@ -641,8 +680,7 @@ async def handle_message(
             # (see its docstring/_has_in_progress_booking in appointment_actions.py) -- the
             # Conductor's job here is just routing the intent, not the business logic behind it.
             await _start_appointment_action_flow(client, phone, context, current_step, action=_INTENT_TO_APPT_ACTION[intent])
-            return
-
+            return True
         elif intent == "reschedule_appointment":
             # datetime is a required slot (intent_router.REQUIRED_ENTITIES) -- by the time this
             # branch is reached, formatted_date is already a resolved "YYYY-MM-DD" string, same
@@ -651,28 +689,25 @@ async def handle_message(
                 client, phone, context, current_step, action="reschedule",
                 new_date_str=nlu_result.get("formatted_date"),
             )
-            return
-
+            return True
         elif intent == "navigate_back":
             history = context.get("_history", [])
             if not history:
                 await whatsapp_client.send_text(client, phone, t("back_no_history", lang))
                 await db.clear_conversation_state(phone)
                 await _start(client, phone)
-                return
+                return True
             prev = history.pop()
             prev_step = prev["current_step"]
             prev_context = prev["context"]
             prev_context["_history"] = history
             await db.save_conversation_state(phone, prev_step, prev_context)
             await _trigger_step_prompt(client, phone, prev_step, prev_context)
-            return
-            
+            return True
         elif intent == "greeting":
             await db.clear_conversation_state(phone)
             await _start(client, phone)
-            return
-            
+            return True
         elif intent in ("book_appointment", "check_availability", "describe_symptom"):
             # describe_symptom reuses this block's sym_name branch unchanged (below) — a
             # patient just describing a symptom gets the same "here are relevant doctors"
@@ -703,17 +738,16 @@ async def handle_message(
                 if new_context.get("lang") and has_loc:
                     await _transition_to(phone, "awaiting_doctor_name", new_context, current_step)
                     if await _search_doctors_flow(client, phone, new_context, "awaiting_doctor_name"):
-                        return
+                        return True
                     await _handle_doctor_search_miss(client, phone, new_context, doc_name)
-                    return
+                    return True
                 else:
                     if not new_context.get("lang"):
                         await _start(client, phone, new_context)
                     else:
                         await _transition_to(phone, "choosing_location", new_context, current_step)
                         await _trigger_step_prompt(client, phone, "choosing_location", new_context)
-                    return
-            
+                    return True
             elif spec_name:
                 categories = await hms_client.list_specialties()
                 category_list = [c["category"] for c in categories]
@@ -727,7 +761,7 @@ async def handle_message(
                             client, phone, new_context, matched, current_step,
                             concern_prefix=t("specialty_enthusiasm_only", new_context.get("lang"), specialty=matched),
                         )
-                        return
+                        return True
                     else:
                         if not new_context.get("lang"):
                             await _start(client, phone, new_context)
@@ -740,8 +774,7 @@ async def handle_message(
                                 client, phone,
                                 t("specialty_enthusiasm_and_location_ask", new_context.get("lang"), specialty=matched),
                             )
-                        return
-
+                        return True
             elif sym_name:
                 labels = await symptom_client.route_symptom(sym_name)
                 categories = await hms_client.list_specialties()
@@ -761,7 +794,7 @@ async def handle_message(
                             client, phone, new_context, matched, current_step,
                             concern_prefix=t("symptom_concern_only", new_context.get("lang"), specialty=matched),
                         )
-                        return
+                        return True
                     else:
                         if not new_context.get("lang"):
                             await _start(client, phone, new_context)
@@ -773,7 +806,7 @@ async def handle_message(
                                 client, phone,
                                 t("symptom_concern_and_location_ask", new_context.get("lang"), specialty=matched),
                             )
-                        return
+                        return True
                 elif new_context.get("lang"):
                     # No real substitute for the top-ranked specialty -- same "say so, show
                     # the full list" recovery _handle_awaiting_symptom already uses, rather
@@ -781,8 +814,7 @@ async def handle_message(
                     # unrelated specialty).
                     await whatsapp_client.send_text(client, phone, t("symptom_no_match", new_context.get("lang")))
                     await _send_specialty_list(client, phone, new_context)
-                    return
-
+                    return True
         elif intent == "provide_location":
             location_text = nlu_result.get("location")
             if location_text:
@@ -794,8 +826,7 @@ async def handle_message(
                     new_context["booking"] = booking
                     await _transition_to(phone, "choosing_location", new_context, current_step)
                     await _send_location_match_list(client, phone, new_context)
-                    return
-
+                    return True
                 if "booking" in new_context:
                     booking = _get_or_create_clipboard(new_context)
                     if new_context.get("city"):
@@ -806,17 +837,15 @@ async def handle_message(
                     else:
                         booking_slots.mark_notfound(booking, "location", raw=location_text)
                     await _advance_booking_flow(client, phone, new_context, booking)
-                    return
-
+                    return True
                 if new_context.get("search_doctor_query"):
                     if await _search_doctors_flow(client, phone, new_context, current_step):
-                        return
+                        return True
                     query = new_context.get("search_doctor_query")
                     await whatsapp_client.send_text(client, phone, t("search_doctor_not_found", lang, query=query))
                     new_context.pop("search_doctor_query", None)
                 await _send_search_mode_prompt(client, phone, new_context)
-                return
-
+                return True
         elif intent == "ask_pricing":
             doc_name = nlu_result.get("doctor_name")
             spec_name = nlu_result.get("specialty")
@@ -846,8 +875,7 @@ async def handle_message(
                         await whatsapp_client.send_text(client, phone, t("pricing_not_available", lang))
                 else:
                     await whatsapp_client.send_text(client, phone, t("search_doctor_not_found", lang, query=doc_name))
-                return
-
+                return True
             elif spec_name:
                 categories = await hms_client.list_specialties()
                 category_list = [c["category"] for c in categories]
@@ -861,26 +889,30 @@ async def handle_message(
                     )
                 else:
                     await whatsapp_client.send_text(client, phone, t("pricing_not_available", lang))
-                return
-
+                return True
             else:
                 await whatsapp_client.send_text(client, phone, t("pricing_ask_which", lang))
-                return
-
+                return True
         elif intent == "change_selection":
             doc_name = nlu_result.get("doctor_name")
             if doc_name and current_step in ("choosing_doctor", "choosing_slot", "awaiting_doctor_name"):
                 context["search_doctor_query"] = doc_name
                 await _transition_to(phone, "awaiting_doctor_name", context, current_step)
                 if await _search_doctors_flow(client, phone, context, "awaiting_doctor_name"):
-                    return
+                    return True
                 await _handle_doctor_search_miss(client, phone, context, doc_name)
-                return
+                return True
             elif current_step in ("choosing_doctor", "choosing_slot", "awaiting_doctor_name"):
                 await _transition_to(phone, "awaiting_doctor_name", context, current_step)
                 await whatsapp_client.send_text(client, phone, t("doctor_name_ask", context.get("lang")))
-                return
+                return True
+    return False
 
+
+async def _maybe_handle_manual_command(
+    client: httpx.AsyncClient, phone: str, context: ConversationContext, current_step: str | None,
+    lang: str | None, input_type: str, input_value: str,
+) -> bool:
     # Fallback to manual exact-match command parsing
     if input_type == "text" and input_value.strip():
         cmd = input_value.strip().lower()
@@ -896,8 +928,7 @@ async def handle_message(
                 await db.update_last_nlu_log_correctness(phone, 0, "cancel_command")
             await whatsapp_client.send_text(client, phone, t("cancelled", lang or "en"))
             await db.clear_conversation_state(phone)
-            return
-            
+            return True
         if cmd == "back":
             if hasattr(db, "update_last_nlu_log_correctness"):
                 await db.update_last_nlu_log_correctness(phone, 0, "back_navigation")
@@ -906,15 +937,21 @@ async def handle_message(
                 await whatsapp_client.send_text(client, phone, t("back_no_history", lang))
                 await db.clear_conversation_state(phone)
                 await _start(client, phone)
-                return
+                return True
             prev = history.pop()
             prev_step = prev["current_step"]
             prev_context = prev["context"]
             prev_context["_history"] = history
             await db.save_conversation_state(phone, prev_step, prev_context)
             await _trigger_step_prompt(client, phone, prev_step, prev_context)
-            return
+            return True
+    return False
 
+
+async def _maybe_handle_casual_chat_fallback(
+    client: httpx.AsyncClient, phone: str, context: ConversationContext, current_step: str | None,
+    lang: str | None, nlu_result: dict | None, input_type: str, input_value: str,
+) -> bool:
     # 1.5 Handle off-topic / out-of-scope casual conversation dynamically via LLM
     if input_type == "text" and input_value.strip() and lang:
         has_entities = nlu_result and any(nlu_result.get(k) for k in ("doctor_name", "specialty", "symptom"))
@@ -956,7 +993,62 @@ async def handle_message(
                         await _trigger_step_prompt(client, phone, current_step, context)
                     else:
                         await _start(client, phone)
-                    return
+                    return True
+    return False
+
+
+async def handle_message(
+    client: httpx.AsyncClient,
+    phone: str,
+    sender_name: str | None,
+    input_type: str,
+    input_value: str,
+    message_id: str | None = None,
+) -> None:
+    """Peer-review M1: this used to be one ~720-line function doing roughly 20 distinct jobs
+    in sequence (typing indicator, state load, ~10 different intercept/dispatch checks, NLU,
+    final step-registry dispatch) -- the busiest, most-changed file in the whole repo, which
+    made it the highest-risk place for an unrelated edit to break something three screens
+    away. Mechanically split into one function per responsibility below, called in the exact
+    same order with the exact same early-return semantics -- no behavior changed, only where
+    each piece of it lives. Each _maybe_handle_* helper returns True when it already sent a
+    response and this turn is over."""
+    if message_id:
+        try:
+            await whatsapp_client.send_typing_indicator(client, message_id)
+        except Exception:
+            # Best-effort UX polish — never let a typing-indicator failure block the
+            # actual reply the patient is waiting on.
+            logger.warning("Failed to send typing indicator for %s", message_id)
+
+    current_step, context = await _load_turn_context(phone, input_type, input_value)
+
+    if await _maybe_handle_hospbook_button(client, phone, context, current_step, input_type, input_value):
+        return
+    if await _maybe_handle_start_booking_button(client, phone, context, current_step, input_type, input_value):
+        return
+    if await _maybe_handle_deterministic_qr_trigger(client, phone, context, current_step, input_type, input_value):
+        return
+
+    lang, has_lang_init = await _apply_language_autodetect(context, phone, current_step, input_type, input_value)
+
+    if await _maybe_handle_safety_triage(client, phone, lang, input_type, input_value):
+        return
+
+    handled, nlu_result, raw_nlu_result = await _run_nlu_and_maybe_handle(
+        client, phone, context, current_step, lang, has_lang_init, input_type, input_value
+    )
+    if handled:
+        return
+
+    if await _maybe_handle_doctor_hotswap(client, phone, context, current_step, nlu_result):
+        return
+    if await _maybe_handle_global_nlu_intent(client, phone, context, current_step, lang, nlu_result):
+        return
+    if await _maybe_handle_manual_command(client, phone, context, current_step, lang, input_type, input_value):
+        return
+    if await _maybe_handle_casual_chat_fallback(client, phone, context, current_step, lang, nlu_result, input_type, input_value):
+        return
 
     try:
         step_config = STEP_REGISTRY.get(current_step)
@@ -982,6 +1074,7 @@ async def handle_message(
     except httpx.HTTPError as exc:
         logger.warning("HMS API unreachable for %s: %s", mask_phone(phone), exc)
         await whatsapp_client.send_text(client, phone, t("error_hms_unreachable", lang))
+
 
 
 async def _safe_city_index() -> dict:
