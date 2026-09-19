@@ -7,6 +7,8 @@ route_symptom() (the actual NexEagleWebsite API call) stays in symptom_client.py
 the label-matching decision moves here.
 """
 
+from app.i18n import CATEGORY_ALIASES
+
 
 def match_category(label: str, available_categories: list[str]) -> str | None:
     """Matches a router label like "Cardiologist (Heart)" against the live
@@ -19,7 +21,19 @@ def match_category(label: str, available_categories: list[str]) -> str | None:
     for category in available_categories:
         if category.lower() == target:
             return category
+    # A hospital exposing short department-style category names ("Urology") instead of our
+    # richer labels ("Urologist") -- confirmed live on prod -- won't hit the exact match
+    # above, but is a known, curated synonym rather than a guess.
     for category in available_categories:
-        if target in category.lower() or category.lower() in target:
+        c = category.lower()
+        if CATEGORY_ALIASES.get(c, "").lower() == target or CATEGORY_ALIASES.get(target, "").lower() == c:
+            return category
+    # Last resort: a real shorthand ("cardio" for "Cardiologist (Heart)") is always a
+    # PREFIX of the real name, never merely contained somewhere inside it -- a plain
+    # "contains anywhere" check previously matched "ENT" inside "Gastroenterologist" purely
+    # by coincidence (medically unrelated), which this prefix restriction rules out.
+    for category in available_categories:
+        c = category.lower()
+        if c.startswith(target) or target.startswith(c):
             return category
     return None

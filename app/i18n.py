@@ -214,6 +214,25 @@ OTHER_GROUP = {
     },
 }
 
+# Some hospitals (confirmed live on prod) expose /public/specialties under short,
+# department-style names instead of the richer patient-facing labels SPECIALTY_GROUPS and
+# symptom_client's routing table are written against ("Urology" vs "Urologist", "ENT" vs
+# "ENT Specialist"...). Without this, those categories match nothing -- they silently fall
+# into OTHER_GROUP (so browse groups look empty) and symptom routing can't resolve them at
+# all. Keys are lowercase; only pairs confirmed to be the same specialty are listed here --
+# "Gynaecologist"/"Gynecology" and "Paediatrician"/"Pediatrics" are deliberately NOT aliased
+# together since prod's live list carries both as distinct categories and merging them could
+# silently mix two different doctor rosters.
+CATEGORY_ALIASES = {
+    "urology": "Urologist",
+    "ent": "ENT Specialist",
+    "neurology": "Neurologist",
+    "orthopedics": "Orthopaedic Surgeon (Bone)",
+    "general surgery": "General Surgeon",
+    "anesthesiology": "Anaesthesiologist",
+    "dentistry": "Dentist",
+}
+
 
 def group_label(group: dict, lang: str | None) -> tuple[str, str]:
     """(title, description) for a group row, in the patient's language."""
