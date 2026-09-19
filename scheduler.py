@@ -53,6 +53,27 @@ async def send_followups_for(client: httpx.AsyncClient, visit_date: date) -> Non
         except httpx.HTTPError:
             logger.exception("Failed to send follow-up for appointment %s", row["hms_appointment_id"])
             continue  # leave followup_sent_at unset so the next run retries this one
+
+        # Peer-review live-reported bug: without this, a reply to the message above landed
+        # on a completely blank conversation state (a successful booking DELETEs its own
+        # state row) and got NLU-classified/routed as if from a brand-new patient -- a casual
+        # "I'm feeling fine" was misread as a symptom description and answered with a
+        # nonsensical "couldn't confidently match that to a specialty" list. See
+        # app/conversation/followup.py, intercepted early in handle_message (NOT via
+        # STEP_REGISTRY, which would be too late) specifically for this step. Best-effort:
+        # if this write fails, the follow-up text itself already sent successfully above, so
+        # still mark it sent rather than resending the same message on the next run -- the
+        # patient's very next reply would just fall back to the pre-fix (blank-state) path.
+        try:
+            await db.save_conversation_state(
+                row["phone_number"], "awaiting_followup_reply",
+                {"lang": row["preferred_language"], "hms_appointment_id": row["hms_appointment_id"]},
+            )
+        except Exception:
+            logger.exception(
+                "Failed to save awaiting_followup_reply state for appointment %s", row["hms_appointment_id"]
+            )
+
         await db.mark_followup_sent(row["id"])
 
 

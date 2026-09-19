@@ -829,6 +829,42 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Hi {patient_name}, {doctor_name} se milne ke baad bas haal-chaal pooch rahe hain — kaisa feel kar rahe hain? Follow-up book karna ho to reply karein.",
         "bn": "হাই {patient_name}, {doctor_name}-এর কাছে আপনার পরিদর্শনের পর খোঁজ নিচ্ছি — আপনি কেমন অনুভব করছেন? ফলো-আপ বুক করতে হলে উত্তর দিন।",
     },
+    "followup_reply_hint": {
+        "en": "How are you feeling? Reply in words, or type 'book' if you'd like a follow-up appointment.",
+        "hi": "आप कैसा महसूस कर रहे हैं? कृपया लिखकर बताएं, या फॉलो-अप अपॉइंटमेंट के लिए 'book' लिखें।",
+        "hg": "Aap kaisa feel kar rahe hain? Likh kar bataiye, ya follow-up appointment ke liye 'book' likhein.",
+        "bn": "আপনি কেমন অনুভব করছেন? লিখে জানান, অথবা ফলো-আপ অ্যাপয়েন্টমেন্টের জন্য 'book' লিখুন।",
+    },
+    "followup_ack_feeling_well": {
+        "en": "Glad to hear that! Take care, and reach out anytime if you need us.",
+        "hi": "यह सुनकर अच्छा लगा! अपना ख्याल रखें, और ज़रूरत पड़ने पर कभी भी संपर्क करें।",
+        "hg": "Ye sunke accha laga! Apna khyal rakhein, aur zaroorat pade to kabhi bhi contact karein.",
+        "bn": "এটা শুনে ভালো লাগলো! নিজের যত্ন নিন, এবং প্রয়োজনে যেকোনো সময় যোগাযোগ করুন।",
+    },
+    "followup_feeling_unwell_offer": {
+        "en": "Sorry to hear that. Would you like me to book a follow-up appointment for you?",
+        "hi": "यह सुनकर दुख हुआ। क्या मैं आपके लिए एक फॉलो-अप अपॉइंटमेंट बुक कर दूं?",
+        "hg": "Ye sunke dukh hua. Kya main aapke liye ek follow-up appointment book kar doon?",
+        "bn": "এটা শুনে দুঃখ হলো। আমি কি আপনার জন্য একটি ফলো-আপ অ্যাপয়েন্টমেন্ট বুক করে দেব?",
+    },
+    "followup_book_btn": {
+        "en": "Book follow-up",
+        "hi": "फॉलो-अप बुक करें",
+        "hg": "Follow-up book karein",
+        "bn": "ফলো-আপ বুক করুন",
+    },
+    "followup_no_thanks_btn": {
+        "en": "No, thanks",
+        "hi": "नहीं, धन्यवाद",
+        "hg": "Nahi, dhanyawad",
+        "bn": "না, ধন্যবাদ",
+    },
+    "followup_no_thanks_ack": {
+        "en": "Okay, take care! Reach out anytime if you change your mind.",
+        "hi": "ठीक है, अपना ख्याल रखें! विचार बदलें तो कभी भी संपर्क करें।",
+        "hg": "Theek hai, apna khyal rakhein! Mann badle to kabhi bhi contact karein.",
+        "bn": "ঠিক আছে, নিজের যত্ন নিন! মত পরিবর্তন করলে যেকোনো সময় যোগাযোগ করুন।",
+    },
     "checkin_invalid_code": {
         "en": "This check-in code isn't valid. Please ask reception for help.",
         "hi": "यह चेक-इन कोड मान्य नहीं है। कृपया रिसेप्शन से मदद लें।",

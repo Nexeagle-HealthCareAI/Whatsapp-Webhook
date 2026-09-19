@@ -83,6 +83,9 @@ from app.conversation.appointment_actions import (
 from app.conversation.last_search import (
     _prompt_confirming_last_search, _handle_confirming_last_search,
 )
+from app.conversation.followup import (
+    handle_awaiting_followup_reply, handle_confirming_followup_booking,
+)
 
 logger = logging.getLogger("conversation")
 
@@ -429,6 +432,28 @@ async def _maybe_handle_deterministic_qr_trigger(
                     resolver_name, filename, not_available_key, delivered_key,
                 )
                 return True
+    return False
+
+
+async def _maybe_handle_followup_reply_step(
+    client: httpx.AsyncClient, phone: str, context: ConversationContext, current_step: str | None,
+    input_type: str, input_value: str,
+) -> bool:
+    """A reply to scheduler.py's day-after-visit follow-up message must never fall into the
+    normal NLU/global-intent pipeline below -- peer-review live-reported bug: a casual "I'm
+    feeling fine" reply got NLU-classified as a symptom description and routed into
+    specialty-matching, producing a nonsensical "couldn't confidently match" response.
+    Deliberately checked here, before ANY NLU/global-intent logic runs -- NOT via the late
+    STEP_REGISTRY dispatch, which would be too late: a message NLU-classified as
+    book_appointment/describe_symptom would already have been claimed by
+    _maybe_handle_global_nlu_intent long before step-dispatch is ever reached, i.e. the exact
+    same bug through a different door. See app/conversation/followup.py's module docstring."""
+    if current_step == "awaiting_followup_reply":
+        await handle_awaiting_followup_reply(client, phone, input_type, input_value, context)
+        return True
+    if current_step == "confirming_followup_booking":
+        await handle_confirming_followup_booking(client, phone, input_type, input_value, context)
+        return True
     return False
 
 
@@ -1028,6 +1053,8 @@ async def handle_message(
     if await _maybe_handle_start_booking_button(client, phone, context, current_step, input_type, input_value):
         return
     if await _maybe_handle_deterministic_qr_trigger(client, phone, context, current_step, input_type, input_value):
+        return
+    if await _maybe_handle_followup_reply_step(client, phone, context, current_step, input_type, input_value):
         return
 
     lang, has_lang_init = await _apply_language_autodetect(context, phone, current_step, input_type, input_value)
