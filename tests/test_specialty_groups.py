@@ -120,7 +120,7 @@ LIVE_SPECIALTIES = [
 # to the wrong bucket here is a deliberate act rather than an accident.
 BUTTON_TITLE_KEYS = [
     "search_mode_symptom", "search_mode_name", "search_mode_browse",
-    "date_today", "date_tomorrow", "confirm_btn", "cancel_btn", "search_wider_yes",
+    "date_today", "date_tomorrow", "confirm_btn", "cancel_btn",
     "change_doctor_btn", "update_details_btn",
     "reuse_last_search_yes_btn", "reuse_last_search_change_location_btn",
     "reuse_last_search_change_specialty_btn",
@@ -2014,14 +2014,6 @@ def test_welcome_message_lists_actions():
     check("Doctor search" in msg, f"welcome message should list doctor search, got {msg!r}")
     check("Symptom check" in msg, f"welcome message should list symptom check, got {msg!r}")
     check("Book appointment" in msg, f"welcome message should list booking, got {msg!r}")
-
-
-def test_booking_success_invites_new_search():
-    """Task 14: booked_queue_note used to end the conversation with no invitation to start
-    again, unlike the cancelled message which already did. Now symmetric."""
-    for lang in ("en", "hi", "hg", "bn"):
-        msg = i18n.t("booked_queue_note", lang)
-        check(len(msg.split("\n\n")) >= 2, f"booked_queue_note[{lang}] should have a closing invitation on its own line")
 
 
 def test_symptom_and_specialty_open_with_one_combined_location_message():

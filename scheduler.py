@@ -35,24 +35,52 @@ logger = logging.getLogger("scheduler")
 _POLL_INTERVAL_SECONDS = 6 * 60 * 60  # four checks a day is plenty for a once-daily job
 
 
+# Localized fallback for the small number of rows booked before pending_appointments.doctor_name
+# existed (see sql/schema.sql) -- those have NULL here and fall back to this generic phrase,
+# same as _do_book_appointment already does for a display name via "there"/patient fallbacks.
+_GENERIC_DOCTOR_FALLBACK = {
+    "en": "your doctor", "hi": "आपके डॉक्टर", "hg": "aapke doctor", "bn": "আপনার ডাক্তার",
+}
+
+
 async def send_followups_for(client: httpx.AsyncClient, visit_date: date) -> None:
     due = await db.list_due_followups(visit_date)
     logger.info("Found %d follow-up(s) due for visit date %s", len(due), visit_date)
     for row in due:
+        lang = row["preferred_language"]
+        doctor_name = row.get("doctor_name") or _GENERIC_DOCTOR_FALLBACK.get(lang, _GENERIC_DOCTOR_FALLBACK["en"])
         text = i18n.t(
             "followup_reminder",
-            row["preferred_language"],
+            lang,
             patient_name=row["patient_display_name"] or "there",
-            doctor_name="your doctor",  # doctor name isn't retained past booking today —
-            # see note in app/conversation.py about context being dropped after booking;
-            # if this should say the actual doctor's name, store it on pending_appointments
-            # at booking time the same way patient_display_name already is.
+            doctor_name=doctor_name,
         )
         try:
             await send_text(client, row["phone_number"], text)
         except httpx.HTTPError:
             logger.exception("Failed to send follow-up for appointment %s", row["hms_appointment_id"])
             continue  # leave followup_sent_at unset so the next run retries this one
+
+        # Peer-review live-reported bug: without this, a reply to the message above landed
+        # on a completely blank conversation state (a successful booking DELETEs its own
+        # state row) and got NLU-classified/routed as if from a brand-new patient -- a casual
+        # "I'm feeling fine" was misread as a symptom description and answered with a
+        # nonsensical "couldn't confidently match that to a specialty" list. See
+        # app/conversation/followup.py, intercepted early in handle_message (NOT via
+        # STEP_REGISTRY, which would be too late) specifically for this step. Best-effort:
+        # if this write fails, the follow-up text itself already sent successfully above, so
+        # still mark it sent rather than resending the same message on the next run -- the
+        # patient's very next reply would just fall back to the pre-fix (blank-state) path.
+        try:
+            await db.save_conversation_state(
+                row["phone_number"], "awaiting_followup_reply",
+                {"lang": row["preferred_language"], "hms_appointment_id": row["hms_appointment_id"]},
+            )
+        except Exception:
+            logger.exception(
+                "Failed to save awaiting_followup_reply state for appointment %s", row["hms_appointment_id"]
+            )
+
         await db.mark_followup_sent(row["id"])
 
 

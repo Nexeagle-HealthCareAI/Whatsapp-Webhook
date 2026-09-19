@@ -14,6 +14,36 @@ async def has_pending_appointment(phone: str, preferred_date: date_type) -> bool
         return await cur.fetchone() is not None
 
 
+async def has_duplicate_appointment_details(
+    phone: str,
+    preferred_date: date_type,
+    doctor_id: str | None,
+    patient_display_name: str | None,
+    patient_age: int | None,
+    patient_gender: str | None,
+) -> bool:
+    """True if this phone number already has a pending/booked appointment for the SAME
+    patient (name+age+gender), doctor and date. Deliberately narrower than
+    has_pending_appointment (phone+date only) -- that one blocks ANY second booking same-day,
+    which live feedback confirmed is too strict (e.g. a mother booking herself and her
+    daughter, same doctor, same day, is legitimate). This is the check behind a soft
+    warn-and-confirm, not a hard block -- see _handle_confirming's confirming_duplicate_booking
+    step. doctor_id is NULL-safe (a booking made before that column existed never matches)."""
+    from app.db import get_pool
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.cursor() as cur:
+        await cur.execute(
+            "SELECT TOP 1 1 FROM dbo.pending_appointments "
+            "WHERE phone_number = ? AND preferred_date = ? AND status IN ('pending', 'booked') "
+            "AND doctor_id = ? "
+            "AND LOWER(LTRIM(RTRIM(ISNULL(patient_display_name, '')))) = LOWER(LTRIM(RTRIM(ISNULL(?, '')))) "
+            "AND ISNULL(patient_age, -1) = ISNULL(?, -1) "
+            "AND LOWER(ISNULL(patient_gender, '')) = LOWER(ISNULL(?, ''))",
+            (phone, preferred_date, doctor_id, patient_display_name, patient_age, patient_gender),
+        )
+        return await cur.fetchone() is not None
+
+
 async def get_upcoming_active_appointment(phone: str) -> tuple[bool, str | None]:
     """Check if the user has any active booked/pending appointments on or after today,
     returning a tuple: (has_active, active_date_str)."""
@@ -44,6 +74,8 @@ async def create_pending_appointment(
     patient_gender: str | None = None,
     patient_guardian: str | None = None,
     hospital_id: str | None = None,
+    doctor_id: str | None = None,
+    doctor_name: str | None = None,
 ) -> UUID:
     from app.db import get_pool
     pool = await get_pool()
@@ -51,8 +83,8 @@ async def create_pending_appointment(
     async with pool.acquire() as conn, conn.cursor() as cur:
         await cur.execute(
             "INSERT INTO dbo.pending_appointments "
-            "(id, phone_number, preferred_date, status, preferred_language, booking_for, patient_display_name, patient_age, patient_gender, patient_guardian, hospital_id) "
-            "VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)",
+            "(id, phone_number, preferred_date, status, preferred_language, booking_for, patient_display_name, patient_age, patient_gender, patient_guardian, hospital_id, doctor_id, doctor_name) "
+            "VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 str(row_id),
                 phone,
@@ -64,6 +96,8 @@ async def create_pending_appointment(
                 patient_gender,
                 patient_guardian,
                 hospital_id,
+                doctor_id,
+                doctor_name,
             ),
         )
     return row_id

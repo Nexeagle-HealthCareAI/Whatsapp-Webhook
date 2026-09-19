@@ -17,12 +17,13 @@ later analysis. See app/messengers/conversation_log_queue.py's module docstring 
 full reasoning.
 """
 
+import asyncio
 import json
 import logging
 
 from app import db
 from app.messengers.conversation_log_queue import LOG_KEY
-from app.messengers.redis_client import get_redis
+from app.messengers.redis_client import get_redis, sweep_stuck_jobs
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("conversation_logger")
@@ -50,6 +51,10 @@ async def _handle_job(redis, raw_job: str) -> None:
 
 async def main() -> None:
     redis = get_redis()
+    # Peer-review P0: same gap as worker.py/sender.py -- BLMOVE already protected a job from
+    # being lost on a crash, but nothing ever read _PROCESSING_KEY back out. Recovers
+    # anything stranded there by a previous crash before starting the main loop.
+    await sweep_stuck_jobs(redis, _PROCESSING_KEY, LOG_KEY)
     logger.info("Conversation logger started, draining %s", LOG_KEY)
     while True:
         # BLMOVE, not BRPOP: a crash mid-write leaves the job sitting in _PROCESSING_KEY

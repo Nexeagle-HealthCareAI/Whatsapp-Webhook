@@ -34,7 +34,8 @@ from app.messengers.outbound_queue import (
     promote_ready_delayed_jobs,
     requeue_with_backoff,
 )
-from app.messengers.redis_client import get_redis
+from app.messengers.redis_client import get_redis, sweep_stuck_jobs
+from app.pii import mask_phone
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("sender")
@@ -53,23 +54,24 @@ async def _attempt_send(client: httpx.AsyncClient, redis, raw_job: str) -> None:
             json=job["payload"],
         )
     except httpx.TransportError as exc:
-        logger.warning("Transport error sending to %s, will retry: %s", job["payload"].get("to"), exc)
+        logger.warning("Transport error sending to %s, will retry: %s", mask_phone(job["payload"].get("to")), exc)
         await requeue_with_backoff(redis, job, settings.whatsapp_send_max_attempts)
         await redis.lrem(PROCESSING_KEY, 1, raw_job)
         return
 
     to = job["payload"].get("to") or f"msg:{job['payload'].get('message_id')}"
+    to_masked = mask_phone(to)
 
     if response.status_code == 429 or response.status_code >= 500:
         # Meta said slow down, or had its own hiccup -- not this message's fault.
-        logger.warning("WhatsApp send to %s got %s, requeuing with backoff", to, response.status_code)
+        logger.warning("WhatsApp send to %s got %s, requeuing with backoff", to_masked, response.status_code)
         await requeue_with_backoff(redis, job, settings.whatsapp_send_max_attempts)
     elif response.status_code >= 400:
         # Genuinely bad request (bad number, malformed payload) -- retrying won't help.
-        logger.error("Permanently failed WhatsApp send to %s: %s", to, response.text)
+        logger.error("Permanently failed WhatsApp send to %s: %s", to_masked, response.text)
         await redis.lpush(DEAD_KEY, raw_job)
     else:
-        logger.info("Sent to %s -> %s", to, response.status_code)
+        logger.info("Sent to %s -> %s", to_masked, response.status_code)
 
     await redis.lrem(PROCESSING_KEY, 1, raw_job)
 
@@ -108,6 +110,10 @@ def dispatch_job(
 
 async def main() -> None:
     redis = get_redis()
+    # Peer-review P0: this BLMOVE pattern already protected a job from being LOST on a
+    # crash, but nothing ever read PROCESSING_KEY back out -- a job stranded there by a
+    # crash just sat forever, unsent, invisible. This recovers it at the next startup.
+    await sweep_stuck_jobs(redis, PROCESSING_KEY, OUTBOX_KEY)
     async with httpx.AsyncClient(timeout=10) as client:
         logger.info(
             "Sender started, draining %s at up to %s/sec",

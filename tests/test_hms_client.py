@@ -133,6 +133,51 @@ def test_list_doctors_at_hospital_survives_a_longer_5xx_burst_after_widening_the
     check(doctors == [{"doctorId": "d1", "fullName": "Dr. A"}], f"succeeds once the burst finally clears, got {doctors!r}")
 
 
+def test_book_appointment_does_not_retry_a_timeout():
+    print("\n--- Peer-review C3: a timeout on book_appointment (POST, non-idempotent) must NOT "
+          "be auto-retried -- 1HMS may have already committed the appointment before the "
+          "timeout fired, so a blind retry risks a real duplicate booking ---")
+    calls = {"count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        raise httpx.TimeoutException("timed out")
+
+    async def _run():
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://hms.test")
+        with patch.object(hms_client, "_get_client", lambda: client):
+            await hms_client.book_appointment("Riya", "919876543210", "doc-1", date(2026, 9, 1), "morning")
+
+    raised = False
+    try:
+        run(_run())
+    except httpx.TimeoutException:
+        raised = True
+    check(raised, "a timeout still raises")
+    check(calls["count"] == 1, f"must NOT retry a timeout -- exactly one call, got {calls['count']}")
+
+
+def test_book_appointment_still_retries_a_transport_error():
+    print("\n--- ...but a TransportError (connection never even established) has no such "
+          "ambiguity -- the request provably never reached 1HMS, so it's still safe to retry ---")
+    calls = {"count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise httpx.ConnectError("connection refused")
+        return httpx.Response(200, json={"success": True, "appointmentId": "appt-1"})
+
+    async def _run():
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://hms.test")
+        with patch.object(hms_client, "_get_client", lambda: client):
+            return await hms_client.book_appointment("Riya", "919876543210", "doc-1", date(2026, 9, 1), "morning")
+
+    result = run(_run())
+    check(calls["count"] == 2, f"retries once after the connection error, got {calls['count']} call(s)")
+    check(result.get("appointmentId") == "appt-1", f"succeeds once the retry lands, got {result!r}")
+
+
 def test_list_doctors_at_hospital_does_not_retry_a_4xx():
     print("\n--- A 4xx (client error, e.g. a bad hospitalId) must NOT be retried -- retrying won't fix a bad request ---")
     calls = {"count": 0}
@@ -158,6 +203,8 @@ def test_list_doctors_at_hospital_does_not_retry_a_4xx():
 if __name__ == "__main__":
     test_age_gender_guardian_sent_as_structured_patient_fields()
     test_missing_age_gender_guardian_omitted_not_sent_as_nulls()
+    test_book_appointment_does_not_retry_a_timeout()
+    test_book_appointment_still_retries_a_transport_error()
     test_list_doctors_at_hospital_retries_a_transient_5xx_and_succeeds()
     test_list_doctors_at_hospital_survives_a_longer_5xx_burst_after_widening_the_budget()
     test_list_doctors_at_hospital_does_not_retry_a_4xx()

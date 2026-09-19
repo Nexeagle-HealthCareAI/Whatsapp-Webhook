@@ -18,6 +18,28 @@ _retry_network_errors = retry(
     reraise=True,
 )
 
+def _is_transport_error_but_not_a_timeout(exc: BaseException) -> bool:
+    # httpx.TimeoutException is itself a SUBCLASS of httpx.TransportError (confirmed against
+    # httpx's own exception hierarchy) -- retry_if_exception_type(httpx.TransportError) alone
+    # would still match every timeout, silently defeating the whole point of this decorator.
+    # Needs the explicit isinstance exclusion below, not just a narrower exception_type tuple.
+    return isinstance(exc, httpx.TransportError) and not isinstance(exc, httpx.TimeoutException)
+
+
+# Same intent as _retry_network_errors, minus timeouts. A timeout is ambiguous -- 1HMS may
+# have already processed the request before the timeout fired -- so blindly retrying a
+# non-idempotent POST on timeout risks a duplicate side effect (e.g. a second appointment).
+# A non-timeout TransportError (connection refused, DNS failure, etc.) has no such ambiguity
+# -- the request provably never reached the server, so it's still safe to retry. Scoped to
+# book_appointment only, the one call this reasoning actually matters for; cancel/reschedule
+# are PATCH-style and naturally idempotent, so they stay on the shared decorator.
+_retry_transport_errors_only = retry(
+    retry=retry_if_exception(_is_transport_error_but_not_a_timeout),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
+    reraise=True,
+)
+
 
 def _is_5xx_error(exc: BaseException) -> bool:
     """A 5xx HMS response means the server never even started processing the request
@@ -154,7 +176,7 @@ async def get_doctor_availability(doctor_id: str, on_date: date_type) -> dict[st
     return response.json()
 
 
-@_retry_network_errors
+@_retry_transport_errors_only
 async def book_appointment(
     patient_name: str,
     patient_mobile: str,

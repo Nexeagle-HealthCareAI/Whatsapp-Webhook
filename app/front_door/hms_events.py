@@ -57,11 +57,18 @@ async def token_called(
         if event.estimatedWaitMinutes is not None
         else ""
     )
-    text = {
+    # Every other patient-facing message in this codebase supports all 4 languages (en/hi/
+    # hg/bn) -- this one used to be missing "bn" entirely, and worse, a plain dict .get()
+    # with no fallback meant a Bengali-preferring patient got text=None sent to send_text
+    # instead of a real message. Fixed with the "bn" entry below and an explicit English
+    # fallback, matching app.i18n.t()'s own fallback behaviour.
+    localized = {
         "en": f"Queue update: currently serving token #{event.currentToken}{wait_note}.",
         "hi": f"क्यू अपडेट: अभी टोकन #{event.currentToken} चल रहा है{wait_note}।",
         "hg": f"Queue update: abhi token #{event.currentToken} chal raha hai{wait_note}.",
-    }.get(row["preferred_language"] or i18n.DEFAULT_LANG)
+        "bn": f"কিউ আপডেট: বর্তমানে টোকেন #{event.currentToken} চলছে{wait_note}।",
+    }
+    text = localized.get(row["preferred_language"] or i18n.DEFAULT_LANG) or localized["en"]
 
     async with httpx.AsyncClient(timeout=10) as client:
         await send_text(client, row["phone_number"], text)

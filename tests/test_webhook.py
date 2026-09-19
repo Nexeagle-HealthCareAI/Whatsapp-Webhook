@@ -62,8 +62,9 @@ import time
 
 from fastapi.testclient import TestClient
 
-from app import main
+from app import db, main
 from app.config import settings
+from app.front_door import hms_events as hms_events_module
 from app.messengers import hms_client
 from app.messengers.hms_client import HmsApiError
 
@@ -263,6 +264,128 @@ def test_qr_redirects():
         hms_client.get_discharge_summary_url = original_get_discharge
 
 
+def _token_called_payload(event_id="evt-1", appointment_id="appt-1", token=5):
+    return {"eventId": event_id, "appointmentId": appointment_id, "currentToken": token}
+
+
+def test_token_called_rejects_a_missing_or_wrong_internal_token():
+    print("\n--- Peer-review T3: /events/token-called had ZERO test coverage of its own "
+          "auth -- a wrong/missing X-Internal-Token must be rejected before anything else runs ---")
+    original_get_appt = db.get_appointment_by_hms_id
+    calls = {"lookup": 0}
+
+    async def _spy_get_appt(hms_appointment_id):
+        calls["lookup"] += 1
+        return None
+
+    db.get_appointment_by_hms_id = _spy_get_appt
+    try:
+        response = client.post("/events/token-called", json=_token_called_payload())
+        check(response.status_code == 401, f"missing token -> 401, got {response.status_code}")
+
+        response = client.post(
+            "/events/token-called", json=_token_called_payload(),
+            headers={"X-Internal-Token": "definitely-wrong"},
+        )
+        check(response.status_code == 401, f"wrong token -> 401, got {response.status_code}")
+
+        check(calls["lookup"] == 0, "auth must be checked BEFORE any appointment lookup runs -- 0 calls expected")
+    finally:
+        db.get_appointment_by_hms_id = original_get_appt
+
+
+def test_token_called_accepts_the_real_internal_token():
+    print("\n--- Sanity: the real token still works, for an appointment this bot doesn't know about ---")
+    original_get_appt = db.get_appointment_by_hms_id
+
+    async def _unknown(hms_appointment_id):
+        return None
+
+    db.get_appointment_by_hms_id = _unknown
+    try:
+        response = client.post(
+            "/events/token-called", json=_token_called_payload(event_id="evt-2", appointment_id="unknown-appt"),
+            headers={"X-Internal-Token": settings.internal_events_token},
+        )
+        check(response.status_code == 200, f"correct token -> 200, got {response.status_code}")
+        check(response.json() == {"status": "ok"}, f"acks even for an unknown appointment, got {response.json()!r}")
+    finally:
+        db.get_appointment_by_hms_id = original_get_appt
+
+
+def test_token_called_pushes_a_queue_update_for_a_known_appointment():
+    print("\n--- First-ever coverage of the actual happy path: a known appointment gets notified ---")
+    original_get_appt = db.get_appointment_by_hms_id
+    original_save_status = db.save_queue_status
+    original_send_text = hms_events_module.send_text
+    sent = []
+
+    async def _known(hms_appointment_id):
+        return {"phone_number": "919876543210", "preferred_language": "en", "patient_display_name": "Riya"}
+
+    async def _save_status(appointment_id, current_token, estimated_wait_minutes):
+        pass
+
+    async def _fake_send_text(client, to, body):
+        sent.append((to, body))
+
+    db.get_appointment_by_hms_id = _known
+    db.save_queue_status = _save_status
+    hms_events_module.send_text = _fake_send_text
+    try:
+        response = client.post(
+            "/events/token-called",
+            json=_token_called_payload(event_id="evt-3", appointment_id="appt-known", token=12),
+            headers={"X-Internal-Token": settings.internal_events_token},
+        )
+        check(response.status_code == 200, f"Expected 200, got {response.status_code}")
+        check(len(sent) == 1, f"sends exactly one queue-update text, got {sent!r}")
+        check(sent[0][0] == "919876543210", "sent to the appointment's own phone number")
+        check("12" in sent[0][1], f"names the current token in the message, got {sent[0][1]!r}")
+    finally:
+        db.get_appointment_by_hms_id = original_get_appt
+        db.save_queue_status = original_save_status
+        hms_events_module.send_text = original_send_text
+
+
+def test_token_called_sends_real_bengali_text_not_none():
+    print("\n--- Found while auditing every outbound message: the queue-update text was a plain "
+          "dict .get() with no 'bn' entry and no fallback -- a Bengali-preferring patient got "
+          "text=None sent to send_text instead of a real message ---")
+    original_get_appt = db.get_appointment_by_hms_id
+    original_save_status = db.save_queue_status
+    original_send_text = hms_events_module.send_text
+    sent = []
+
+    async def _known(hms_appointment_id):
+        return {"phone_number": "919876543210", "preferred_language": "bn", "patient_display_name": "Riya"}
+
+    async def _save_status(appointment_id, current_token, estimated_wait_minutes):
+        pass
+
+    async def _fake_send_text(client, to, body):
+        sent.append(body)
+
+    db.get_appointment_by_hms_id = _known
+    db.save_queue_status = _save_status
+    hms_events_module.send_text = _fake_send_text
+    try:
+        response = client.post(
+            "/events/token-called",
+            json=_token_called_payload(event_id="evt-4", appointment_id="appt-bn", token=7),
+            headers={"X-Internal-Token": settings.internal_events_token},
+        )
+        check(response.status_code == 200, f"Expected 200, got {response.status_code}")
+        check(sent and sent[0] is not None, "the message body must never be None")
+        check(sent and "None" not in sent[0], f"and never the literal string 'None' either, got {sent!r}")
+        check(sent and "7" in sent[0], f"names the real token number, got {sent!r}")
+        check(sent and "কিউ" in sent[0], f"is actually Bengali text, not an English fallback, got {sent!r}")
+    finally:
+        db.get_appointment_by_hms_id = original_get_appt
+        db.save_queue_status = original_save_status
+        hms_events_module.send_text = original_send_text
+
+
 if __name__ == "__main__":
     tests = [
         test_verify_webhook, test_verify_signature_validation,
@@ -270,6 +393,10 @@ if __name__ == "__main__":
         test_webhook_for_this_servers_own_phone_number_id_still_works,
         test_webhook_with_no_phone_number_id_metadata_still_works,
         test_qr_redirects,
+        test_token_called_rejects_a_missing_or_wrong_internal_token,
+        test_token_called_accepts_the_real_internal_token,
+        test_token_called_pushes_a_queue_update_for_a_known_appointment,
+        test_token_called_sends_real_bengali_text_not_none,
     ]
     for test in tests:
         test()

@@ -6,36 +6,90 @@ import httpx
 
 from app import conversation, db
 from app.config import settings
-from app.messengers import city_index
-from app.messengers.redis_client import get_redis
+from app.i18n import t
+from app.messengers import city_index, whatsapp_client
+from app.messengers.redis_client import get_redis, sweep_stuck_jobs
+from app.pii import mask_phone
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("worker")
 
+# Peer-review P0: previously plain BRPOP -- an atomic pop-and-forget that permanently drops
+# the job the instant a crash (OOM, or a deploy restarting this container) happens between
+# the pop and finishing the job. BLMOVE (see main()) hands it to this list instead, and
+# sweep_stuck_jobs recovers anything left here by a crash at the next startup.
+PROCESSING_KEY = "whatsapp:booking_jobs:processing"
 
-async def handle_job(client: httpx.AsyncClient, job: dict) -> None:
+
+async def _notify_patient_of_failure(client: httpx.AsyncClient, phone: str) -> None:
+    """Best-effort -- a failure notifying the patient about a failure must never itself
+    raise and mask the original error. Looks up their saved language so the notice isn't
+    always in English, but that lookup is itself best-effort (a crash this deep shouldn't
+    also block on a second DB call)."""
+    lang = None
+    try:
+        state = await db.get_conversation_state(phone)
+        lang = state["context"].get("lang") if state else None
+    except Exception:
+        logger.warning("Could not look up language for failure notice to %s", mask_phone(phone))
+    try:
+        await whatsapp_client.send_text(client, phone, t("error_hms", lang))
+    except Exception:
+        logger.exception("Also failed to send the failure notice to %s", mask_phone(phone))
+
+
+async def handle_job(client: httpx.AsyncClient, redis, raw_job: str, job: dict) -> None:
     message_id = job.get("message_id")
     sender = job["sender"]
 
-    # Durable backstop beyond Redis's TTL-based dedupe (app/webhook.py) — belt and
-    # suspenders against a duplicate booking if a job is ever replayed after that
-    # Redis key has expired.
-    if message_id and await db.is_message_processed(message_id):
-        logger.info("Message %s already processed, skipping", message_id)
-        return
+    try:
+        # Durable backstop beyond Redis's TTL-based dedupe (app/webhook.py) — belt and
+        # suspenders against a duplicate booking if a job is ever replayed after that
+        # Redis key has expired.
+        if message_id and await db.is_message_processed(message_id):
+            logger.info("Message %s already processed, skipping", message_id)
+            return
 
-    logger.info("Processing message %s from %s", message_id, sender)
-    await conversation.handle_message(
-        client,
-        sender,
-        job.get("sender_name"),
-        job.get("input_type") or "text",
-        job.get("input_value") or "",
-        message_id,
-    )
+        logger.info("Processing message %s from %s", message_id, mask_phone(sender))
+        args = (
+            client, sender, job.get("sender_name"),
+            job.get("input_type") or "text", job.get("input_value") or "", message_id,
+        )
+        # Previously fire-and-forget with no exception handling at all here -- any error other
+        # than the two handle_message already catches internally (HmsApiError/httpx.HTTPError)
+        # left the patient with total silence: no reply, no fallback message, nothing in the
+        # logs pointing at who or what. One immediate retry covers transient blips (a DB
+        # reconnect, a momentary Redis hiccup); if it fails twice in a row it's treated as a
+        # real failure -- the patient is told, and the message is marked processed so a later
+        # webhook replay of the same message_id doesn't retry it forever.
+        try:
+            await conversation.handle_message(*args)
+        except Exception:
+            logger.exception(
+                "handle_message failed (attempt 1), retrying once: message_id=%s phone=%s",
+                message_id, mask_phone(sender),
+            )
+            try:
+                await conversation.handle_message(*args)
+            except Exception:
+                logger.exception(
+                    "handle_message failed on retry, giving up: message_id=%s phone=%s",
+                    message_id, mask_phone(sender),
+                )
+                await _notify_patient_of_failure(client, sender)
+                if message_id:
+                    await db.mark_message_processed(message_id)
+                return
 
-    if message_id:
-        await db.mark_message_processed(message_id)
+        if message_id:
+            await db.mark_message_processed(message_id)
+    finally:
+        # Peer-review P0: whatever happened above -- success, give-up, or an exception that
+        # escaped both of those (shouldn't happen, but this must not leave the job stranded
+        # in PROCESSING_KEY forever if it somehow does) -- this job is done with. Removing it
+        # here, not in main()'s loop, because handle_job runs as a background task the loop
+        # doesn't await; main() has already moved on to the next BLMOVE by the time this runs.
+        await redis.lrem(PROCESSING_KEY, 1, raw_job)
 
 
 async def warm_city_index() -> None:
@@ -46,12 +100,6 @@ async def warm_city_index() -> None:
     1HMS is unreachable at boot the worker still starts, and the index is rebuilt lazily on
     first use. See app/city_index.py."""
     try:
-        from app.debug_hms_db import main as run_debug_db
-        run_debug_db()
-    except Exception as e:
-        logger.error("Failed to run DB debug query: %s", e)
-
-    try:
         index = await city_index.get_index()
         logger.info("City index ready: %d cities", len(index))
     except Exception:
@@ -60,23 +108,38 @@ async def warm_city_index() -> None:
 
 async def main() -> None:
     redis = get_redis()
+    await sweep_stuck_jobs(redis, PROCESSING_KEY, settings.booking_jobs_key)
     await warm_city_index()
     async with httpx.AsyncClient(timeout=10) as client:
         logger.info("Worker started, waiting on %s", settings.booking_jobs_key)
         background_tasks = set()
         while True:
-            item = await redis.brpop(settings.booking_jobs_key, timeout=5)
-            if item is None:
+            # BLMOVE, not BRPOP: atomically hands the job to PROCESSING_KEY instead of just
+            # deleting it from the queue. If this process crashes before handle_job's own
+            # finally block removes it, the job is still sitting in PROCESSING_KEY, not
+            # gone -- sweep_stuck_jobs recovers it at the next startup. Same durability
+            # pattern sender.py's outbound queue already used.
+            raw_job = await redis.blmove(settings.booking_jobs_key, PROCESSING_KEY, timeout=5, src="RIGHT", dest="LEFT")
+            if raw_job is None:
                 continue
-            _, raw_job = item
+            job = None
             try:
                 job = json.loads(raw_job)
                 # Create a concurrent task to handle the job without blocking the loop
-                task = asyncio.create_task(handle_job(client, job))
+                task = asyncio.create_task(handle_job(client, redis, raw_job, job))
                 background_tasks.add(task)
                 task.add_done_callback(background_tasks.discard)
             except Exception:
-                logger.exception("Failed to process job: %s", raw_job)
+                # message_id only -- never the raw payload, which carries the patient's
+                # verbatim text (incl. patient-details form submissions) and full phone.
+                logger.exception(
+                    "Failed to process job: message_id=%s",
+                    job.get("message_id") if job else None,
+                )
+                # json.loads itself failed, or task creation somehow did -- either way
+                # handle_job's own finally never ran to clean this up, so it must happen
+                # here instead, or a malformed job would sit in PROCESSING_KEY forever.
+                await redis.lrem(PROCESSING_KEY, 1, raw_job)
 
 
 if __name__ == "__main__":

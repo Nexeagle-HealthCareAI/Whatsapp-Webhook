@@ -53,8 +53,11 @@ class Settings(BaseSettings):
     # so a typed city can be disambiguated the same way an ambiguous doctor/hospital name
     # already is, instead of the old single-guess-or-nothing local match against 1HMS's own
     # (much smaller) set of cities that happen to already have a doctor registered. Dev
-    # subdomain for now — the prod one (loc.nexeagle.com) is currently down (TLS handshake
-    # failing server-side); swap this once that's fixed, no code change needed either way.
+    # subdomain default -- the prod one (loc.nexeagle.com) was down (TLS handshake failing
+    # server-side) as of the note this replaced. Peer-review H5: prod used to have NO way to
+    # override this default at all -- it's now wired through LOCATION_API_BASE_URL (see
+    # docker-compose.yml's worker service + deploy-prod.yml), set once that endpoint is
+    # confirmed up. This default itself never needs to change either way.
     location_api_base_url: str = "https://loc-dev.nexeagle.com"
 
     # City index (app/city_index.py) — maps a patient's shared GPS onto a city name that

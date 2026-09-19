@@ -9,6 +9,7 @@ from app.db.checkin_queue import upsert_checkin_notification, save_queue_status,
 from app.db.patient_last_search import save_last_location, save_last_specialty, get_last_search, is_last_search_fresh
 from app.db.appointments import (
     has_pending_appointment,
+    has_duplicate_appointment_details,
     get_upcoming_active_appointment,
     create_pending_appointment,
     mark_appointment_booked,
