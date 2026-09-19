@@ -34,7 +34,7 @@ from app.messengers.outbound_queue import (
     promote_ready_delayed_jobs,
     requeue_with_backoff,
 )
-from app.messengers.redis_client import get_redis
+from app.messengers.redis_client import get_redis, sweep_stuck_jobs
 from app.pii import mask_phone
 
 logging.basicConfig(level=logging.INFO)
@@ -110,6 +110,10 @@ def dispatch_job(
 
 async def main() -> None:
     redis = get_redis()
+    # Peer-review P0: this BLMOVE pattern already protected a job from being LOST on a
+    # crash, but nothing ever read PROCESSING_KEY back out -- a job stranded there by a
+    # crash just sat forever, unsent, invisible. This recovers it at the next startup.
+    await sweep_stuck_jobs(redis, PROCESSING_KEY, OUTBOX_KEY)
     async with httpx.AsyncClient(timeout=10) as client:
         logger.info(
             "Sender started, draining %s at up to %s/sec",
