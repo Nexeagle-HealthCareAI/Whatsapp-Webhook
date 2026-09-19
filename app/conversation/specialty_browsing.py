@@ -85,8 +85,16 @@ def _specialty_row(specialty: dict) -> tuple[str, str, str]:
 def _groups_with_live_categories(specialties: list[dict]) -> list[tuple[dict, list[dict]]]:
     """Pairs each configured group with the live specialties actually in it, drops empty
     groups, and sweeps anything unrecognised into Other. Driven by the live API response
-    rather than the static config, so a specialty 1HMS adds later still reaches a patient."""
+    rather than the static config, so a specialty 1HMS adds later still reaches a patient.
+
+    Also keyed by i18n.CATEGORY_ALIASES so a hospital exposing short department-style names
+    ("Urology" instead of "Urologist" -- confirmed live on prod) still lands in the right
+    group instead of silently falling through to Other."""
     by_category = {s["category"]: s for s in specialties}
+    for s in specialties:
+        alias = i18n.CATEGORY_ALIASES.get(s["category"].lower())
+        if alias and alias not in by_category:
+            by_category[alias] = s
     claimed: set[str] = set()
     paired = []
     for group in i18n.SPECIALTY_GROUPS:

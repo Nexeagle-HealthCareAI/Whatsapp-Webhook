@@ -41,10 +41,19 @@ os.environ.setdefault("WHATSAPP_APP_SECRET", "test")
 os.environ.setdefault("SQLSERVER_CONN_STRING", "test")
 os.environ.setdefault("INTERNAL_EVENTS_TOKEN", "test")
 
-from app import nlu_client  # noqa: E402
-from app.conversation.specialty_browsing import resolve_specialty_category  # noqa: E402
+from app import i18n, nlu_client  # noqa: E402
+from app.conversation.specialty_browsing import resolve_specialty_category, _groups_with_live_categories  # noqa: E402
+from app.decision_maker.symptom_matcher import match_category  # noqa: E402
 
 failures = []
+
+# 1HMS's prod /public/specialties, confirmed live -- short department-style names, not the
+# richer patient-facing labels SPECIALTY_GROUPS/symptom_client are written against.
+PROD_CATEGORIES = [
+    "General Surgery", "Anesthesiology", "Critical Care", "Dentistry", "ENT",
+    "Gynaecologist", "Gynecology", "Neurology", "Obstetrics", "Orthopedics",
+    "Paediatrician", "Pediatrics", "Urology",
+]
 
 
 def check(condition, message):
@@ -148,6 +157,45 @@ def test_disambiguate_specialty_returns_none_instead_of_raising_on_failure():
     check(result is None, f"a broken client (or no key) should return None, not raise or guess, got {result!r}")
 
 
+def test_stomach_pain_no_longer_coincidentally_matches_ent():
+    """Live prod bug: 'Gastroenterologist' (the label routed for stomach-pain symptoms)
+    contains the letters "ent" mid-word, and the old unrestricted substring check matched
+    that against prod's "ENT" category -- a medically nonsensical result. The prefix-only
+    fallback must not make this mistake."""
+    result = match_category("Gastroenterologist", PROD_CATEGORIES)
+    check(result != "ENT", f"'Gastroenterologist' must not coincidentally match 'ENT', got {result!r}")
+
+
+def test_urologist_matches_prods_short_urology_category():
+    """Live prod bug: 'Kidney main pain' resolves to the 'Urologist' label, but prod's
+    actual category is the short 'Urology' -- neither an exact nor a prefix match, so this
+    needs the curated CATEGORY_ALIASES table to resolve at all."""
+    result = match_category("Urologist", PROD_CATEGORIES)
+    check(result == "Urology", f"'Urologist' should resolve to prod's 'Urology' category via the alias table, got {result!r}")
+
+
+def test_shorthand_prefix_matching_still_works_on_prod_style_names():
+    """The alias table only covers known synonyms -- a real substring/prefix shorthand
+    ('dent' for 'Dentistry') must still resolve via the prefix fallback."""
+    result = match_category("dent", PROD_CATEGORIES)
+    check(result == "Dentistry", f"prefix shorthand should still match, got {result!r}")
+
+
+def test_browse_groups_surface_more_than_two_on_prod_style_categories():
+    """Live prod bug: the 'Pick an area' list only ever showed 2 of 9 groups because
+    _groups_with_live_categories did exact-string membership against prod's short names.
+    With the alias table, groups like bones/eyes-ent-skin should now populate too."""
+    specialties = [{"category": c, "displayName": c} for c in PROD_CATEGORIES]
+    paired = _groups_with_live_categories(specialties)
+    non_other_groups = [g for g, _members in paired if g["id"] != i18n.OTHER_GROUP["id"]]
+    check(
+        len(non_other_groups) > 2,
+        f"expected more than 2 real groups to populate on prod's category list, got {len(non_other_groups)}: {[g['id'] for g in non_other_groups]}",
+    )
+    bones_group = next((g for g, members in paired if g["id"] == "grp_bones"), None)
+    check(bones_group is not None, "grp_bones (Orthopedics -> Orthopaedic Surgeon (Bone)) should now populate on prod")
+
+
 if __name__ == "__main__":
     test_correct_spelling_never_calls_the_ai()
     test_misspelling_falls_back_to_ai_and_gets_validated()
@@ -155,6 +203,10 @@ if __name__ == "__main__":
     test_ai_case_insensitive_match_still_validated()
     test_ai_none_response_means_no_match()
     test_disambiguate_specialty_returns_none_instead_of_raising_on_failure()
+    test_stomach_pain_no_longer_coincidentally_matches_ent()
+    test_urologist_matches_prods_short_urology_category()
+    test_shorthand_prefix_matching_still_works_on_prod_style_names()
+    test_browse_groups_surface_more_than_two_on_prod_style_categories()
 
     print("\n" + "=" * 50)
     if failures:
