@@ -173,6 +173,76 @@ def test_scheduler_saves_awaiting_followup_state_after_a_successful_send():
     check(marked == ["row-1"], "still marks the follow-up as sent")
 
 
+def test_followup_text_uses_the_real_doctor_name_when_known():
+    print("\n--- Live-reported: the follow-up text said the literal 'your doctor' instead of the "
+          "real name -- doctor_name is now stored on the appointment row and used here ---")
+
+    class _DB:
+        async def list_due_followups(self, visit_date):
+            return [{
+                "id": "row-1", "phone_number": "919876543210", "hms_appointment_id": "appt-1",
+                "preferred_language": "en", "patient_display_name": "Riya", "doctor_name": "Dr. Sharma",
+            }]
+
+        async def save_conversation_state(self, phone, step, context):
+            pass
+
+        async def mark_followup_sent(self, row_id):
+            pass
+
+    sent = []
+
+    async def _send_text(client, to, body):
+        sent.append(body)
+
+    async def _run():
+        with patch.object(scheduler, "db", _DB()), patch.object(scheduler, "send_text", _send_text):
+            async with httpx.AsyncClient() as client:
+                from datetime import date
+                await scheduler.send_followups_for(client, date(2026, 9, 18))
+
+    run(_run())
+    check(
+        sent and "Dr. Sharma" in sent[0] and "your doctor" not in sent[0],
+        f"uses the real doctor name, not the old hardcoded placeholder, got {sent!r}",
+    )
+
+
+def test_followup_text_falls_back_to_a_localized_generic_phrase_for_old_rows():
+    print("\n--- A row booked before doctor_name existed has NULL there -- must still get a sensible, "
+          "LOCALIZED fallback, not crash or show 'None' ---")
+
+    class _DB:
+        async def list_due_followups(self, visit_date):
+            return [{
+                "id": "row-1", "phone_number": "919876543210", "hms_appointment_id": "appt-1",
+                "preferred_language": "hi", "patient_display_name": "Riya", "doctor_name": None,
+            }]
+
+        async def save_conversation_state(self, phone, step, context):
+            pass
+
+        async def mark_followup_sent(self, row_id):
+            pass
+
+    sent = []
+
+    async def _send_text(client, to, body):
+        sent.append(body)
+
+    async def _run():
+        with patch.object(scheduler, "db", _DB()), patch.object(scheduler, "send_text", _send_text):
+            async with httpx.AsyncClient() as client:
+                from datetime import date
+                await scheduler.send_followups_for(client, date(2026, 9, 18))
+
+    run(_run())
+    check(
+        sent and "आपके डॉक्टर" in sent[0] and "None" not in sent[0],
+        f"falls back to the Hindi generic phrase (matching the patient's own language), got {sent!r}",
+    )
+
+
 def test_scheduler_still_marks_sent_even_if_the_state_save_itself_fails():
     print("\n--- best-effort: a DB hiccup saving state must not resend the follow-up text itself ---")
 
@@ -413,6 +483,8 @@ def test_handle_message_intercepts_before_nlu_even_when_nlu_would_misclassify():
 
 if __name__ == "__main__":
     test_scheduler_saves_awaiting_followup_state_after_a_successful_send()
+    test_followup_text_uses_the_real_doctor_name_when_known()
+    test_followup_text_falls_back_to_a_localized_generic_phrase_for_old_rows()
     test_scheduler_still_marks_sent_even_if_the_state_save_itself_fails()
     test_wants_booking_starts_the_booking_flow()
     test_emergency_reply_shows_the_real_safety_alert()

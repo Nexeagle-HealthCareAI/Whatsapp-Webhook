@@ -35,18 +35,25 @@ logger = logging.getLogger("scheduler")
 _POLL_INTERVAL_SECONDS = 6 * 60 * 60  # four checks a day is plenty for a once-daily job
 
 
+# Localized fallback for the small number of rows booked before pending_appointments.doctor_name
+# existed (see sql/schema.sql) -- those have NULL here and fall back to this generic phrase,
+# same as _do_book_appointment already does for a display name via "there"/patient fallbacks.
+_GENERIC_DOCTOR_FALLBACK = {
+    "en": "your doctor", "hi": "आपके डॉक्टर", "hg": "aapke doctor", "bn": "আপনার ডাক্তার",
+}
+
+
 async def send_followups_for(client: httpx.AsyncClient, visit_date: date) -> None:
     due = await db.list_due_followups(visit_date)
     logger.info("Found %d follow-up(s) due for visit date %s", len(due), visit_date)
     for row in due:
+        lang = row["preferred_language"]
+        doctor_name = row.get("doctor_name") or _GENERIC_DOCTOR_FALLBACK.get(lang, _GENERIC_DOCTOR_FALLBACK["en"])
         text = i18n.t(
             "followup_reminder",
-            row["preferred_language"],
+            lang,
             patient_name=row["patient_display_name"] or "there",
-            doctor_name="your doctor",  # doctor name isn't retained past booking today —
-            # see note in app/conversation.py about context being dropped after booking;
-            # if this should say the actual doctor's name, store it on pending_appointments
-            # at booking time the same way patient_display_name already is.
+            doctor_name=doctor_name,
         )
         try:
             await send_text(client, row["phone_number"], text)

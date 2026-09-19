@@ -142,6 +142,19 @@ BEGIN
 END
 GO
 
+-- The doctor's display name at booking time -- scheduler.py's day-after-visit follow-up
+-- needs this to say "after your visit to Dr. X" instead of a hardcoded "your doctor" (live-
+-- reported: a real patient's follow-up text showed the literal placeholder). Stored as text
+-- rather than resolved via doctor_id at follow-up time, same reasoning as
+-- patient_display_name: cheap, and survives the doctor's HMS record changing/being removed
+-- later. NULL for bookings made before this column existed -- scheduler.py falls back to the
+-- old generic phrasing for those.
+IF COL_LENGTH('dbo.pending_appointments', 'doctor_name') IS NULL
+BEGIN
+    ALTER TABLE dbo.pending_appointments ADD doctor_name NVARCHAR(200) NULL;
+END
+GO
+
 -- One row per conversation session (session_id from app/conversation/language.py's _start,
 -- carried through context for the session's whole lifetime) -- NOT one row per message.
 -- transcript_json accumulates every inbound message (full content) and every step the bot

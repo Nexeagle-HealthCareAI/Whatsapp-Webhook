@@ -348,6 +348,44 @@ def test_token_called_pushes_a_queue_update_for_a_known_appointment():
         hms_events_module.send_text = original_send_text
 
 
+def test_token_called_sends_real_bengali_text_not_none():
+    print("\n--- Found while auditing every outbound message: the queue-update text was a plain "
+          "dict .get() with no 'bn' entry and no fallback -- a Bengali-preferring patient got "
+          "text=None sent to send_text instead of a real message ---")
+    original_get_appt = db.get_appointment_by_hms_id
+    original_save_status = db.save_queue_status
+    original_send_text = hms_events_module.send_text
+    sent = []
+
+    async def _known(hms_appointment_id):
+        return {"phone_number": "919876543210", "preferred_language": "bn", "patient_display_name": "Riya"}
+
+    async def _save_status(appointment_id, current_token, estimated_wait_minutes):
+        pass
+
+    async def _fake_send_text(client, to, body):
+        sent.append(body)
+
+    db.get_appointment_by_hms_id = _known
+    db.save_queue_status = _save_status
+    hms_events_module.send_text = _fake_send_text
+    try:
+        response = client.post(
+            "/events/token-called",
+            json=_token_called_payload(event_id="evt-4", appointment_id="appt-bn", token=7),
+            headers={"X-Internal-Token": settings.internal_events_token},
+        )
+        check(response.status_code == 200, f"Expected 200, got {response.status_code}")
+        check(sent and sent[0] is not None, "the message body must never be None")
+        check(sent and "None" not in sent[0], f"and never the literal string 'None' either, got {sent!r}")
+        check(sent and "7" in sent[0], f"names the real token number, got {sent!r}")
+        check(sent and "কিউ" in sent[0], f"is actually Bengali text, not an English fallback, got {sent!r}")
+    finally:
+        db.get_appointment_by_hms_id = original_get_appt
+        db.save_queue_status = original_save_status
+        hms_events_module.send_text = original_send_text
+
+
 if __name__ == "__main__":
     tests = [
         test_verify_webhook, test_verify_signature_validation,
@@ -358,6 +396,7 @@ if __name__ == "__main__":
         test_token_called_rejects_a_missing_or_wrong_internal_token,
         test_token_called_accepts_the_real_internal_token,
         test_token_called_pushes_a_queue_update_for_a_known_appointment,
+        test_token_called_sends_real_bengali_text_not_none,
     ]
     for test in tests:
         test()

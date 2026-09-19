@@ -710,6 +710,12 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "{patient_name} ke liye appointment request submit ho gayi hai! Front desk jald hi exact time confirm karegi.",
         "bn": "{patient_name}-এর জন্য অ্যাপয়েন্টমেন্টের অনুরোধ জমা দেওয়া হয়েছে! আমাদের ফ্রন্ট ডেস্ক শীঘ্রই সঠিক সময় নিশ্চিত করবে।",
     },
+    "booking_submission_failed": {
+        "en": "We couldn't complete your booking — nothing has been reserved or charged. Please try again in a moment, or contact the clinic directly if this keeps happening.",
+        "hi": "हम आपकी बुकिंग पूरी नहीं कर पाए — कुछ भी रिज़र्व या चार्ज नहीं हुआ है। कृपया थोड़ी देर में फिर कोशिश करें, या यह बार-बार हो तो सीधे क्लिनिक से संपर्क करें।",
+        "hg": "Hum aapki booking complete nahi kar paaye — kuch bhi reserve ya charge nahi hua hai. Kripya thodi der mein phir try karein, ya ye baar-baar ho raha hai to seedha clinic se contact karein.",
+        "bn": "আমরা আপনার বুকিং সম্পূর্ণ করতে পারিনি — কিছুই সংরক্ষিত বা চার্জ করা হয়নি। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন, অথবা এটি বারবার হলে সরাসরি ক্লিনিকের সাথে যোগাযোগ করুন।",
+    },
     "no_doctors_in_radius_widening": {
         "en": "No {specialty} found within {radius}km — checking a wider area...",
         "hi": "{radius}km के अंदर कोई {specialty} नहीं मिला — थोड़े बड़े क्षेत्र में देखते हैं...",

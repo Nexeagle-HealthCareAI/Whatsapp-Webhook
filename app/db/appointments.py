@@ -75,6 +75,7 @@ async def create_pending_appointment(
     patient_guardian: str | None = None,
     hospital_id: str | None = None,
     doctor_id: str | None = None,
+    doctor_name: str | None = None,
 ) -> UUID:
     from app.db import get_pool
     pool = await get_pool()
@@ -82,8 +83,8 @@ async def create_pending_appointment(
     async with pool.acquire() as conn, conn.cursor() as cur:
         await cur.execute(
             "INSERT INTO dbo.pending_appointments "
-            "(id, phone_number, preferred_date, status, preferred_language, booking_for, patient_display_name, patient_age, patient_gender, patient_guardian, hospital_id, doctor_id) "
-            "VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(id, phone_number, preferred_date, status, preferred_language, booking_for, patient_display_name, patient_age, patient_gender, patient_guardian, hospital_id, doctor_id, doctor_name) "
+            "VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 str(row_id),
                 phone,
@@ -96,6 +97,7 @@ async def create_pending_appointment(
                 patient_guardian,
                 hospital_id,
                 doctor_id,
+                doctor_name,
             ),
         )
     return row_id

@@ -73,12 +73,12 @@ async def list_due_followups(visit_date: date_type) -> list[dict[str, Any]]:
     pool = await get_pool()
     async with pool.acquire() as conn, conn.cursor() as cur:
         await cur.execute(
-            "SELECT id, phone_number, hms_appointment_id, preferred_language, patient_display_name "
+            "SELECT id, phone_number, hms_appointment_id, preferred_language, patient_display_name, doctor_name "
             "FROM dbo.pending_appointments "
             "WHERE preferred_date = ? AND status = 'booked' AND followup_sent_at IS NULL",
             (visit_date,),
         )
-        columns = ["id", "phone_number", "hms_appointment_id", "preferred_language", "patient_display_name"]
+        columns = ["id", "phone_number", "hms_appointment_id", "preferred_language", "patient_display_name", "doctor_name"]
         rows = await cur.fetchall()
         return [dict(zip(columns, row)) for row in rows]
 

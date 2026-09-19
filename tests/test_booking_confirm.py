@@ -178,9 +178,39 @@ def test_confirm_books_normally_and_releases_the_lock():
     run(_run())
     check(len(db_mock.created_appointments) == 1, "creates exactly one pending appointment")
     check(db_mock.created_appointments[0]["doctor_id"] == "doc-1", "doctor_id is threaded through to the DB row (new in this batch)")
+    check(
+        db_mock.created_appointments[0]["doctor_name"] == "Dr. Sharma",
+        "doctor_name is also threaded through -- scheduler.py's follow-up reminder needs this to say the real doctor's name",
+    )
     check(db_mock.booked == [("row-0", "appt-1")], "marks the appointment booked with HMS's real id")
     check(db_mock.cleared, "conversation state is cleared after a successful booking")
     check(f"booking:confirm-lock:{phone}" not in _mock_redis_instance.data, "the confirm-lock is released once booking finishes")
+
+
+def test_booking_failure_tells_the_patient_nothing_was_charged_or_reserved():
+    print("\n--- The single highest-stakes moment in the conversation deserves reassuring, "
+          "specific copy -- not the same generic 'something went wrong' every other HMS failure uses ---")
+    _mock_redis_instance.data.clear()
+    db_mock = _RecordingDb()
+    wa_mock = _RecordingWhatsApp()
+    phone = "919876543210"
+
+    async def _run():
+        with patch.object(conversation, "db", db_mock), \
+             patch.object(conversation, "whatsapp_client", wa_mock), \
+             patch.object(conversation.hms_client, "book_appointment", AsyncMock(side_effect=HmsApiError("rejected"))):
+            async with httpx.AsyncClient() as client:
+                # Must NOT raise anymore -- handled directly, not propagated to the generic
+                # outer HmsApiError handler in handle_message.
+                await conversation._handle_confirming(client, phone, "Sender Name", "button_reply", "confirm", _base_context())
+
+    run(_run())
+    check(db_mock.failed == ["row-0"], "the pending-appointment row is still marked failed")
+    check(
+        wa_mock.texts and "reserved" in wa_mock.texts[0].lower() and "charged" in wa_mock.texts[0].lower(),
+        f"tells the patient explicitly that nothing was reserved or charged, got {wa_mock.texts!r}",
+    )
+    check(f"booking:confirm-lock:{phone}" not in _mock_redis_instance.data, "lock still released on this failure path")
 
 
 def test_double_tap_second_confirm_is_told_to_wait_not_booked_again():
@@ -333,6 +363,7 @@ def test_duplicate_warning_change_details_reopens_the_form_not_a_full_cancel():
 
 if __name__ == "__main__":
     test_confirm_books_normally_and_releases_the_lock()
+    test_booking_failure_tells_the_patient_nothing_was_charged_or_reserved()
     test_double_tap_second_confirm_is_told_to_wait_not_booked_again()
     test_lock_is_released_even_when_booking_fails_so_a_retry_is_not_blocked()
     test_already_pending_still_works_and_releases_the_lock()

@@ -1752,6 +1752,7 @@ async def _do_book_appointment(client: httpx.AsyncClient, phone: str, context: C
             patient_guardian=patient_guardian,
             hospital_id=context.get("hospital_id") or None,
             doctor_id=doctor_id,
+            doctor_name=context.get("doctor_name"),
         )
         try:
             result = await hms_client.book_appointment(
@@ -1760,9 +1761,17 @@ async def _do_book_appointment(client: httpx.AsyncClient, phone: str, context: C
                 patient_gender=patient_gender,
                 patient_guardian=patient_guardian,
             )
-        except (HmsApiError, httpx.HTTPError):
+        except (HmsApiError, httpx.HTTPError) as exc:
             await db.mark_appointment_failed(row_id)
-            raise
+            logger.warning("Booking submission failed for %s: %s", mask_phone(phone), exc)
+            # Peer-review observation: this used to re-raise into handle_message's generic
+            # HmsApiError/httpx.HTTPError handler, which sends the same "something went
+            # wrong, try again" copy used for every other HMS failure in the app (a doctor
+            # search miss, a pricing lookup, a document pull...). The single highest-stakes
+            # moment in the whole conversation deserves more reassuring, specific copy --
+            # explicitly confirming nothing was reserved or charged -- not the generic one.
+            await whatsapp_client.send_text(client, phone, t("booking_submission_failed", lang))
+            return
 
         hms_appointment_id = result.get("appointmentId") or ""
         await db.mark_appointment_booked(row_id, hms_appointment_id)
