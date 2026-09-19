@@ -347,12 +347,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Details badlein",
         "bn": "বিবরণ পরিবর্তন করুন",
     },
-    "age_invalid": {
-        "en": "That age doesn't look right — please send a number of years, e.g. 32.",
-        "hi": "यह उम्र सही नहीं लग रही — कृपया वर्षों में संख्या भेजें, जैसे 32।",
-        "hg": "Ye age sahi nahi lag rahi — saalon mein number bhejein, jaise 32.",
-        "bn": "এই বয়সটি সঠিক মনে হচ্ছে না — অনুগ্রহ করে বছরের সংখ্যা পাঠান, যেমন 32।",
-    },
     "location_prompt": {
         "en": "To show doctors near you, please share your location — tap below, it fills in from your phone's GPS automatically.",
         "hi": "आपके पास के डॉक्टर दिखाने के लिए, कृपया अपनी लोकेशन शेयर करें — नीचे टैप करें, यह आपके फोन के GPS से अपने आप भर जाएगी।",
@@ -441,12 +435,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Main isko kisi specialty se confidently match nahi kar paaya — poori list yeh rahi:",
         "bn": "আমি নিশ্চিতভাবে এটিকে কোনো বিশেষজ্ঞতার সাথে মেলাতে পারিনি — পরিবর্তে সম্পূর্ণ তালিকাটি এখানে দেওয়া হলো:",
     },
-    "symptom_matched": {
-        "en": "That sounds like a job for a {category}.",
-        "hi": "यह {category} के काम जैसा लगता है।",
-        "hg": "Yeh {category} ka kaam lagta hai.",
-        "bn": "এটি একজন {category} এর কাজ বলে মনে হচ্ছে।",
-    },
     "no_specialties": {
         "en": "Sorry, no doctors are available for booking right now. Please try later.",
         "hi": "क्षमा करें, अभी बुकिंग के लिए कोई डॉक्टर उपलब्ध नहीं है। कृपया बाद में कोशिश करें।",
@@ -514,12 +502,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Aap kis doctor ya specialty ki fee jaanna chahte hain?",
         "bn": "আপনি কোন ডাক্তার বা বিশেষত্বের ফি জানতে চান?",
     },
-    "instructions": {
-        "en": "Type 'quit' to end this chat anytime (just send a new message to start again), and 'back' to go back 1 step.",
-        "hi": "आप किसी भी समय बातचीत खत्म करने के लिए 'quit' टाइप कर सकते हैं (फिर से शुरू करने के लिए नया संदेश भेजें), और 1 कदम पीछे जाने के लिए 'back' टाइप करें।",
-        "hg": "Aap kabhi bhi chat khatam karne ke liye 'quit' type kar sakte hain (phir se shuru karne ke liye naya message bhejein), aur 1 step peeche jaane ke liye 'back' type karein.",
-        "bn": "আপনি যেকোনো সময় চ্যাট শেষ করতে 'quit' টাইপ করতে পারেন (আবার শুরু করতে নতুন বার্তা পাঠান), এবং ১ ধাপ পিছিয়ে যেতে 'back' টাইপ করুন।",
-    },
     "specialty_list_prompt": {
         "en": "Good — which of these fits best?",
         "hi": "ठीक है — इनमें से कौन सा सबसे सही रहेगा?",
@@ -586,12 +568,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Sorry, is specialty mein abhi koi doctor available nahi hai. Phir se shuru karne ke liye 'hi' type karein.",
         "bn": "দুঃখিত, এই মুহূর্তে সেই বিশেষজ্ঞতার কোনো ডাক্তার উপলব্ধ নেই। আবার শুরু করতে 'hi' টাইপ করুন।",
     },
-    "doctors_widened": {
-        "en": "No doctors of this type in {city} right now — showing nearby options instead.",
-        "hi": "{city} में अभी इस तरह के डॉक्टर नहीं हैं — आस-पास के विकल्प दिखा रहे हैं।",
-        "hg": "{city} mein abhi is type ke doctor nahi hain — aas-paas ke options dikha rahe hain.",
-        "bn": "এই মুহূর্তে {city}-তে এই ধরণের কোনো ডাক্তার নেই — পরিবর্তে কাছাকাছি বিকল্পগুলি দেখানো হচ্ছে।",
-    },
     "doctors_widened_radius": {
         "en": "Nobody very close by, so here's everyone within about {radius} km.",
         "hi": "बिल्कुल पास कोई नहीं मिला, तो लगभग {radius} किमी के अंदर के सभी डॉक्टर दिखा रहे हैं।",
@@ -640,12 +616,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Sorry, abhi {hospital} mein koi doctor listed nahi hai. Phir se shuru karne ke liye 'hi' type karein.",
         "bn": "দুঃখিত, এই মুহূর্তে {hospital}-এ কোনো ডাক্তার তালিকাভুক্ত নেই। আবার শুরু করতে 'hi' টাইপ করুন।",
     },
-    "date_prompt": {
-        "en": "When would you like to visit?",
-        "hi": "आप कब आना चाहेंगे?",
-        "hg": "Kab aana chahenge?",
-        "bn": "আপনি কখন দেখা করতে চান?",
-    },
     "date_today": {"en": "Today", "hi": "आज", "hg": "Aaj", "bn": "আজ"},
     "date_tomorrow": {"en": "Tomorrow", "hi": "कल", "hg": "Kal", "bn": "আগামীকাল"},
     "shift_morning": {
@@ -665,18 +635,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hi": "शाम",
         "hg": "Evening",
         "bn": "সন্ধ্যা",
-    },
-    "date_choose_hint": {
-        "en": "Please choose Today or Tomorrow above.",
-        "hi": "कृपया ऊपर आज या कल चुनें।",
-        "hg": "Upar Aaj ya Kal choose kar lijiye.",
-        "bn": "অনুগ্রহ করে উপরে আজ বা আগামীকাল বেছে নিন।",
-    },
-    "not_available": {
-        "en": "That doctor isn't available then. Try another day, or pick a different doctor?",
-        "hi": "उस दिन यह डॉक्टर उपलब्ध नहीं है। दूसरा दिन देखें, या दूसरा डॉक्टर चुनें?",
-        "hg": "Us din yeh doctor available nahi hai. Doosra din dekhein, ya doosra doctor chunein?",
-        "bn": "সেই ডাক্তার তখন উপলব্ধ নেই। অন্য দিন চেষ্টা করবেন, নাকি অন্য ডাক্তার বেছে নেবেন?",
     },
     "today_shifts_over": {
         "en": "Today's timings are already over. Try tomorrow, or pick a different doctor?",
@@ -798,18 +756,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hi": "{doctor} मिल गए — {details}।",
         "hg": "{doctor} mil gaye — {details}.",
         "bn": "{doctor}-কে পাওয়া গেছে — {details}।",
-    },
-    "booked_queue_note": {
-        "en": "We'll send you live queue/token updates on WhatsApp on the day of the visit.\n\nNeed anything else? Just send a message — doctor search, symptom check, or a new booking.",
-        "hi": "विज़िट के दिन हम आपको WhatsApp पर लाइव क्यू/टोकन अपडेट भेजेंगे।\n\nकुछ और चाहिए? बस मैसेज भेजें — डॉक्टर सर्च, सिम्पटम चेक, या नई बुकिंग।",
-        "hg": "Visit ke din hum aapko WhatsApp par live queue/token updates bhejenge.\n\nKuch aur chahiye? Bas message bhejein — doctor search, symptom check, ya nayi booking.",
-        "bn": "আমরা পরিদর্শনের দিন আপনাকে হোয়াটসঅ্যাপে লাইভ কিউ/টোকন আপডেট পাঠাব।\n\nআর কিছু দরকার? শুধু একটি বার্তা পাঠান — ডাক্তার খোঁজা, উপসর্গ পরীক্ষা, বা নতুন বুকিং।",
-    },
-    "booked_map_caption": {
-        "en": "{hospital_name} — tap to see the location.",
-        "hi": "{hospital_name} — लोकेशन देखने के लिए टैप करें।",
-        "hg": "{hospital_name} — location dekhne ke liye tap karein.",
-        "bn": "{hospital_name} — অবস্থান দেখতে ট্যাপ করুন।",
     },
     "error_hms": {
         "en": "Sorry, something went wrong on our end. Please try again in a moment.",

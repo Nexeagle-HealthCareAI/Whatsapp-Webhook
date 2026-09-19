@@ -2016,14 +2016,6 @@ def test_welcome_message_lists_actions():
     check("Book appointment" in msg, f"welcome message should list booking, got {msg!r}")
 
 
-def test_booking_success_invites_new_search():
-    """Task 14: booked_queue_note used to end the conversation with no invitation to start
-    again, unlike the cancelled message which already did. Now symmetric."""
-    for lang in ("en", "hi", "hg", "bn"):
-        msg = i18n.t("booked_queue_note", lang)
-        check(len(msg.split("\n\n")) >= 2, f"booked_queue_note[{lang}] should have a closing invitation on its own line")
-
-
 def test_symptom_and_specialty_open_with_one_combined_location_message():
     """Task 4 and 5: the sym_name/spec_name branches used to fall through to a generic,
     symptom/specialty-unaware location_prompt when location wasn't known yet. Now each sends
