@@ -1,9 +1,11 @@
+import asyncio
 import hashlib
 import hmac
 import json
 import logging
 import time
 
+import httpx
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 
 from app.config import settings
@@ -71,6 +73,53 @@ def _extract_messages_and_contacts(payload: dict) -> tuple[list[dict], dict[str,
     return messages, names_by_wa_id
 
 
+def _extract_statuses(payload: dict) -> list[dict]:
+    """Delivery statuses (delivered / read / failed) for messages THIS number sent. Same environment check as above."""
+    statuses = []
+    for entry in payload.get("entry", []):
+        for change in entry.get("changes", []):
+            value = change.get("value", {})
+            incoming_phone_number_id = value.get("metadata", {}).get("phone_number_id")
+            if incoming_phone_number_id and incoming_phone_number_id != settings.whatsapp_phone_number_id:
+                continue
+            statuses.extend(value.get("statuses", []))
+    return statuses
+
+
+def _health_wiki_delivery(status: dict) -> dict | None:
+    """The part of a status callback the Health Wiki cares about, or None when there is nothing to pass on."""
+    message_id = status.get("id")
+    word = status.get("status")
+    if not message_id or word not in ("delivered", "read", "failed"):
+        return None
+    detail = None
+    if word == "failed":
+        errors = status.get("errors") or []
+        if errors:
+            e = errors[0]
+            detail = f"{e.get('code', '')}: {e.get('title') or e.get('message') or ''}".strip(": ")[:300] or None
+    return {"messageId": message_id, "status": word, "detail": detail}
+
+
+# Kept so a pending pass-on is not garbage collected before it finishes.
+_pending_passes: set = set()
+
+
+async def _pass_on_to_health_wiki(delivery: dict) -> None:
+    """Best effort. A failure here is logged and never affects the webhook answer to Meta or the booking bot."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            res = await client.post(
+                f"{settings.hms_api_base_url.rstrip('/')}/internal/health-wiki/notifications/delivery",
+                json=delivery,
+                headers={"X-Internal-Key": settings.health_wiki_internal_key or ""},
+            )
+        if res.status_code >= 400:
+            logger.warning("Health Wiki delivery status for %s was refused: HTTP %s", delivery["messageId"], res.status_code)
+    except Exception as exc:  # noqa: BLE001 -- must never raise out of a background task
+        logger.warning("Health Wiki delivery status for %s could not be passed on: %s", delivery["messageId"], exc)
+
+
 def _input_type_and_value(message: dict) -> tuple[str, str] | tuple[None, None]:
     msg_type = message.get("type")
     if msg_type == "text":
@@ -109,6 +158,14 @@ async def receive_webhook(
     redis = get_redis()
 
     messages, names_by_wa_id = _extract_messages_and_contacts(payload)
+
+    if settings.health_wiki_internal_key:
+        for status in _extract_statuses(payload):
+            delivery = _health_wiki_delivery(status)
+            if delivery:
+                task = asyncio.create_task(_pass_on_to_health_wiki(delivery))
+                _pending_passes.add(task)
+                task.add_done_callback(_pending_passes.discard)
 
     for message in messages:
         message_id = message.get("id")

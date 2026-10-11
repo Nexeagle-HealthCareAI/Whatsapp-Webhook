@@ -23,6 +23,8 @@ services:
       REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
       HMS_API_BASE_URL: "${HMS_API_BASE_URL:-https://1hms-dev-api.nexeagle.com}"
       HMS_API_KEY: "${HMS_API_KEY:-}"
+      # Optional: passes WhatsApp delivery statuses of the Health Wiki's messages on to easyHMSAPI (see app/front_door/whatsapp_ingest.py).
+      HEALTH_WIKI_INTERNAL_KEY: "${HEALTH_WIKI_INTERNAL_KEY:-}"
       SQLSERVER_CONN_STRING: "${SQLSERVER_CONN_STRING}"
       # Authenticates 1HMS/1Rad's POST /events/token-called calls into this gateway (app/webhook.py)
       # — a different secret from WHATSAPP_APP_SECRET, which authenticates Meta instead.

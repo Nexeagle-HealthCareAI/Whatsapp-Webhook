@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     # Optional — PublicApiKeyFilter lets anonymous callers through; a key just makes this
     # bot's traffic identifiable/revocable. Unset is fine.
     hms_api_key: str | None = None
+    # Health Wiki WhatsApp delivery status. Meta sends "delivered/read/failed" callbacks for EVERY message this
+    # number sends, including the Health Wiki templates that easyHMSAPI sends. Those are passed on to easyHMSAPI's
+    # key-protected /internal/health-wiki/notifications/delivery so the CMS can show "not delivered". Unset (the
+    # default) turns the pass-on off and changes nothing else.
+    health_wiki_internal_key: str | None = None
 
     # This bot's OWN state (conversation_state/processed_messages/pending_appointments) —
     # a separate database on the same SQL Server instance easyHMSAPI already runs on this VM,

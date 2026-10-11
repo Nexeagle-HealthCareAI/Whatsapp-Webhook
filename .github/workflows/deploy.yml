@@ -22,6 +22,9 @@
 #                            secret entirely for anonymous access (PublicApiKeyFilter allows
 #                            it) — do NOT set it to a placeholder like "NA"; any non-empty
 #                            value gets sent as a real key and a non-matching one gets 401'd
+#   HEALTH_WIKI_INTERNAL_KEY optional — easyHMSAPI's Health Wiki internal key (same value as its
+#                            Internal:HealthArticlesKey). When set, WhatsApp delivery status callbacks are
+#                            passed on so the CMS can show "not delivered". Omit to leave it off.
 #   WHATSAPP_DISPLAY_NUMBER  optional — dialable wa.me number (E.164, no leading +) for
 #                            GET /c/{hospital_code}. Omit until you're ready to print QR
 #                            codes; that route degrades to a friendly error until it's set.
@@ -108,6 +111,7 @@ jobs:
           REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
           SQLSERVER_CONN_STRING_DEV: ${{ secrets.SQLSERVER_CONN_STRING_DEV }}
           HMS_API_KEY: ${{ secrets.HMS_API_KEY }}
+          HEALTH_WIKI_INTERNAL_KEY: ${{ secrets.HEALTH_WIKI_INTERNAL_KEY }}
           INTERNAL_EVENTS_TOKEN: ${{ secrets.INTERNAL_EVENTS_TOKEN }}
           SARVAM_API_KEY: ${{ secrets.SARVAM_API_KEY }}
           WHATSAPP_DISPLAY_NUMBER: ${{ secrets.WHATSAPP_DISPLAY_NUMBER }}
@@ -119,7 +123,7 @@ jobs:
           username: ${{ secrets.DEV_SSH_USER }}
           password: ${{ secrets.DEV_SSH_PASSWORD }}
           port: 22
-          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,SQLSERVER_CONN_STRING_DEV,HMS_API_KEY,INTERNAL_EVENTS_TOKEN,SARVAM_API_KEY,WHATSAPP_DISPLAY_NUMBER,WHATSAPP_FLOW_ID,WHATSAPP_FLOW_SCREEN_ID,GROQ_API_KEY
+          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,SQLSERVER_CONN_STRING_DEV,HMS_API_KEY,HEALTH_WIKI_INTERNAL_KEY,INTERNAL_EVENTS_TOKEN,SARVAM_API_KEY,WHATSAPP_DISPLAY_NUMBER,WHATSAPP_FLOW_ID,WHATSAPP_FLOW_SCREEN_ID,GROQ_API_KEY
           script: |
             set -e
             cd "$DEPLOY_PATH"
@@ -154,6 +158,7 @@ jobs:
               printf 'REDIS_PASSWORD=%s\n' "$REDIS_PASSWORD"
               printf 'SQLSERVER_CONN_STRING=%s\n' "$SQLSERVER_CONN_STRING_DEV"
               printf 'HMS_API_KEY=%s\n' "$HMS_API_KEY"
+              printf 'HEALTH_WIKI_INTERNAL_KEY=%s\n' "$HEALTH_WIKI_INTERNAL_KEY"
               printf 'INTERNAL_EVENTS_TOKEN=%s\n' "$INTERNAL_EVENTS_TOKEN"
               printf 'SARVAM_API_KEY=%s\n' "$SARVAM_API_KEY"
               printf 'WHATSAPP_DISPLAY_NUMBER=%s\n' "$WHATSAPP_DISPLAY_NUMBER"
