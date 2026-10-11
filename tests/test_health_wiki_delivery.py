@@ -11,6 +11,13 @@ import types
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+# Placeholder settings, so this runs on a plain checkout (no .env, no secrets).
+for _k, _v in {
+    "WHATSAPP_TOKEN": "t", "WHATSAPP_PHONE_NUMBER_ID": "pn1", "WHATSAPP_VERIFY_TOKEN": "v", "WHATSAPP_APP_SECRET": "s",
+    "REDIS_URL": "redis://x", "SQLSERVER_CONN_STRING": "x", "INTERNAL_EVENTS_TOKEN": "i",
+}.items():
+    os.environ.setdefault(_k, _v)
+
 _fake = types.ModuleType("aioodbc")
 _fake.Pool = object
 
