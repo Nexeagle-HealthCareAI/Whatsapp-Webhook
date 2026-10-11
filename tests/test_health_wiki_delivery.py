@@ -159,7 +159,7 @@ if __name__ == "__main__":
     tests = [
         test_only_delivered_read_and_failed_are_passed_on,
         test_a_failure_carries_whatsapps_own_reason,
-        test_statuses_for_another_environments_number_are_ignored,
+        test_statuses_for_the_health_wiki_number_are_read_too,
         test_nothing_is_passed_on_while_the_key_is_unset,
         test_a_pass_on_failure_never_raises,
     ]
