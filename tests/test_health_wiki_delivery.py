@@ -106,11 +106,11 @@ def test_a_failure_carries_whatsapps_own_reason():
     check(ingest._health_wiki_delivery({"id": "w3", "status": "failed"})["detail"] is None, "a failure with no error block has no detail")
 
 
-def test_statuses_for_another_environments_number_are_ignored():
+def test_statuses_for_the_health_wiki_number_are_read_too():
     mine = ingest._extract_statuses(_status_payload([{"id": "w1", "status": "delivered"}]))
     other = ingest._extract_statuses(_status_payload([{"id": "w1", "status": "delivered"}], phone_number_id="another-number"))
     check(len(mine) == 1, "a status for this number is read")
-    check(other == [], "a status for a different phone_number_id is ignored")
+    check(len(other) == 1, "a status for another number (the one easyHMSAPI sends the Health Wiki messages from) is read too")
 
 
 def test_nothing_is_passed_on_while_the_key_is_unset():

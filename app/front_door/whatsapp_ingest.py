@@ -74,15 +74,15 @@ def _extract_messages_and_contacts(payload: dict) -> tuple[list[dict], dict[str,
 
 
 def _extract_statuses(payload: dict) -> list[dict]:
-    """Delivery statuses (delivered / read / failed) for messages THIS number sent. Same environment check as above."""
+    """Delivery statuses (delivered / read / failed) in a callback.
+
+    Unlike incoming messages, these are NOT limited to this bot's phone_number_id: the Health Wiki's messages are sent by
+    easyHMSAPI from its own WhatsApp number, whose callbacks arrive at this same URL. A status triggers no reply, and
+    easyHMSAPI ignores a message id that is not one of the Health Wiki's, so nothing is lost by passing them all on."""
     statuses = []
     for entry in payload.get("entry", []):
         for change in entry.get("changes", []):
-            value = change.get("value", {})
-            incoming_phone_number_id = value.get("metadata", {}).get("phone_number_id")
-            if incoming_phone_number_id and incoming_phone_number_id != settings.whatsapp_phone_number_id:
-                continue
-            statuses.extend(value.get("statuses", []))
+            statuses.extend(change.get("value", {}).get("statuses", []))
     return statuses
 
 
