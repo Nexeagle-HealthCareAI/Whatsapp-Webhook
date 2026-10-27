@@ -270,11 +270,20 @@ async def route_intent(
         # so a retry loop here is retry latency the patient feels directly, against a database
         # that may still be under the exact same load a moment later. Failing loud instead —
         # tell the patient, stop here, let them re-send — is safer than guessing.
+        # One retry on fresh connections first: the usual failure is a pooled connection that died when the database
+        # restarted (see db.reset_pool), and a second attempt on a new connection answers straight away.
         try:
             has_active, _ = await db.get_upcoming_active_appointment(wa_id)
-        except Exception as exc:
-            logger.error("DB check for active appointments failed, aborting rather than guessing: %s", exc)
-            return RoutedResult(action="error", intent=current_intent, entities=current_entities)
+        except Exception as first_exc:
+            logger.warning("DB check for active appointments failed, retrying on fresh connections: %s", first_exc)
+            try:
+                reset = getattr(db, "reset_pool", None)
+                if reset is not None:
+                    await reset()
+                has_active, _ = await db.get_upcoming_active_appointment(wa_id)
+            except Exception as exc:
+                logger.error("DB check for active appointments failed, aborting rather than guessing: %s", exc)
+                return RoutedResult(action="error", intent=current_intent, entities=current_entities)
 
         if has_active:
             return RoutedResult(
