@@ -56,7 +56,7 @@
 #                            comment on location_api_base_url names the likely candidate,
 #                            https://loc.nexeagle.com, as of whenever that comment was
 #                            written — confirm it's actually up before setting this).
-#   GROK_API_KEY             optional — PRIMARY_NLU (app/listener/model_config.py). Omit and
+#   GROQ_API_KEY             optional — PRIMARY_NLU (app/listener/model_config.py). Omit and
 #                            classify_message falls through to FALLBACK_NLU (Sarvam) instead
 #                            of failing outright — see SARVAM_API_KEY below, still required.
 #   SARVAM_API_KEY           FALLBACK_NLU — required.
@@ -152,14 +152,15 @@ jobs:
           WHATSAPP_DISPLAY_NUMBER: ${{ secrets.WHATSAPP_DISPLAY_NUMBER }}
           WHATSAPP_FLOW_ID: ${{ secrets.WHATSAPP_FLOW_ID }}
           WHATSAPP_FLOW_SCREEN_ID: ${{ secrets.WHATSAPP_FLOW_SCREEN_ID }}
-          GROK_API_KEY: ${{ secrets.GROK_API_KEY }}
+          # Same repository secret as the Dev deploy (GROK_API_KEY was a typo the app never read; still accepted).
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY || secrets.GROK_API_KEY }}
           LOCATION_API_BASE_URL: ${{ secrets.LOCATION_API_BASE_URL }}
         with:
           host: ${{ secrets.PROD_SSH_HOST }}
           username: ${{ secrets.PROD_SSH_USER }}
           key_path: /tmp/deploy_key
           port: 22
-          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,PROD_DB_CONNECTION,HMS_API_KEY,INTERNAL_EVENTS_TOKEN,SARVAM_API_KEY,WHATSAPP_DISPLAY_NUMBER,WHATSAPP_FLOW_ID,WHATSAPP_FLOW_SCREEN_ID,GROK_API_KEY,LOCATION_API_BASE_URL
+          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,PROD_DB_CONNECTION,HMS_API_KEY,INTERNAL_EVENTS_TOKEN,SARVAM_API_KEY,WHATSAPP_DISPLAY_NUMBER,WHATSAPP_FLOW_ID,WHATSAPP_FLOW_SCREEN_ID,GROQ_API_KEY,LOCATION_API_BASE_URL
           script: |
             set -e
             cd "$DEPLOY_PATH"
@@ -198,7 +199,9 @@ jobs:
               printf 'WHATSAPP_DISPLAY_NUMBER=%s\n' "$WHATSAPP_DISPLAY_NUMBER"
               printf 'WHATSAPP_FLOW_ID=%s\n' "$WHATSAPP_FLOW_ID"
               printf 'WHATSAPP_FLOW_SCREEN_ID=%s\n' "$WHATSAPP_FLOW_SCREEN_ID"
-              printf 'GROK_API_KEY=%s\n' "$GROK_API_KEY"
+              printf 'GROQ_API_KEY=%s\n' "$GROQ_API_KEY"
+              # Without this the app falls back to the Dev API (app/config.py / docker-compose.yml default).
+              printf 'HMS_API_BASE_URL=%s\n' "https://1hms-api.nexeagle.com"
               printf 'LOCATION_API_BASE_URL=%s\n' "$LOCATION_API_BASE_URL"
               # Symptom routing: Doctor Dekho's /api/search/parse on the Prod VM (host port 8081; 84 is Dev's).
               printf 'SYMPTOM_API_BASE_URL=%s\n' "http://host.docker.internal:8081"
