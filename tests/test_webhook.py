@@ -62,6 +62,14 @@ import time
 
 from fastapi.testclient import TestClient
 
+# Placeholder settings so this runs on a plain checkout (the CI "Tests" workflow has no secrets), same as the
+# other test files; any value already set in the environment wins.
+for _key in [
+    "WHATSAPP_TOKEN", "WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_VERIFY_TOKEN",
+    "WHATSAPP_APP_SECRET", "SQLSERVER_CONN_STRING", "INTERNAL_EVENTS_TOKEN",
+]:
+    os.environ.setdefault(_key, "test")
+
 from app import db, main
 from app.config import settings
 from app.front_door import hms_events as hms_events_module
