@@ -47,11 +47,12 @@ class Settings(BaseSettings):
     sqlserver_conn_string: str
 
     # NOT the standalone NLP service's own port 5003 — in this dev environment the reachable
-    # entry point is nexeagle-website-dev's own /api/search/parse proxy route (port 82),
-    # reached via host.docker.internal the same way SQLSERVER_CONN_STRING is. See
+    # entry point is Doctor Dekho's own /api/search/parse proxy route (Dev VM port 84, Prod 8081 -
+    # set by deploy-prod.yml), reached via host.docker.internal the same way SQLSERVER_CONN_STRING is.
+    # It used to be NexEagleWebsite's (port 82), which lost the route when Doctor Dekho was split out. See
     # app/symptom_client.py for the specialtyId-slug -> internal-label translation this
     # requires that calling the model directly wouldn't have needed.
-    symptom_api_base_url: str = "http://host.docker.internal:82"
+    symptom_api_base_url: str = "http://host.docker.internal:84"
 
     # Location-search API (app/messengers/location_client.py) — takes a typed place name and
     # returns up to `limit` real, canonical matches (city/district/town, state, coordinates)

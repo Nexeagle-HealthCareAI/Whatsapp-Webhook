@@ -200,6 +200,8 @@ jobs:
               printf 'WHATSAPP_FLOW_SCREEN_ID=%s\n' "$WHATSAPP_FLOW_SCREEN_ID"
               printf 'GROK_API_KEY=%s\n' "$GROK_API_KEY"
               printf 'LOCATION_API_BASE_URL=%s\n' "$LOCATION_API_BASE_URL"
+              # Symptom routing: Doctor Dekho's /api/search/parse on the Prod VM (host port 8081; 84 is Dev's).
+              printf 'SYMPTOM_API_BASE_URL=%s\n' "http://host.docker.internal:8081"
             } > "$ENVFILE"
             chmod 600 "$ENVFILE"
 

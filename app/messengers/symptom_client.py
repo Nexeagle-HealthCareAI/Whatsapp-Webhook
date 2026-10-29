@@ -25,10 +25,10 @@ def _get_client() -> httpx.AsyncClient:
     app.messengers.hms_client._get_client() and redis_client.get_redis()."""
     return httpx.AsyncClient(base_url=settings.symptom_api_base_url, timeout=10)
 
-# Reachable in dev at nexeagle-website-dev's own /api/search/parse, NOT the standalone
+# Reachable at Doctor Dekho's own /api/search/parse (Dev :84, Prod :8081), NOT the standalone
 # NLP service's /route-symptom directly (that's not exposed/reachable this way in this
-# environment) — this is NexEagleWebsite's own Next.js proxy route in front of it, and it
-# returns NexEagleWebsite's specialtyId slugs (e.g. "cardiology"), not the underlying
+# environment) — this is Doctor Dekho's own Next.js proxy route in front of it, and it
+# returns Doctor Dekho's specialtyId slugs (e.g. "cardiology"), not the underlying
 # model's internal labels. Copied from the NLP Model repo's specialty_mapping.py
 # (NEXEAGLE_SPECIALTY_ID_TO_LABEL) to translate back to a label before matching against
 # easyHMSAPI's live PatientFacingCategory list.

@@ -51,8 +51,8 @@ services:
     depends_on:
       - redis
     # Lets SQLSERVER_CONN_STRING / SYMPTOM_API_BASE_URL target host.docker.internal — the
-    # sqlserver container and nexeagle-website-dev's /api/search/parse proxy (port 82, the
-    # reachable entry point for symptom routing in dev) are both on the host's own network,
+    # sqlserver container and Doctor Dekho's /api/search/parse proxy (port 84 on Dev, 8081 on
+    # Prod, the reachable entry point for symptom routing) are both on the host's own network,
     # not this compose project's own (it's a separate compose project/service entirely).
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -65,7 +65,7 @@ services:
       HMS_API_BASE_URL: "${HMS_API_BASE_URL:-https://1hms-dev-api.nexeagle.com}"
       HMS_API_KEY: "${HMS_API_KEY:-}"
       SQLSERVER_CONN_STRING: "${SQLSERVER_CONN_STRING}"
-      SYMPTOM_API_BASE_URL: "${SYMPTOM_API_BASE_URL:-http://host.docker.internal:82}"
+      SYMPTOM_API_BASE_URL: "${SYMPTOM_API_BASE_URL:-http://host.docker.internal:84}"
       # Peer-review H5: previously hardcoded to the dev subdomain in app/config.py with no
       # way to override it at all -- prod was silently calling dev's location-search service
       # for every "near me" search. Only this service touches location_client.py (via
