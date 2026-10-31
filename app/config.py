@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -119,6 +120,47 @@ class Settings(BaseSettings):
     # same number (template sends, 1HMS event pushes) isn't accounted for here.
     whatsapp_send_rate_limit: int = 70
     whatsapp_send_max_attempts: int = 5
+
+
+    # Vita mode (app/vita_bridge.py): patient conversations go to Vita, the patient agent in the
+    # 1HMS NLP Router (POST /v2/agent/chat, contract in 1HMS-NLP-Router/docs/vita_whatsapp.md),
+    # instead of this bot's own NLU/step machine. ALL optional: unset/empty vita_chat_url = Vita
+    # off and the bot behaves exactly as before. Full URL including the path, e.g.
+    # http://<router-host>:5003/v2/agent/chat -- note the router's own port may not be reachable
+    # from this bot's container (see symptom_api_base_url above); use whatever address is.
+    vita_chat_url: str | None = None
+    # Sent as X-Api-Key. Give the bot a key with the "chat" scope, plus "verified_mobile" so Vita
+    # can skip its WhatsApp code when booking (WhatsApp already verified the sender's number).
+    vita_api_key: str | None = None
+    vita_timeout_seconds: float = 12.0
+    # When Vita fails (5xx, timeout, bad reply): "message" = send one short apology with the 108
+    # line; "legacy" = run this bot's old conversation.handle_message for that message instead
+    # (for the transition only).
+    vita_fallback: str = "message"
+
+    # docker-compose passes unset optional vars through as "" -- treat that as "not set" so an
+    # empty value can never switch Vita on, pick an unknown fallback, or fail float parsing
+    # (a validation error here would crash-loop every container on deploy).
+    @field_validator("vita_chat_url", "vita_api_key", mode="before")
+    @classmethod
+    def _blank_is_none(cls, value):
+        return value.strip() or None if isinstance(value, str) else value
+
+    @field_validator("vita_timeout_seconds", mode="before")
+    @classmethod
+    def _blank_timeout_is_default(cls, value):
+        if isinstance(value, str):
+            try:
+                return float(value) if value.strip() else 12.0
+            except ValueError:
+                return 12.0
+        return value
+
+    @field_validator("vita_fallback", mode="before")
+    @classmethod
+    def _known_fallback(cls, value):
+        value = (value or "").strip().lower() if isinstance(value, str) else value
+        return value if value in ("message", "legacy") else "message"
 
 
 settings = Settings()

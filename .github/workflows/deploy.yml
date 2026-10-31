@@ -41,6 +41,15 @@
 #                            different company). PRIMARY_NLU (app/listener/model_config.py).
 #                            Omit and classify_message falls through to FALLBACK_NLU (Sarvam)
 #                            instead of failing outright — see SARVAM_API_KEY below, still required.
+#   VITA_CHAT_URL            optional — Vita mode (app/vita_bridge.py): the 1HMS NLP Router's
+#                            full chat URL, e.g. http://<router-host>:5003/v2/agent/chat. Set it
+#                            and patient conversations go to Vita instead of this bot's own NLU;
+#                            omit it and the bot is unchanged. The router's port must be reachable
+#                            from the worker container (it may not be — check before setting).
+#   VITA_API_KEY             optional — X-Api-Key for the router; needs the "chat" scope, plus
+#                            "verified_mobile" so Vita can book without its WhatsApp code.
+#   VITA_FALLBACK            optional — "message" (default: one apology with the 108 line when Vita
+#                            fails) or "legacy" (the old bot handles that message; transition only).
 #
 # VARIABLES (optional):
 #   VM_DEPLOY_PATH    where this repo is checked out on the VM (default /opt/whatsapp-webhook)
@@ -118,12 +127,15 @@ jobs:
           WHATSAPP_FLOW_ID: ${{ secrets.WHATSAPP_FLOW_ID }}
           WHATSAPP_FLOW_SCREEN_ID: ${{ secrets.WHATSAPP_FLOW_SCREEN_ID }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          VITA_CHAT_URL: ${{ secrets.VITA_CHAT_URL }}
+          VITA_API_KEY: ${{ secrets.VITA_API_KEY }}
+          VITA_FALLBACK: ${{ secrets.VITA_FALLBACK }}
         with:
           host: ${{ secrets.DEV_SSH_HOST }}
           username: ${{ secrets.DEV_SSH_USER }}
           password: ${{ secrets.DEV_SSH_PASSWORD }}
           port: 22
-          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,SQLSERVER_CONN_STRING_DEV,HMS_API_KEY,HEALTH_WIKI_INTERNAL_KEY,INTERNAL_EVENTS_TOKEN,SARVAM_API_KEY,WHATSAPP_DISPLAY_NUMBER,WHATSAPP_FLOW_ID,WHATSAPP_FLOW_SCREEN_ID,GROQ_API_KEY
+          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,SQLSERVER_CONN_STRING_DEV,HMS_API_KEY,HEALTH_WIKI_INTERNAL_KEY,INTERNAL_EVENTS_TOKEN,SARVAM_API_KEY,WHATSAPP_DISPLAY_NUMBER,WHATSAPP_FLOW_ID,WHATSAPP_FLOW_SCREEN_ID,GROQ_API_KEY,VITA_CHAT_URL,VITA_API_KEY,VITA_FALLBACK
           script: |
             set -e
             cd "$DEPLOY_PATH"
@@ -165,6 +177,9 @@ jobs:
               printf 'WHATSAPP_FLOW_ID=%s\n' "$WHATSAPP_FLOW_ID"
               printf 'WHATSAPP_FLOW_SCREEN_ID=%s\n' "$WHATSAPP_FLOW_SCREEN_ID"
               printf 'GROQ_API_KEY=%s\n' "$GROQ_API_KEY"
+              printf 'VITA_CHAT_URL=%s\n' "$VITA_CHAT_URL"
+              printf 'VITA_API_KEY=%s\n' "$VITA_API_KEY"
+              printf 'VITA_FALLBACK=%s\n' "$VITA_FALLBACK"
             } > "$ENVFILE"
             chmod 600 "$ENVFILE"
 

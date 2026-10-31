@@ -73,6 +73,13 @@ services:
       # reasoning as SYMPTOM_API_BASE_URL above, not added to fastapi/scheduler which never
       # call it.
       LOCATION_API_BASE_URL: "${LOCATION_API_BASE_URL:-https://loc-dev.nexeagle.com}"
+      # Vita mode (app/vita_bridge.py) -- patient conversations go to Vita, the 1HMS NLP Router's
+      # patient agent (POST /v2/agent/chat). Only this service calls it (conversation.handle_message,
+      # driven by worker.py). All optional: empty VITA_CHAT_URL = Vita off, bot unchanged.
+      # VITA_CHAT_URL is the full URL incl. /v2/agent/chat; VITA_FALLBACK is "message" or "legacy".
+      VITA_CHAT_URL: "${VITA_CHAT_URL:-}"
+      VITA_API_KEY: "${VITA_API_KEY:-}"
+      VITA_FALLBACK: "${VITA_FALLBACK:-message}"
       INTERNAL_EVENTS_TOKEN: "${INTERNAL_EVENTS_TOKEN}"
       # NLU classification (app/nlu_client.py) runs inside this container via
       # conversation.handle_message — without this, settings.sarvam_api_key is None here

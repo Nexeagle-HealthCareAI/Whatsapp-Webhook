@@ -20,7 +20,7 @@ from app.decision_maker.resolver import match_doctor_by_query as _match_doctor_b
 from app.decision_maker.resolver import resolve_doctor
 from app.config import settings
 from app.messengers.hms_client import HmsApiError
-from app import nlu_client, safety
+from app import nlu_client, safety, vita_bridge
 from app.referee import intent_router, flow_policy
 from app.model_config import PRIMARY_NLU
 from app.i18n import LANGUAGE_LABELS, LANG_PROMPT, t
@@ -1022,6 +1022,51 @@ async def _maybe_handle_casual_chat_fallback(
     return False
 
 
+async def _maybe_hand_to_vita(
+    client: httpx.AsyncClient, phone: str, sender_name: str | None, input_type: str,
+    input_value: str, message_id: str | None,
+) -> bool:
+    """Vita mode (settings.vita_chat_url set): the patient conversation goes to Vita, the
+    patient agent in the 1HMS NLP Router (app/vita_bridge.py), and NOTHING below in
+    handle_message runs for it -- not the bot's safety triage, not its NLU, not its steps (one
+    brain, one safety layer; Vita puts 108 / 112 first for emergencies).
+
+    Routing rule (vita_bridge.stays_with_bot) -- these stay with the bot's own handler below:
+      - nfm_reply (WhatsApp Flow submissions)
+      - button_reply "hospbook_book" / "hospbook_status" (_maybe_handle_hospbook_button) and
+        "start_booking" (_maybe_handle_start_booking_button)
+      - deterministic QR text triggers (_maybe_handle_deterministic_qr_trigger): CHECKIN <code>,
+        DRBOOK <id>, "... QR ID of this hospital is <code>", DISCHARGE / RX / RXV <id>
+      - any message while the saved step is a bot-owned one: the follow-up reply steps
+        (_maybe_handle_followup_reply_step), appointment cancel / reschedule / status steps
+        (appointment_actions.py), the hospital-QR action menu and OPD check-in steps (checkin.py)
+      - any message while the patient is still inside a flow one of the above started within
+        the last 30 minutes (a Redis marker) and the bot still has a step saved for them -- so a
+        QR booking keeps going through language / slot / details / confirm with the bot
+    Everything else goes to Vita.
+
+    Returns True when this turn is done. False = run the old handler: Vita off, a bot-owned
+    message, or Vita failed with settings.vita_fallback == "legacy"."""
+    if not settings.vita_chat_url:
+        return False
+    try:
+        state = await db.get_conversation_state(phone)
+    except Exception:
+        logger.warning("Could not load conversation state for Vita routing: %s", mask_phone(phone))
+        state = None
+    current_step = state["current_step"] if state else None
+    lang = ((state or {}).get("context") or {}).get("lang")
+    if await vita_bridge.stays_with_bot(get_redis(), phone, input_type, input_value, current_step):
+        return False
+    if await vita_bridge.handle_with_vita(client, phone, sender_name, input_type, input_value, message_id, lang=lang):
+        return True
+    if settings.vita_fallback == "legacy":
+        logger.info("Vita unavailable, legacy handler takes this message from %s", mask_phone(phone))
+        return False
+    await vita_bridge.send_unavailable(phone, lang)
+    return True
+
+
 async def handle_message(
     client: httpx.AsyncClient,
     phone: str,
@@ -1045,6 +1090,9 @@ async def handle_message(
             # Best-effort UX polish — never let a typing-indicator failure block the
             # actual reply the patient is waiting on.
             logger.warning("Failed to send typing indicator for %s", message_id)
+
+    if await _maybe_hand_to_vita(client, phone, sender_name, input_type, input_value, message_id):
+        return
 
     current_step, context = await _load_turn_context(phone, input_type, input_value)
 

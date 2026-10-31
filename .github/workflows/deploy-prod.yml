@@ -63,6 +63,15 @@
 #   INTERNAL_EVENTS_TOKEN    authenticates 1HMS/1Rad's POST /events/token-called calls into
 #                            this gateway — a different secret from WHATSAPP_APP_SECRET, which
 #                            authenticates Meta instead.
+#   VITA_CHAT_URL            optional — Vita mode (app/vita_bridge.py): the 1HMS NLP Router's
+#                            full chat URL, e.g. http://<router-host>:5003/v2/agent/chat. Set it
+#                            and patient conversations go to Vita instead of this bot's own NLU;
+#                            omit it and the bot is unchanged. The router's port must be reachable
+#                            from the worker container (it may not be — check before setting).
+#   VITA_API_KEY             optional — X-Api-Key for the router; needs the "chat" scope, plus
+#                            "verified_mobile" so Vita can book without its WhatsApp code.
+#   VITA_FALLBACK            optional — "message" (default: one apology with the 108 line when Vita
+#                            fails) or "legacy" (the old bot handles that message; transition only).
 #
 # VARIABLES (optional, Environment-scoped under "production"):
 #   VM_DEPLOY_PATH    where this repo is checked out on the Prod VM
@@ -155,12 +164,15 @@ jobs:
           # Same repository secret as the Dev deploy (GROK_API_KEY was a typo the app never read; still accepted).
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY || secrets.GROK_API_KEY }}
           LOCATION_API_BASE_URL: ${{ secrets.LOCATION_API_BASE_URL }}
+          VITA_CHAT_URL: ${{ secrets.VITA_CHAT_URL }}
+          VITA_API_KEY: ${{ secrets.VITA_API_KEY }}
+          VITA_FALLBACK: ${{ secrets.VITA_FALLBACK }}
         with:
           host: ${{ secrets.PROD_SSH_HOST }}
           username: ${{ secrets.PROD_SSH_USER }}
           key_path: /tmp/deploy_key
           port: 22
-          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,PROD_DB_CONNECTION,HMS_API_KEY,INTERNAL_EVENTS_TOKEN,SARVAM_API_KEY,WHATSAPP_DISPLAY_NUMBER,WHATSAPP_FLOW_ID,WHATSAPP_FLOW_SCREEN_ID,GROQ_API_KEY,LOCATION_API_BASE_URL
+          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,PROD_DB_CONNECTION,HMS_API_KEY,INTERNAL_EVENTS_TOKEN,SARVAM_API_KEY,WHATSAPP_DISPLAY_NUMBER,WHATSAPP_FLOW_ID,WHATSAPP_FLOW_SCREEN_ID,GROQ_API_KEY,LOCATION_API_BASE_URL,VITA_CHAT_URL,VITA_API_KEY,VITA_FALLBACK
           script: |
             set -e
             cd "$DEPLOY_PATH"
@@ -205,6 +217,9 @@ jobs:
               printf 'LOCATION_API_BASE_URL=%s\n' "$LOCATION_API_BASE_URL"
               # Symptom routing: Doctor Dekho's /api/search/parse on the Prod VM (host port 8081; 84 is Dev's).
               printf 'SYMPTOM_API_BASE_URL=%s\n' "http://host.docker.internal:8081"
+              printf 'VITA_CHAT_URL=%s\n' "$VITA_CHAT_URL"
+              printf 'VITA_API_KEY=%s\n' "$VITA_API_KEY"
+              printf 'VITA_FALLBACK=%s\n' "$VITA_FALLBACK"
             } > "$ENVFILE"
             chmod 600 "$ENVFILE"
 

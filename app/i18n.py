@@ -794,6 +794,21 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Hamara booking system abhi temporarily available nahi hai. Thodi der baad try karein.",
         "bn": "আমাদের বুকিং সিস্টেম সাময়িকভাবে অনুপলব্ধ। অনুগ্রহ করে শীঘ্রই আবার চেষ্টা করুন।",
     },
+    # Vita mode (app/vita_bridge.py): a tapped doctor row from an old list that Vita no longer
+    # remembers (its POST /v2/agent/chat returns 422), and Vita being unreachable with
+    # VITA_FALLBACK=message. The second must always keep the 108 line.
+    "vita_list_expired": {
+        "en": "That list has expired, please search again.",
+        "hi": "वह सूची अब पुरानी हो गई है, कृपया फिर से खोजें।",
+        "hg": "Woh list expire ho gayi hai, please phir se search karein.",
+        "bn": "সেই তালিকার মেয়াদ শেষ হয়ে গেছে, অনুগ্রহ করে আবার খুঁজুন।",
+    },
+    "vita_unavailable": {
+        "en": "Sorry, I can't reach our doctor assistant right now. Please try again in a minute. In an emergency call 108.",
+        "hi": "क्षमा करें, अभी हमारी डॉक्टर सहायक सेवा से संपर्क नहीं हो पा रहा। कृपया एक मिनट बाद फिर कोशिश करें। आपात स्थिति में 108 पर कॉल करें।",
+        "hg": "Sorry, abhi hamari doctor assistant service se connect nahi ho pa raha. Ek minute baad phir try karein. Emergency mein 108 call karein.",
+        "bn": "দুঃখিত, এখন আমাদের ডাক্তার সহায়ক পরিষেবার সাথে সংযোগ করা যাচ্ছে না। এক মিনিট পরে আবার চেষ্টা করুন। জরুরি অবস্থায় 108 নম্বরে কল করুন।",
+    },
     "followup_reminder": {
         "en": "Hi {patient_name}, just checking in after your visit to {doctor_name} — how are you feeling? Reply if you need a follow-up booked.",
         "hi": "नमस्ते {patient_name}, {doctor_name} से मिलने के बाद बस हाल-चाल पूछ रहे हैं — अब कैसा महसूस कर रहे हैं? फॉलो-अप बुक करना हो तो जवाब दें।",
