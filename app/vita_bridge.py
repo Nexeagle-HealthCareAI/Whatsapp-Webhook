@@ -26,7 +26,7 @@ import httpx
 
 from app.config import settings
 from app.i18n import t
-from app.messengers import outbound_queue
+from app.messengers import conversation_log_queue, outbound_queue
 from app.messengers.redis_client import get_redis
 from app.pii import mask_phone
 
@@ -259,6 +259,7 @@ async def handle_with_vita(
     if reply.get("language"):
         session["language"] = reply["language"]
     await _refresh_session(redis, key, session)
+    await _log_turn(redis, phone, session, input_type, input_value, reply)
 
     sent = 0
     try:
@@ -270,7 +271,43 @@ async def handle_with_vita(
                          mask_phone(phone), sent, len(messages))
         return sent > 0     # part of the answer is already on its way: don't add a fallback to it
     logger.info("Vita answered %s: kind=%s, %d message(s)", mask_phone(phone), reply.get("kind"), len(messages))
+    handover = reply.get("handover") if isinstance(reply.get("handover"), dict) else {}
+    if handover.get("to") == "booking" and handover.get("doctorId"):
+        await _hand_over_booking(client, redis, phone, str(handover["doctorId"]), _vita_lang(session, lang))
     return True
+
+
+async def _hand_over_booking(client, redis, phone: str, doctor_id: str, lang: str | None) -> None:
+    """Vita found the doctor and isn't booking it (router booking off): the bot's own booking flow
+    takes over for that doctor (the DRBOOK path, without its welcome banner), in the language Vita
+    was speaking, and the next messages stay with the bot until that flow ends (stays_with_bot)."""
+    from app.conversation.checkin import start_doctor_booking   # app.conversation imports this module
+    try:
+        await redis.set(_BOT_FLOW_KEY.format(phone=phone), "1", ex=BOT_FLOW_TTL_SECONDS)
+    except Exception:
+        logger.warning("Bot-flow marker not set for %s", mask_phone(phone))
+    try:
+        await start_doctor_booking(client, phone, doctor_id, lang, greet=False)
+        logger.info("Vita handed %s over to the bot's booking flow", mask_phone(phone))
+    except Exception:
+        logger.exception("Booking hand-over failed for %s", mask_phone(phone))
+
+
+async def _log_turn(redis, phone: str, session: dict, input_type: str, input_value: str, reply: dict) -> None:
+    """Vita's turns in the bot's conversation log (dbo.conversation_sessions), under the session id
+    "vita:<id>": the patient's message, what Vita did (step "vita:<kind>") with its words, and a
+    conversion when Vita booked. Never fails the turn (log_event swallows its own errors)."""
+    sid = session.get("session_id")
+    if not sid:
+        return
+    log_sid, kind = f"vita:{sid}", str(reply.get("kind") or "reply")
+    step = f"vita:{kind}"[:50]
+    content = input_value if input_type != "location" else "[location]"
+    await conversation_log_queue.log_event(redis, log_sid, phone, "in", input_type, content, step)
+    await conversation_log_queue.log_event(redis, log_sid, phone, "out", "vita", (reply.get("message") or "")[:1000], step)
+    appointment = (reply.get("booking") or {}).get("appointmentId") if isinstance(reply.get("booking"), dict) else None
+    if kind == "booked" and appointment:
+        await conversation_log_queue.log_conversion(redis, log_sid, str(appointment))
 
 
 async def _refresh_session(redis, key: str, session: dict) -> None:

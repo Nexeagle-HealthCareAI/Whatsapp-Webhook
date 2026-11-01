@@ -142,17 +142,24 @@ async def _handle_document_trigger(
 
 
 async def _handle_doctor_booking_trigger(client, phone: str, doctor_id: str, context: dict) -> None:
+    await start_doctor_booking(client, phone, doctor_id, context.get("lang"), greet=True)
+
+
+async def start_doctor_booking(client, phone: str, doctor_id: str, lang: str | None, *, greet: bool = True) -> bool:
+    """The bot's booking flow for one known doctor: the DRBOOK QR, and Vita's hand-over after the
+    patient chose a doctor in a Vita conversation (app/vita_bridge.py, greet=False: the patient is
+    mid-conversation, so no welcome banner). False when the doctor can't be found (the patient is
+    told)."""
     from app import conversation
 
     # Re-resolves independently of GET /doc/{doctorId}'s own validation (app/webhook.py) --
     # same "redirect is a UX nicety, never the authoritative check" reasoning as
     # _handle_checkin_trigger below.
-    lang = context.get("lang")
     try:
         doctor = await hms_client.get_doctor_by_id(doctor_id)
     except HmsApiError:
         await conversation.whatsapp_client.send_text(client, phone, t("doctor_not_available", lang))
-        return
+        return False
 
     # Fresh clipboard, discarding whatever the patient was doing before -- scanning a
     # specific doctor's QR is unambiguously "start a new booking with THIS doctor", same
@@ -186,7 +193,8 @@ async def _handle_doctor_booking_trigger(client, phone: str, doctor_id: str, con
         # confident language detection.
         new_context = {"lang": lang, "booking": booking, **doctor_context_fields}
         booking_slots.fill(booking, "lang", lang, source="user")
-        await conversation.whatsapp_client.send_text(client, phone, t("welcome_banner", lang))
+        if greet:
+            await conversation.whatsapp_client.send_text(client, phone, t("welcome_banner", lang))
         await conversation._advance_booking_flow(client, phone, new_context, booking)
     else:
         # First-ever contact (or language forgotten) -- ask, same as any other fresh booking
@@ -194,6 +202,7 @@ async def _handle_doctor_booking_trigger(client, phone: str, doctor_id: str, con
         # own `ctx = init_context or {}`), so the pre-filled doctor slot survives into
         # _handle_choosing_language's own _advance_booking_flow call once the patient picks one.
         await conversation._start(client, phone, {"booking": booking, **doctor_context_fields})
+    return True
 
 
 # ---------------------------------------------------------------------------------------

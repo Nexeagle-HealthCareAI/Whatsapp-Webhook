@@ -56,6 +56,10 @@ class MockRedis:
         self.data.pop(key, None)
         return True
 
+    async def lpush(self, key, value):
+        self.data.setdefault(key, [])
+        return 1
+
 
 _mock_redis_instance = MockRedis()
 _fake_redis_mod.asyncio.Redis = MockRedis
@@ -342,6 +346,60 @@ def test_blank_env_values_are_safe():
         check(Settings(_env_file=None).vita_chat_url is None, "Vita off by default")
 
 
+def _selected_reply(session_id="s-1", language="hinglish"):
+    return {"kind": "doctor_selected", "language": language, "session_id": session_id,
+            "message": "Aapne Dr. Anita Sen ko chuna hai. Chaliye, appointment book karte hain.",
+            "whatsapp": [{"type": "text", "text": {"body": "Aapne Dr. Anita Sen ko chuna hai."}}],
+            "doctor": {"doctorId": "d-42", "name": "Dr. Anita Sen"}, "selectedDoctorId": "d-42",
+            "booking": None, "handover": {"to": "booking", "doctorId": "d-42"}}
+
+
+def _with_handover_spy(fn):
+    from app.conversation import checkin
+    calls = []
+
+    async def _spy(client, phone, doctor_id, lang, *, greet=True):
+        calls.append((phone, doctor_id, lang, greet))
+        return True
+    with patch.object(checkin, "start_doctor_booking", _spy):
+        result = fn()
+    return calls, result
+
+
+def test_doctor_selected_hands_over_to_the_bot_booking_flow():
+    vita = _Vita((200, _selected_reply()))
+    calls, (sent, legacy, _, _) = _with_handover_spy(lambda: _drive(vita, ("list_reply", "doc:d-42")))
+    check([m["text"]["body"] for m in sent] == ["Aapne Dr. Anita Sen ko chuna hai."], "Vita's words sent first")
+    check(calls == [(PHONE, "d-42", "hg", False)], "bot booking starts for that doctor, in Vita's language, no banner")
+    check(_mock_redis_instance.data.get(vita_bridge._BOT_FLOW_KEY.format(phone=PHONE)) == "1",
+          "next messages stay with the bot's booking flow")
+
+
+def test_no_handover_without_the_flag():
+    vita = _Vita((200, _text_reply("Here are skin doctors")))
+    calls, _ = _with_handover_spy(lambda: _drive(vita, ("text", "skin doctor")))
+    check(calls == [], "an ordinary reply starts no booking")
+
+
+def test_vita_turns_go_to_the_conversation_log_and_bookings_count():
+    from app.messengers import conversation_log_queue
+    events, conversions = [], []
+
+    async def _event(redis, sid, phone, direction, message_type, content, step):
+        events.append((sid, direction, message_type, content, step))
+
+    async def _conversion(redis, sid, appointment_id):
+        conversions.append((sid, appointment_id))
+    booked = _text_reply("Booked!", kind="booked", booking={"appointmentId": "a-9"})
+    vita = _Vita((200, _text_reply("Namaste!")), (200, booked))
+    with patch.object(conversation_log_queue, "log_event", _event), \
+         patch.object(conversation_log_queue, "log_conversion", _conversion):
+        _drive(vita, ("text", "hello"), ("button_reply", "book:confirm"))
+    check(events[0] == ("vita:s-1", "in", "text", "hello", "vita:info"), "patient's message logged under vita:<id>")
+    check(events[1] == ("vita:s-1", "out", "vita", "Namaste!", "vita:info"), "Vita's words logged with what it did")
+    check(conversions == [("vita:s-1", "a-9")], "a booking Vita made is a conversion")
+
+
 if __name__ == "__main__":
     test_text_goes_to_vita_and_messages_are_queued_in_order()
     test_list_and_button_replies_send_reply_id()
@@ -356,6 +414,9 @@ if __name__ == "__main__":
     test_bot_owned_messages_stay_with_bot()
     test_bot_flow_continues_with_bot_until_state_clears()
     test_blank_env_values_are_safe()
+    test_doctor_selected_hands_over_to_the_bot_booking_flow()
+    test_no_handover_without_the_flag()
+    test_vita_turns_go_to_the_conversation_log_and_bookings_count()
 
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
