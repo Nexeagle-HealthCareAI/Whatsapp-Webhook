@@ -254,3 +254,13 @@ jobs:
               docker compose logs worker --tail 50
               exit 1
             fi
+
+            # Vita mode (VITA_CHAT_URL set): the router must be reachable from the worker and accept
+            # VITA_API_KEY, or every patient would get the "please try again" fallback. Off = passes.
+            if docker exec booking-worker python -m app.healthcheck_vita; then
+              echo "Vita check OK"
+            else
+              echo "Vita check FAILED (fix VITA_CHAT_URL / VITA_API_KEY, or unset VITA_CHAT_URL)" >&2
+              docker compose logs worker --tail 50
+              exit 1
+            fi
