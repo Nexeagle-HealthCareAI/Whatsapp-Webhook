@@ -110,6 +110,13 @@ def _groups_with_live_categories(specialties: list[dict]) -> list[tuple[dict, li
 
 async def _send_search_mode_prompt(client, phone: str, context: ConversationContext) -> None:
     from app import conversation
+    from app.conversation import vita_chat
+
+    # Vita is the front door for the numbers it is switched on for; everyone else (and anyone Vita could not
+    # serve this conversation) gets the buttons below, exactly as before.
+    if vita_chat.enabled_for(phone, context):
+        await vita_chat.enter(client, phone, context)
+        return
 
     lang = context.get("lang")
     # Only the question is phrased — the three button labels stay templated, since they

@@ -99,6 +99,16 @@ class Settings(BaseSettings):
     # dense metro producing dozens of API calls; nearest cities are used first.
     doctor_search_max_cities: int = 8
 
+    # Vita, the chat agent in the NLP Router (POST /v2/agent/chat). With VITA_API_URL and VITA_API_KEY both set AND the
+    # patient's number on VITA_ALLOWED_PHONES, free text in the "how do you want to find a doctor" step goes to Vita
+    # instead of the fixed buttons; booking, cancel and reschedule stay in this bot. Unset (the default) changes
+    # nothing. Comma-separated numbers (any format, matched on the last 10 digits), or "*" for everyone.
+    vita_api_url: str | None = None
+    vita_api_key: str | None = None
+    vita_allowed_phones: str = ""
+    # Vita asks a language model, so a turn can take a few seconds; past this the bot carries on without it.
+    vita_timeout_seconds: float = 25.0
+
     # Shared secret for the /events/* push endpoints (app/webhook.py) that 1HMS/1Rad will
     # call to push queue/token updates, prescription-ready, report-ready events into this
     # gateway. NOT the same secret as WHATSAPP_APP_SECRET — that one authenticates Meta,
