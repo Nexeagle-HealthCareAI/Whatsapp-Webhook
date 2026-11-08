@@ -402,6 +402,18 @@ _STRINGS: dict[str, dict[str, str]] = {
         "hg": "Doctor kaise dhundna chahenge?",
         "bn": "আপনি কিভাবে ডাক্তার খুঁজতে চান?",
     },
+    "vita_intro": {
+        "en": "Tell me what you need in your own words: your symptoms, a doctor's name, a specialty or your area. For example \"fever and headache for 3 days\" or \"skin doctor in Kolkata\".",
+        "hi": "आपको क्या चाहिए, अपने शब्दों में बताइए: लक्षण, डॉक्टर का नाम, स्पेशलिटी या आपका इलाका। जैसे \"3 दिन से बुखार और सिरदर्द\" या \"कोलकाता में स्किन डॉक्टर\"।",
+        "hg": "Aapko kya chahiye, apne shabdon mein bataiye: symptoms, doctor ka naam, specialty ya aapka area. Jaise \"3 din se bukhar aur sar dard\" ya \"Kolkata mein skin doctor\".",
+        "bn": "আপনার কী দরকার নিজের ভাষায় বলুন: উপসর্গ, ডাক্তারের নাম, বিশেষজ্ঞের ধরন বা আপনার এলাকা। যেমন \"৩ দিন ধরে জ্বর আর মাথাব্যথা\" বা \"কলকাতায় চর্মরোগ বিশেষজ্ঞ\"।",
+    },
+    "vita_unavailable": {
+        "en": "Sorry, I couldn't reach the assistant just now. Let's find your doctor step by step.",
+        "hi": "माफ़ कीजिए, अभी असिस्टेंट से संपर्क नहीं हो पाया। चलिए, कदम-दर-कदम डॉक्टर ढूँढते हैं।",
+        "hg": "Maaf kijiye, abhi assistant se contact nahi ho paya. Chaliye, step by step doctor dhundte hain.",
+        "bn": "দুঃখিত, এখন সহকারীর সঙ্গে যোগাযোগ করা গেল না। চলুন ধাপে ধাপে ডাক্তার খুঁজি।",
+    },
     "search_mode_symptom": {
         "en": "Describe symptoms",
         "hi": "लक्षण बताएं",
