@@ -246,6 +246,7 @@ def group_label(group: dict, lang: str | None) -> tuple[str, str]:
 # since we don't know the patient's preference yet.
 LANG_PROMPT = (
     "👋 Welcome! I can help you book a doctor's appointment.\n"
+    "🩺 Doctor search · 🤒 Symptom check · 📅 Book appointment\n\n"
     "भाषा चुनें / Please choose a language / Language choose kar lijiye / ভাষা চয়ন করুন:"
 )
 
