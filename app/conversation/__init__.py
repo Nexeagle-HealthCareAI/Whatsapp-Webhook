@@ -1910,7 +1910,10 @@ async def _prompt_choosing_specialty(client, phone, context):
 
 
 async def _prompt_choosing_sort(client, phone, context):
-    await _send_sort_prompt(client, phone, context, context.get("specialty_category"))
+    # current_step is a required argument of _send_sort_prompt. Without it this prompt raised TypeError, which
+    # _trigger_step_prompt turns into a full restart (_start): any re-prompt here -- a casual remark answered by
+    # the chat fallback, or "back" -- threw the patient back to the language list.
+    await _send_sort_prompt(client, phone, context, context.get("specialty_category"), context.get("current_step"))
 
 
 async def _prompt_choosing_doctor(client, phone, context):
