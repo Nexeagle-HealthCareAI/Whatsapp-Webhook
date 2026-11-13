@@ -7,9 +7,14 @@
 #
 # SECRETS (Settings → Secrets and variables → Actions — put these under the "production"
 # Environment specifically, not repository-level, so they can never be read by deploy.yml):
-#   PROD_SSH_HOST            Prod VM address (same one easyHMSAPI's Stage 4 deploys to)
+#   PROD_SSH_HOST            Prod APP VM address — 151.185.45.67, dedicated to running all
+#                            the platform's APIs/app stacks. NOT the same host as the
+#                            database anymore (see PROD_DB_HOST below): this bot's own
+#                            containers (fastapi/worker/sender/etc.) run here, SQL Server
+#                            does not. Also where NexEagleWebsite's own prod container
+#                            already runs (port 8080).
 #   PROD_SSH_USER            root
-#   PROD_SSH_KEY_B64         base64-encoded SSH private key for the Prod VM — same
+#   PROD_SSH_KEY_B64         base64-encoded SSH private key for the Prod APP VM — same
 #                            key-auth convention as easyHMSAPI's deploy-api.yml Stage 4
 #                            (Dev stays password-auth; only Prod uses a key). Generate the
 #                            b64 form with: base64 -w0 path/to/key   (macOS: base64 -i path/to/key)
@@ -20,15 +25,21 @@
 #   WHATSAPP_APP_SECRET       Meta App dashboard → App Settings → Basic
 #   REDIS_PASSWORD           generate once: openssl rand -hex 24
 #
-#   MSSQL_SA_PASSWORD_PROD    sa password for the Prod VM's sqlserver container — used ONLY
-#                            to apply sql/schema.sql (creates the separate WhatsAppBookingProd
-#                            database, never touches easyHMSAPI's own DB)
+#   MSSQL_SA_PASSWORD_PROD    sa password for the Prod DB VM's (151.185.45.68, see
+#                            PROD_DB_HOST below) sqlserver container — used ONLY to apply
+#                            sql/schema.sql (creates the separate WhatsAppBookingProd
+#                            database, never touches easyHMSAPI's own DB). Applied over the
+#                            network now (port 1433), not a local docker exec, since this
+#                            VM is dedicated to the database only and no longer runs this
+#                            bot's own containers.
 #   PROD_DB_CONNECTION       ODBC conn string the APP itself connects with (pyodbc, NOT the
 #                            ADO.NET/SqlClient format easyHMSAPI's own PROD_DB_CONNECTION
 #                            secret uses — same secret NAME, different connection-string
 #                            dialect, since this app talks to SQL Server via pyodbc not
-#                            Microsoft.Data.SqlClient), e.g.:
-#                            DRIVER={ODBC Driver 18 for SQL Server};SERVER=host.docker.internal,1433;
+#                            Microsoft.Data.SqlClient). SERVER must be the DB VM's own
+#                            address (151.185.45.68,1433) now, NOT host.docker.internal --
+#                            the app VM and DB VM are separate hosts, e.g.:
+#                            DRIVER={ODBC Driver 18 for SQL Server};SERVER=151.185.45.68,1433;
 #                            DATABASE=WhatsAppBookingProd;UID=sa;PWD=...;TrustServerCertificate=yes
 #   HMS_API_KEY              optional — X-Api-Key for easyHMSAPI's PublicController. Omit the
 #                            secret entirely for anonymous access (PublicApiKeyFilter allows
@@ -47,6 +58,10 @@
 #                            that step.
 #   WHATSAPP_FLOW_SCREEN_ID  optional — only needed if your Flow's screen isn't named
 #                            REGISTRATION_SCREEN (app/config.py's default).
+#   GROQ_API_KEY             optional — from console.groq.com (Groq Inc., NOT xAI's Grok --
+#                            different company). PRIMARY_NLU (app/listener/model_config.py).
+#                            Omit and classify_message falls through to FALLBACK_NLU (Sarvam)
+#                            instead of failing outright — see SARVAM_API_KEY below, still required.
 #   LOCATION_API_BASE_URL    optional — the location-search service (app/messengers/
 #                            location_client.py) used to resolve a typed place name during
 #                            booking. Omit and this falls back to the DEV subdomain
@@ -56,17 +71,33 @@
 #                            comment on location_api_base_url names the likely candidate,
 #                            https://loc.nexeagle.com, as of whenever that comment was
 #                            written — confirm it's actually up before setting this).
-#   GROQ_API_KEY             optional — PRIMARY_NLU (app/listener/model_config.py). Omit and
-#                            classify_message falls through to FALLBACK_NLU (Sarvam) instead
-#                            of failing outright — see SARVAM_API_KEY below, still required.
 #   SARVAM_API_KEY           FALLBACK_NLU — required.
 #   INTERNAL_EVENTS_TOKEN    authenticates 1HMS/1Rad's POST /events/token-called calls into
 #                            this gateway — a different secret from WHATSAPP_APP_SECRET, which
 #                            authenticates Meta instead.
 #
 # VARIABLES (optional, Environment-scoped under "production"):
-#   VM_DEPLOY_PATH    where this repo is checked out on the Prod VM
-#                      (default /opt/whatsapp-webhook-prod)
+#   VM_DEPLOY_PATH             where this repo is checked out on the Prod APP VM
+#                              (default /opt/whatsapp-webhook-prod)
+#   PROD_DB_HOST               the dedicated DB VM's address (default 151.185.45.68) —
+#                              reached over the network (port 1433) from the app VM now,
+#                              not a local docker exec.
+#   PROD_HMS_API_BASE_URL      easyHMSAPI's prod root (default https://1hms-api.nexeagle.com).
+#                              Previously never set here at all -- silently fell back to
+#                              docker-compose.yml's dev-domain default (1hms-dev-api...),
+#                              which would have pointed prod at the DEV HMS API.
+#   PROD_SYMPTOM_API_BASE_URL  Doctor Dekho's prod origin, NO path (default
+#                              http://host.docker.internal:8081, Doctor Dekho's container on
+#                              this app VM; nexeagle.com no longer serves /api/search/parse
+#                              and 404s) -- symptom_client.py's httpx.AsyncClient
+#                              is built with this as base_url and always requests the
+#                              absolute path "/api/search/parse" itself; including that path
+#                              here too doubles it up (confirmed live: 404 on
+#                              .../api/search/parse/api/search/parse). Previously never set
+#                              here at all -- fell back to docker-compose.yml's
+#                              host.docker.internal:82 default, which is explicitly
+#                              nexeagle-website-DEV's own proxy, unreachable (and wrong)
+#                              from the prod app VM.
 #
 # .env on the VM is written BY this workflow from the secrets above on every deploy —
 # nothing is created or edited on the VM by hand.
@@ -86,6 +117,12 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # workflow_dispatch lets anyone pick ANY branch/ref to run this against — without this
+    # guard, a manual dispatch against e.g. `dev` would git reset --hard the PROD VM's checkout
+    # to dev's code. push: branches:[main] is already scoped correctly; this closes the same
+    # gap for the manual-dispatch trigger. (Actually happened once, harmlessly, run 33886861305
+    # on 2026-09-04 -- failed on an unrelated SSH timeout before reaching checkout.)
+    if: github.ref == 'refs/heads/main'
     # Prefers secrets scoped to the "production" GitHub Environment over same-named repository
     # secrets — mirrors deploy.yml's own "development" binding, so the two environments can
     # never accidentally read each other's app credentials. PROD_SSH_*/MSSQL_SA_PASSWORD_PROD
@@ -104,13 +141,14 @@ jobs:
         uses: appleboy/ssh-action@v1.2.0
         env:
           DEPLOY_PATH: ${{ vars.VM_DEPLOY_PATH || '/opt/whatsapp-webhook-prod' }}
+          PROD_DB_HOST: ${{ vars.PROD_DB_HOST || '151.185.45.68' }}
           MSSQL_SA_PASSWORD_PROD: ${{ secrets.MSSQL_SA_PASSWORD_PROD }}
         with:
           host: ${{ secrets.PROD_SSH_HOST }}
           username: ${{ secrets.PROD_SSH_USER }}
           key_path: /tmp/deploy_key
           port: 22
-          envs: DEPLOY_PATH,MSSQL_SA_PASSWORD_PROD
+          envs: DEPLOY_PATH,PROD_DB_HOST,MSSQL_SA_PASSWORD_PROD
           script: |
             set -e
             : "${MSSQL_SA_PASSWORD_PROD:?MSSQL_SA_PASSWORD_PROD is empty}"
@@ -125,15 +163,23 @@ jobs:
 
             # Same schema.sql dev uses, with WhatsAppBookingDev swapped for WhatsAppBookingProd
             # -- keeps this file the single source of truth for the schema itself.
-            if docker exec sqlserver test -x /opt/mssql-tools18/bin/sqlcmd 2>/dev/null; then
-              sed 's/WhatsAppBookingDev/WhatsAppBookingProd/g' sql/schema.sql | \
-                docker exec -i sqlserver /opt/mssql-tools18/bin/sqlcmd \
-                  -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD_PROD" -i /dev/stdin
-            else
-              sed 's/WhatsAppBookingDev/WhatsAppBookingProd/g' sql/schema.sql | \
-                docker exec -i sqlserver /opt/mssql-tools/bin/sqlcmd \
-                  -S localhost -U sa -P "$MSSQL_SA_PASSWORD_PROD" -i /dev/stdin
-            fi
+            #
+            # SQL Server now lives on its own dedicated DB VM (PROD_DB_HOST), separate from
+            # this app VM -- applied over the network (port 1433) via a disposable sqlcmd
+            # container pulled here, rather than `docker exec` into a co-located sqlserver
+            # container (that container doesn't run on this host anymore).
+            #
+            # Reuses the exact same image the sqlserver container itself runs
+            # (mcr.microsoft.com/mssql/server:2022-latest) rather than a standalone
+            # "mssql-tools18" image -- Microsoft doesn't publish one under that name, but this
+            # image is confirmed to bundle /opt/mssql-tools18/bin/sqlcmd (that's the very path
+            # this workflow's old co-located `docker exec` branch relied on). --entrypoint
+            # overrides the image's normal sqlservr startup so this just runs sqlcmd, not a
+            # second SQL Server instance.
+            sed 's/WhatsAppBookingDev/WhatsAppBookingProd/g' sql/schema.sql | \
+              docker run --rm -i --entrypoint /opt/mssql-tools18/bin/sqlcmd \
+                mcr.microsoft.com/mssql/server:2022-latest \
+                  -C -S "$PROD_DB_HOST",1433 -U sa -P "$MSSQL_SA_PASSWORD_PROD" -i /dev/stdin
             echo "SQL schema applied"
 
       - name: Deploy app stack
@@ -147,12 +193,14 @@ jobs:
           REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
           PROD_DB_CONNECTION: ${{ secrets.PROD_DB_CONNECTION }}
           HMS_API_KEY: ${{ secrets.HMS_API_KEY }}
+          HMS_API_BASE_URL: ${{ vars.PROD_HMS_API_BASE_URL || 'https://1hms-api.nexeagle.com' }}
+          SYMPTOM_API_BASE_URL: ${{ vars.PROD_SYMPTOM_API_BASE_URL || 'http://host.docker.internal:8081' }}
           INTERNAL_EVENTS_TOKEN: ${{ secrets.INTERNAL_EVENTS_TOKEN }}
           SARVAM_API_KEY: ${{ secrets.SARVAM_API_KEY }}
           WHATSAPP_DISPLAY_NUMBER: ${{ secrets.WHATSAPP_DISPLAY_NUMBER }}
           WHATSAPP_FLOW_ID: ${{ secrets.WHATSAPP_FLOW_ID }}
           WHATSAPP_FLOW_SCREEN_ID: ${{ secrets.WHATSAPP_FLOW_SCREEN_ID }}
-          # Same repository secret as the Dev deploy (GROK_API_KEY was a typo the app never read; still accepted).
+          # GROK_API_KEY was an old misspelling of the same key; still accepted.
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY || secrets.GROK_API_KEY }}
           LOCATION_API_BASE_URL: ${{ secrets.LOCATION_API_BASE_URL }}
         with:
@@ -160,7 +208,7 @@ jobs:
           username: ${{ secrets.PROD_SSH_USER }}
           key_path: /tmp/deploy_key
           port: 22
-          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,PROD_DB_CONNECTION,HMS_API_KEY,INTERNAL_EVENTS_TOKEN,SARVAM_API_KEY,WHATSAPP_DISPLAY_NUMBER,WHATSAPP_FLOW_ID,WHATSAPP_FLOW_SCREEN_ID,GROQ_API_KEY,LOCATION_API_BASE_URL
+          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,PROD_DB_CONNECTION,HMS_API_KEY,HMS_API_BASE_URL,SYMPTOM_API_BASE_URL,INTERNAL_EVENTS_TOKEN,SARVAM_API_KEY,WHATSAPP_DISPLAY_NUMBER,WHATSAPP_FLOW_ID,WHATSAPP_FLOW_SCREEN_ID,GROQ_API_KEY,LOCATION_API_BASE_URL
           script: |
             set -e
             cd "$DEPLOY_PATH"
@@ -194,17 +242,15 @@ jobs:
               printf 'REDIS_PASSWORD=%s\n' "$REDIS_PASSWORD"
               printf 'SQLSERVER_CONN_STRING=%s\n' "$PROD_DB_CONNECTION"
               printf 'HMS_API_KEY=%s\n' "$HMS_API_KEY"
+              printf 'HMS_API_BASE_URL=%s\n' "$HMS_API_BASE_URL"
+              printf 'SYMPTOM_API_BASE_URL=%s\n' "$SYMPTOM_API_BASE_URL"
               printf 'INTERNAL_EVENTS_TOKEN=%s\n' "$INTERNAL_EVENTS_TOKEN"
               printf 'SARVAM_API_KEY=%s\n' "$SARVAM_API_KEY"
               printf 'WHATSAPP_DISPLAY_NUMBER=%s\n' "$WHATSAPP_DISPLAY_NUMBER"
               printf 'WHATSAPP_FLOW_ID=%s\n' "$WHATSAPP_FLOW_ID"
               printf 'WHATSAPP_FLOW_SCREEN_ID=%s\n' "$WHATSAPP_FLOW_SCREEN_ID"
               printf 'GROQ_API_KEY=%s\n' "$GROQ_API_KEY"
-              # Without this the app falls back to the Dev API (app/config.py / docker-compose.yml default).
-              printf 'HMS_API_BASE_URL=%s\n' "https://1hms-api.nexeagle.com"
               printf 'LOCATION_API_BASE_URL=%s\n' "$LOCATION_API_BASE_URL"
-              # Symptom routing: Doctor Dekho's /api/search/parse on the Prod VM (host port 8081; 84 is Dev's).
-              printf 'SYMPTOM_API_BASE_URL=%s\n' "http://host.docker.internal:8081"
             } > "$ENVFILE"
             chmod 600 "$ENVFILE"
 
