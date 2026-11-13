@@ -57,6 +57,13 @@ async def send_text_direct(client: httpx.AsyncClient, to: str, body: str) -> Non
     )
 
 
+async def send_prepared(client: httpx.AsyncClient, to: str, message: dict) -> None:
+    """Queues a message that is already a complete Cloud API message body (type + text/interactive), as
+    Vita's reply.whatsapp carries them, with only the recipient and messaging_product added. Same outbound
+    queue as every other send, so ordering and the shared rate limit are unchanged."""
+    await outbound_queue.enqueue(get_redis(), {**message, "messaging_product": "whatsapp", "to": to})
+
+
 async def send_typing_indicator(client: httpx.AsyncClient, message_id: str) -> None:
     """Marks the inbound message read and shows "typing…" to the sender — one combined
     call (per Meta's Cloud API), not two. Meta dismisses the indicator once we actually

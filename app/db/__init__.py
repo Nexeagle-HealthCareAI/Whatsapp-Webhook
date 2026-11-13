@@ -23,8 +23,26 @@ from app.db.appointments import (
 _pool: aioodbc.Pool | None = None
 
 
+# Connections older than this are replaced instead of reused. Without it a pool made once lives for the whole process, so after
+# SQL Server (or the VM/network in between) restarts, every pooled connection is dead and every query fails until the bot
+# itself is restarted — live-reported as the "kuch gadbad ho gayi" reply to a plain symptom message.
+POOL_RECYCLE_SECONDS = 300
+
+
 async def get_pool() -> aioodbc.Pool:
     global _pool
     if _pool is None:
-        _pool = await aioodbc.create_pool(dsn=settings.sqlserver_conn_string, autocommit=True)
+        _pool = await aioodbc.create_pool(dsn=settings.sqlserver_conn_string, autocommit=True, pool_recycle=POOL_RECYCLE_SECONDS)
     return _pool
+
+
+async def reset_pool() -> None:
+    """Drop every pooled connection so the next get_pool() connects afresh — for after a query failed on a dead connection."""
+    global _pool
+    pool, _pool = _pool, None
+    if pool is not None:
+        try:
+            pool.close()
+            await pool.wait_closed()
+        except Exception:
+            pass

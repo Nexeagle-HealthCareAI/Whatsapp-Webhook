@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     # Optional — PublicApiKeyFilter lets anonymous callers through; a key just makes this
     # bot's traffic identifiable/revocable. Unset is fine.
     hms_api_key: str | None = None
+    # Health Wiki WhatsApp delivery status. Meta sends "delivered/read/failed" callbacks for EVERY message this
+    # number sends, including the Health Wiki templates that easyHMSAPI sends. Those are passed on to easyHMSAPI's
+    # key-protected /internal/health-wiki/notifications/delivery so the CMS can show "not delivered". Unset (the
+    # default) turns the pass-on off and changes nothing else.
+    health_wiki_internal_key: str | None = None
 
     # This bot's OWN state (conversation_state/processed_messages/pending_appointments) —
     # a separate database on the same SQL Server instance easyHMSAPI already runs on this VM,
@@ -42,11 +47,12 @@ class Settings(BaseSettings):
     sqlserver_conn_string: str
 
     # NOT the standalone NLP service's own port 5003 — in this dev environment the reachable
-    # entry point is nexeagle-website-dev's own /api/search/parse proxy route (port 82),
-    # reached via host.docker.internal the same way SQLSERVER_CONN_STRING is. See
+    # entry point is Doctor Dekho's own /api/search/parse proxy route (Dev VM port 84, Prod 8081 -
+    # set by deploy-prod.yml), reached via host.docker.internal the same way SQLSERVER_CONN_STRING is.
+    # It used to be NexEagleWebsite's (port 82), which lost the route when Doctor Dekho was split out. See
     # app/symptom_client.py for the specialtyId-slug -> internal-label translation this
     # requires that calling the model directly wouldn't have needed.
-    symptom_api_base_url: str = "http://host.docker.internal:82"
+    symptom_api_base_url: str = "http://host.docker.internal:84"
 
     # Location-search API (app/messengers/location_client.py) — takes a typed place name and
     # returns up to `limit` real, canonical matches (city/district/town, state, coordinates)
@@ -92,6 +98,16 @@ class Settings(BaseSettings):
     # How many index cities to pull doctors from when covering a radius. A guard against a
     # dense metro producing dozens of API calls; nearest cities are used first.
     doctor_search_max_cities: int = 8
+
+    # Vita, the chat agent in the NLP Router (POST /v2/agent/chat). With VITA_API_URL and VITA_API_KEY both set AND the
+    # patient's number on VITA_ALLOWED_PHONES, free text in the "how do you want to find a doctor" step goes to Vita
+    # instead of the fixed buttons; booking, cancel and reschedule stay in this bot. Unset (the default) changes
+    # nothing. Comma-separated numbers (any format, matched on the last 10 digits), or "*" for everyone.
+    vita_api_url: str | None = None
+    vita_api_key: str | None = None
+    vita_allowed_phones: str = ""
+    # Vita asks a language model, so a turn can take a few seconds; past this the bot carries on without it.
+    vita_timeout_seconds: float = 25.0
 
     # Shared secret for the /events/* push endpoints (app/webhook.py) that 1HMS/1Rad will
     # call to push queue/token updates, prescription-ready, report-ready events into this

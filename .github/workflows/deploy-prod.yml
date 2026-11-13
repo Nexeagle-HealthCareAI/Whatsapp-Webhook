@@ -86,8 +86,10 @@
 #                              Previously never set here at all -- silently fell back to
 #                              docker-compose.yml's dev-domain default (1hms-dev-api...),
 #                              which would have pointed prod at the DEV HMS API.
-#   PROD_SYMPTOM_API_BASE_URL  NexEagleWebsite's prod origin, NO path (default
-#                              https://nexeagle.com) -- symptom_client.py's httpx.AsyncClient
+#   PROD_SYMPTOM_API_BASE_URL  Doctor Dekho's prod origin, NO path (default
+#                              http://host.docker.internal:8081, Doctor Dekho's container on
+#                              this app VM; nexeagle.com no longer serves /api/search/parse
+#                              and 404s) -- symptom_client.py's httpx.AsyncClient
 #                              is built with this as base_url and always requests the
 #                              absolute path "/api/search/parse" itself; including that path
 #                              here too doubles it up (confirmed live: 404 on
@@ -192,13 +194,14 @@ jobs:
           PROD_DB_CONNECTION: ${{ secrets.PROD_DB_CONNECTION }}
           HMS_API_KEY: ${{ secrets.HMS_API_KEY }}
           HMS_API_BASE_URL: ${{ vars.PROD_HMS_API_BASE_URL || 'https://1hms-api.nexeagle.com' }}
-          SYMPTOM_API_BASE_URL: ${{ vars.PROD_SYMPTOM_API_BASE_URL || 'https://nexeagle.com' }}
+          SYMPTOM_API_BASE_URL: ${{ vars.PROD_SYMPTOM_API_BASE_URL || 'http://host.docker.internal:8081' }}
           INTERNAL_EVENTS_TOKEN: ${{ secrets.INTERNAL_EVENTS_TOKEN }}
           SARVAM_API_KEY: ${{ secrets.SARVAM_API_KEY }}
           WHATSAPP_DISPLAY_NUMBER: ${{ secrets.WHATSAPP_DISPLAY_NUMBER }}
           WHATSAPP_FLOW_ID: ${{ secrets.WHATSAPP_FLOW_ID }}
           WHATSAPP_FLOW_SCREEN_ID: ${{ secrets.WHATSAPP_FLOW_SCREEN_ID }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          # GROK_API_KEY was an old misspelling of the same key; still accepted.
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY || secrets.GROK_API_KEY }}
           LOCATION_API_BASE_URL: ${{ secrets.LOCATION_API_BASE_URL }}
         with:
           host: ${{ secrets.PROD_SSH_HOST }}

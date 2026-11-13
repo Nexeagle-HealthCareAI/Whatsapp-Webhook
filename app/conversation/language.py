@@ -216,7 +216,7 @@ async def _confirm_or_start_language(
 async def _start(client, phone: str, init_context: ConversationContext | None = None) -> None:
     from app import conversation
 
-    await conversation.whatsapp_client.send_text(client, phone, t("welcome_multilang", None))
+    # One message, not two: the welcome used to go out as a text AND again as the list's own body.
     await conversation.whatsapp_client.send_list(
         client, phone, LANG_PROMPT, "Choose / चुनें",
         [(code, label) for code, label in LANGUAGE_LABELS.items()],

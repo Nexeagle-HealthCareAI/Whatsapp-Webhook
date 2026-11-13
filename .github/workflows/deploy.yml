@@ -22,6 +22,9 @@
 #                            secret entirely for anonymous access (PublicApiKeyFilter allows
 #                            it) — do NOT set it to a placeholder like "NA"; any non-empty
 #                            value gets sent as a real key and a non-matching one gets 401'd
+#   HEALTH_WIKI_INTERNAL_KEY optional — easyHMSAPI's Health Wiki internal key (same value as its
+#                            Internal:HealthArticlesKey). When set, WhatsApp delivery status callbacks are
+#                            passed on so the CMS can show "not delivered". Omit to leave it off.
 #   WHATSAPP_DISPLAY_NUMBER  optional — dialable wa.me number (E.164, no leading +) for
 #                            GET /c/{hospital_code}. Omit until you're ready to print QR
 #                            codes; that route degrades to a friendly error until it's set.
@@ -38,6 +41,11 @@
 #                            different company). PRIMARY_NLU (app/listener/model_config.py).
 #                            Omit and classify_message falls through to FALLBACK_NLU (Sarvam)
 #                            instead of failing outright — see SARVAM_API_KEY below, still required.
+#   VITA_API_URL             optional — the NLP Router's base URL (Vita, POST /v2/agent/chat), e.g.
+#   VITA_API_KEY             http://151.185.45.77:5003. The key is a router client key with the `chat` scope
+#   VITA_ALLOWED_PHONES      (scripts/make_api_key.py in the router repo). VITA_ALLOWED_PHONES: comma-separated
+#                            numbers Vita is switched on for, or * for everyone. Leave any of them unset and the
+#                            bot behaves exactly as before. See app/conversation/vita_chat.py.
 #
 # VARIABLES (optional):
 #   VM_DEPLOY_PATH    where this repo is checked out on the VM (default /opt/whatsapp-webhook)
@@ -108,18 +116,22 @@ jobs:
           REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
           SQLSERVER_CONN_STRING_DEV: ${{ secrets.SQLSERVER_CONN_STRING_DEV }}
           HMS_API_KEY: ${{ secrets.HMS_API_KEY }}
+          HEALTH_WIKI_INTERNAL_KEY: ${{ secrets.HEALTH_WIKI_INTERNAL_KEY }}
           INTERNAL_EVENTS_TOKEN: ${{ secrets.INTERNAL_EVENTS_TOKEN }}
           SARVAM_API_KEY: ${{ secrets.SARVAM_API_KEY }}
           WHATSAPP_DISPLAY_NUMBER: ${{ secrets.WHATSAPP_DISPLAY_NUMBER }}
           WHATSAPP_FLOW_ID: ${{ secrets.WHATSAPP_FLOW_ID }}
           WHATSAPP_FLOW_SCREEN_ID: ${{ secrets.WHATSAPP_FLOW_SCREEN_ID }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          VITA_API_URL: ${{ secrets.VITA_API_URL }}
+          VITA_API_KEY: ${{ secrets.VITA_API_KEY }}
+          VITA_ALLOWED_PHONES: ${{ secrets.VITA_ALLOWED_PHONES }}
         with:
           host: ${{ secrets.DEV_SSH_HOST }}
           username: ${{ secrets.DEV_SSH_USER }}
           password: ${{ secrets.DEV_SSH_PASSWORD }}
           port: 22
-          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,SQLSERVER_CONN_STRING_DEV,HMS_API_KEY,INTERNAL_EVENTS_TOKEN,SARVAM_API_KEY,WHATSAPP_DISPLAY_NUMBER,WHATSAPP_FLOW_ID,WHATSAPP_FLOW_SCREEN_ID,GROQ_API_KEY
+          envs: DEPLOY_PATH,WHATSAPP_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_VERIFY_TOKEN,WHATSAPP_APP_SECRET,REDIS_PASSWORD,SQLSERVER_CONN_STRING_DEV,HMS_API_KEY,HEALTH_WIKI_INTERNAL_KEY,INTERNAL_EVENTS_TOKEN,SARVAM_API_KEY,WHATSAPP_DISPLAY_NUMBER,WHATSAPP_FLOW_ID,WHATSAPP_FLOW_SCREEN_ID,GROQ_API_KEY,VITA_API_URL,VITA_API_KEY,VITA_ALLOWED_PHONES
           script: |
             set -e
             cd "$DEPLOY_PATH"
@@ -154,12 +166,16 @@ jobs:
               printf 'REDIS_PASSWORD=%s\n' "$REDIS_PASSWORD"
               printf 'SQLSERVER_CONN_STRING=%s\n' "$SQLSERVER_CONN_STRING_DEV"
               printf 'HMS_API_KEY=%s\n' "$HMS_API_KEY"
+              printf 'HEALTH_WIKI_INTERNAL_KEY=%s\n' "$HEALTH_WIKI_INTERNAL_KEY"
               printf 'INTERNAL_EVENTS_TOKEN=%s\n' "$INTERNAL_EVENTS_TOKEN"
               printf 'SARVAM_API_KEY=%s\n' "$SARVAM_API_KEY"
               printf 'WHATSAPP_DISPLAY_NUMBER=%s\n' "$WHATSAPP_DISPLAY_NUMBER"
               printf 'WHATSAPP_FLOW_ID=%s\n' "$WHATSAPP_FLOW_ID"
               printf 'WHATSAPP_FLOW_SCREEN_ID=%s\n' "$WHATSAPP_FLOW_SCREEN_ID"
               printf 'GROQ_API_KEY=%s\n' "$GROQ_API_KEY"
+              printf 'VITA_API_URL=%s\n' "$VITA_API_URL"
+              printf 'VITA_API_KEY=%s\n' "$VITA_API_KEY"
+              printf 'VITA_ALLOWED_PHONES=%s\n' "$VITA_ALLOWED_PHONES"
             } > "$ENVFILE"
             chmod 600 "$ENVFILE"
 

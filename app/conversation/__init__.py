@@ -80,6 +80,7 @@ from app.conversation.appointment_actions import (
     _prompt_appointment_choice, _prompt_appointment_confirm,
     _prompt_viewing_appointment_status, _prompt_awaiting_reschedule_date,
 )
+from app.conversation import vita_chat
 from app.conversation.last_search import (
     _prompt_confirming_last_search, _handle_confirming_last_search,
 )
@@ -1056,6 +1057,10 @@ async def handle_message(
         return
     if await _maybe_handle_followup_reply_step(client, phone, context, current_step, input_type, input_value):
         return
+    # While a patient is talking to Vita, their words go to Vita before the bot's own language detection and NLU
+    # (those would answer the same sentence a second time). Cancel/reschedule and "back" are still the bot's.
+    if await vita_chat.maybe_handle(client, phone, context, current_step, input_type, input_value):
+        return
 
     lang, has_lang_init = await _apply_language_autodetect(context, phone, current_step, input_type, input_value)
 
@@ -1905,7 +1910,10 @@ async def _prompt_choosing_specialty(client, phone, context):
 
 
 async def _prompt_choosing_sort(client, phone, context):
-    await _send_sort_prompt(client, phone, context, context.get("specialty_category"))
+    # current_step is a required argument of _send_sort_prompt. Without it this prompt raised TypeError, which
+    # _trigger_step_prompt turns into a full restart (_start): any re-prompt here -- a casual remark answered by
+    # the chat fallback, or "back" -- threw the patient back to the language list.
+    await _send_sort_prompt(client, phone, context, context.get("specialty_category"), context.get("current_step"))
 
 
 async def _prompt_choosing_doctor(client, phone, context):
@@ -1971,6 +1979,10 @@ STEP_REGISTRY = {
     "choosing_search_mode": {
         "handler": _handle_choosing_search_mode,
         "prompt": _send_search_mode_prompt,
+    },
+    "vita_chat": {
+        "handler": vita_chat.handle_step,
+        "prompt": vita_chat.prompt,
     },
     "awaiting_symptom": {
         "handler": _handle_awaiting_symptom,

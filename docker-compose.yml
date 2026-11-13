@@ -23,6 +23,8 @@ services:
       REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
       HMS_API_BASE_URL: "${HMS_API_BASE_URL:-https://1hms-dev-api.nexeagle.com}"
       HMS_API_KEY: "${HMS_API_KEY:-}"
+      # Optional: passes WhatsApp delivery statuses of the Health Wiki's messages on to easyHMSAPI (see app/front_door/whatsapp_ingest.py).
+      HEALTH_WIKI_INTERNAL_KEY: "${HEALTH_WIKI_INTERNAL_KEY:-}"
       SQLSERVER_CONN_STRING: "${SQLSERVER_CONN_STRING}"
       # Authenticates 1HMS/1Rad's POST /events/token-called calls into this gateway (app/webhook.py)
       # — a different secret from WHATSAPP_APP_SECRET, which authenticates Meta instead.
@@ -49,8 +51,8 @@ services:
     depends_on:
       - redis
     # Lets SQLSERVER_CONN_STRING / SYMPTOM_API_BASE_URL target host.docker.internal — the
-    # sqlserver container and nexeagle-website-dev's /api/search/parse proxy (port 82, the
-    # reachable entry point for symptom routing in dev) are both on the host's own network,
+    # sqlserver container and Doctor Dekho's /api/search/parse proxy (port 84 on Dev, 8081 on
+    # Prod, the reachable entry point for symptom routing) are both on the host's own network,
     # not this compose project's own (it's a separate compose project/service entirely).
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -63,7 +65,7 @@ services:
       HMS_API_BASE_URL: "${HMS_API_BASE_URL:-https://1hms-dev-api.nexeagle.com}"
       HMS_API_KEY: "${HMS_API_KEY:-}"
       SQLSERVER_CONN_STRING: "${SQLSERVER_CONN_STRING}"
-      SYMPTOM_API_BASE_URL: "${SYMPTOM_API_BASE_URL:-http://host.docker.internal:82}"
+      SYMPTOM_API_BASE_URL: "${SYMPTOM_API_BASE_URL:-http://host.docker.internal:84}"
       # Peer-review H5: previously hardcoded to the dev subdomain in app/config.py with no
       # way to override it at all -- prod was silently calling dev's location-search service
       # for every "near me" search. Only this service touches location_client.py (via
@@ -85,6 +87,12 @@ services:
       # override that Python-level default with an empty string, not fall back to it.
       WHATSAPP_FLOW_ID: "${WHATSAPP_FLOW_ID}"
       WHATSAPP_FLOW_SCREEN_ID: "${WHATSAPP_FLOW_SCREEN_ID:-REGISTRATION_SCREEN}"
+      # Vita, the chat agent in the NLP Router (app/conversation/vita_chat.py) -- only this service talks to it.
+      # All three empty (the default) leaves the bot exactly as it was: Vita is used only when the URL and key are
+      # set AND the patient's number is on VITA_ALLOWED_PHONES (comma separated, or * for everyone).
+      VITA_API_URL: "${VITA_API_URL:-}"
+      VITA_API_KEY: "${VITA_API_KEY:-}"
+      VITA_ALLOWED_PHONES: "${VITA_ALLOWED_PHONES:-}"
 
   sender:
     build: .
